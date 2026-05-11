@@ -48,10 +48,10 @@ const tempUpload = multer({
 router.get('/', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { MenuItem } = menuModels();
-    // Auto-restore sold-out items whose soldOutUntil has passed
-    await MenuItem.updateMany(
+    // Auto-restore sold-out：与 find 并行，缩短首包等待（极少数同请求内读仍可能略早于写）
+    const soldOutSweep = MenuItem.updateMany(
       { storeId: req.storeId, isSoldOut: true, soldOutUntil: { $ne: null, $lte: new Date() } },
-      { isSoldOut: false, soldOutUntil: null }
+      { isSoldOut: false, soldOutUntil: null },
     );
 
     const lang = req.query.lang as string | undefined;
@@ -70,6 +70,8 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
     }
 
     const items = await MenuItem.find(filter).lean();
+    void soldOutSweep.catch(() => {});
+
     const baseItemsUnknown = ownOnly
       ? items.map((item) => ({
           ...(item as Record<string, unknown>),

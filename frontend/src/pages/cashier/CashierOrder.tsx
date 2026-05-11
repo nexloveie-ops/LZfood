@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../../context/AuthContext';
 import { apiFetch } from '../../api/client';
@@ -51,6 +51,9 @@ export default function CashierOrder() {
   const [search, setSearch] = useState('');
   const [order, setOrder] = useState<OrderLine[]>([]);
   const [orderType, setOrderType] = useState<'dine_in' | 'takeout' | 'phone'>('dine_in');
+  /** 电话单：后端要求 `customerPhone`（见 POST /api/orders type=phone） */
+  const [phoneGuestPhone, setPhoneGuestPhone] = useState('');
+  const [phoneGuestName, setPhoneGuestName] = useState('');
   const [error, setError] = useState('');
   const [optionModal, setOptionModal] = useState<MenuItem | null>(null);
 
@@ -74,6 +77,38 @@ export default function CashierOrder() {
   const [phoneOrderId, setPhoneOrderId] = useState<string | null>(null);
   const [offers, setOffers] = useState<OfferData[]>([]);
 
+  /** 按分类拉菜：避免整本菜单一次 merge；切语言时清空 */
+  const loadedCategoryIds = useRef(new Set<string>());
+  const loadingCategoryIds = useRef(new Set<string>());
+
+  const mergeMenuItems = useCallback((incoming: MenuItem[]) => {
+    setMenuItems((prev) => {
+      const map = new Map(prev.map((i) => [i._id, i]));
+      for (const row of incoming) map.set(row._id, row);
+      return Array.from(map.values());
+    });
+  }, []);
+
+  const fetchItemsForCategory = useCallback(
+    async (categoryId: string) => {
+      if (!categoryId) return;
+      if (loadedCategoryIds.current.has(categoryId) || loadingCategoryIds.current.has(categoryId)) return;
+      loadingCategoryIds.current.add(categoryId);
+      try {
+        const res = await apiFetch(
+          `/api/menu/items?lang=${encodeURIComponent(lang)}&category=${encodeURIComponent(categoryId)}`,
+        );
+        if (!res.ok) return;
+        const rows: MenuItem[] = await res.json();
+        loadedCategoryIds.current.add(categoryId);
+        mergeMenuItems(rows);
+      } finally {
+        loadingCategoryIds.current.delete(categoryId);
+      }
+    },
+    [lang, mergeMenuItems],
+  );
+
   useEffect(() => {
     if (!canMemberWallet) {
       setPaymentMethod((pm) => (pm === 'member' ? 'cash' : pm));
@@ -81,24 +116,75 @@ export default function CashierOrder() {
     }
   }, [canMemberWallet]);
 
-  const fetchData = useCallback(async () => {
-    const [catRes, itemRes, offersRes, couponsRes] = await Promise.all([
-      apiFetch(`/api/menu/categories?lang=${encodeURIComponent(lang)}`),
-      apiFetch('/api/menu/items'),
+  /** 只拉分类；当前分类菜品由 fetchItemsForCategory + activeCat effect 拉取（后端按 category 缩小 merge 范围） */
+  const fetchMenu = useCallback(async () => {
+    loadedCategoryIds.current.clear();
+    loadingCategoryIds.current.clear();
+    setMenuItems([]);
+    const catRes = await apiFetch(`/api/menu/categories?lang=${encodeURIComponent(lang)}`);
+    if (!catRes.ok) return;
+    const cats: Category[] = await catRes.json();
+    setCategories(cats);
+    if (cats.length > 0) {
+      setActiveCat((prev) => (prev && cats.some((c) => c._id === prev) ? prev : cats[0]._id));
+    } else {
+      setActiveCat('');
+    }
+  }, [lang]);
+
+  const fetchPromosDeferred = useCallback(async () => {
+    const [offersRes, couponsRes] = await Promise.all([
       apiFetch('/api/offers'),
       apiFetch('/api/coupons'),
     ]);
-    if (catRes.ok) {
-      const cats: Category[] = await catRes.json();
-      setCategories(cats);
-      if (cats.length > 0 && !activeCat) setActiveCat(cats[0]._id);
-    }
-    if (itemRes.ok) setMenuItems(await itemRes.json());
     if (offersRes.ok) setOffers(await offersRes.json());
     if (couponsRes.ok) setAvailableCoupons(await couponsRes.json());
-  }, [lang]);
+  }, []);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => {
+    void fetchMenu();
+  }, [fetchMenu]);
+
+  useEffect(() => {
+    if (!activeCat) return;
+    void fetchItemsForCategory(activeCat);
+  }, [activeCat, fetchItemsForCategory]);
+
+  /** 搜索跨分类：防抖后拉全店菜品一次并 merge（有 lang） */
+  useEffect(() => {
+    const q = search.trim();
+    if (!q) return;
+    const tid = window.setTimeout(() => {
+      void (async () => {
+        const res = await apiFetch(`/api/menu/items?lang=${encodeURIComponent(lang)}`);
+        if (!res.ok) return;
+        mergeMenuItems(await res.json());
+      })();
+    }, 450);
+    return () => window.clearTimeout(tid);
+  }, [search, lang, mergeMenuItems]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const run = () => {
+      if (!cancelled) void fetchPromosDeferred();
+    };
+    let idleId: number | undefined;
+    /** DOM 下 setTimeout 返回 number，与 Node Timeout 区分 */
+    let timeoutId: number | undefined;
+    if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
+      idleId = window.requestIdleCallback(run, { timeout: 2500 });
+    } else {
+      timeoutId = window.setTimeout(run, 1);
+    }
+    return () => {
+      cancelled = true;
+      if (idleId !== undefined && typeof window !== 'undefined' && typeof window.cancelIdleCallback === 'function') {
+        window.cancelIdleCallback(idleId);
+      }
+      if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+    };
+  }, [fetchPromosDeferred]);
 
   const getName = (translations: Translation[]) => {
     const found = translations.find(t2 => t2.locale === lang) || translations[0];
@@ -190,6 +276,15 @@ export default function CashierOrder() {
 
   const finalTotal = bundleTotals.finalTotal;
 
+  const switchOrderType = (next: 'dine_in' | 'takeout' | 'phone') => {
+    setOrderType(next);
+    setError('');
+    if (next !== 'phone') {
+      setPhoneGuestPhone('');
+      setPhoneGuestName('');
+    }
+  };
+
   // Open payment modal (no API call yet) — or create phone order directly
   const handleOpenPayment = () => {
     if (order.length === 0) return;
@@ -212,7 +307,16 @@ export default function CashierOrder() {
     setPaying(true);
     setError('');
     try {
-      const orderBody: Record<string, unknown> = { type: 'phone', items: buildGroupedItems() };
+      const orderBody: Record<string, unknown> = {
+        type: 'phone',
+        items: buildGroupedItems(),
+      };
+      if (phoneGuestPhone.trim()) {
+        orderBody.customerPhone = phoneGuestPhone.trim();
+      }
+      if (phoneGuestName.trim()) {
+        orderBody.customerName = phoneGuestName.trim();
+      }
       if (matchedBundles.length > 0) {
         orderBody.appliedBundles = matchedBundles.map(b => ({ offerId: b.offer._id, name: b.offer.name, nameEn: b.offer.nameEn, discount: b.savings }));
       }
@@ -250,6 +354,8 @@ export default function CashierOrder() {
 
       setPhoneOrderId(orderData._id);
       setOrder([]);
+      setPhoneGuestPhone('');
+      setPhoneGuestName('');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed');
     } finally {
@@ -440,11 +546,36 @@ export default function CashierOrder() {
         </div>
         <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)' }}>
           <div style={{ display: 'flex', gap: 6 }}>
-            <button className="btn" onClick={() => setOrderType('dine_in')} style={{ flex: 1, fontSize: 12, padding: '6px 0', background: orderType === 'dine_in' ? 'var(--red-primary)' : 'var(--bg)', color: orderType === 'dine_in' ? '#fff' : 'var(--text-secondary)', border: '1px solid var(--border)' }}>堂食</button>
-            <button className="btn" onClick={() => setOrderType('takeout')} style={{ flex: 1, fontSize: 12, padding: '6px 0', background: orderType === 'takeout' ? 'var(--red-primary)' : 'var(--bg)', color: orderType === 'takeout' ? '#fff' : 'var(--text-secondary)', border: '1px solid var(--border)' }}>外卖</button>
-            <button className="btn" onClick={() => setOrderType('phone')} style={{ flex: 1, fontSize: 12, padding: '6px 0', background: orderType === 'phone' ? 'var(--red-primary)' : 'var(--bg)', color: orderType === 'phone' ? '#fff' : 'var(--text-secondary)', border: '1px solid var(--border)' }}>📞 电话</button>
+            <button className="btn" onClick={() => switchOrderType('dine_in')} style={{ flex: 1, fontSize: 12, padding: '6px 0', background: orderType === 'dine_in' ? 'var(--red-primary)' : 'var(--bg)', color: orderType === 'dine_in' ? '#fff' : 'var(--text-secondary)', border: '1px solid var(--border)' }}>堂食</button>
+            <button className="btn" onClick={() => switchOrderType('takeout')} style={{ flex: 1, fontSize: 12, padding: '6px 0', background: orderType === 'takeout' ? 'var(--red-primary)' : 'var(--bg)', color: orderType === 'takeout' ? '#fff' : 'var(--text-secondary)', border: '1px solid var(--border)' }}>外卖</button>
+            <button className="btn" onClick={() => switchOrderType('phone')} style={{ flex: 1, fontSize: 12, padding: '6px 0', background: orderType === 'phone' ? 'var(--red-primary)' : 'var(--bg)', color: orderType === 'phone' ? '#fff' : 'var(--text-secondary)', border: '1px solid var(--border)' }}>📞 电话</button>
           </div>
         </div>
+
+        {orderType === 'phone' && (
+          <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>客人电话（可选）</label>
+            <input
+              className="input"
+              type="tel"
+              inputMode="tel"
+              autoComplete="tel"
+              placeholder="例如 0851234567"
+              value={phoneGuestPhone}
+              onChange={(e) => setPhoneGuestPhone(e.target.value)}
+              style={{ width: '100%', fontSize: 15, padding: '10px 12px' }}
+            />
+            <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>称呼（可选）</label>
+            <input
+              className="input"
+              type="text"
+              placeholder="客人姓名"
+              value={phoneGuestName}
+              onChange={(e) => setPhoneGuestName(e.target.value)}
+              style={{ width: '100%', fontSize: 14, padding: '8px 12px' }}
+            />
+          </div>
+        )}
 
         <div style={{ flex: 1, overflowY: 'auto', padding: '4px 0' }}>
           {order.length === 0 ? (
@@ -517,7 +648,7 @@ export default function CashierOrder() {
             </div>
           </div>
           <button className="btn btn-primary" onClick={handleOpenPayment} disabled={order.length === 0} style={{ width: '100%', fontSize: 15, padding: '12px 0', letterSpacing: 1 }}>
-            下单结账
+            {orderType === 'phone' ? '创建电话订单' : '下单结账'}
           </button>
         </div>
       </div>

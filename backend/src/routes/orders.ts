@@ -19,6 +19,7 @@ import { requireAuthSameStore } from '../middleware/authForStore';
 import { customerPhoneMatchCandidates, normalizeMemberPhone } from '../utils/memberWalletOps';
 import { attachCustomerProfileToDeliveryOrder } from '../utils/customerProfileDelivery';
 import { aggregateFrequentMenuItemsForCustomer } from '../utils/customerFrequentOrderItems';
+import { zonedDayBoundsForRef } from '../utils/zonedDayBounds';
 
 function orderModels() {
   return getModels() as {
@@ -347,12 +348,11 @@ export function createOrdersRouter(io: SocketIOServer): Router {
 
       if (type === 'phone') {
         const rawPhone = typeof customerPhone === 'string' ? customerPhone.trim() : '';
-        if (!rawPhone) {
-          throw createAppError('VALIDATION_ERROR', 'phone orders require customerPhone');
+        if (rawPhone) {
+          const normPhone = normalizeMemberPhone(rawPhone);
+          orderData.customerPhone =
+            normPhone.length >= 8 ? normPhone : rawPhone.replace(/\D/g, '') || rawPhone;
         }
-        const normPhone = normalizeMemberPhone(rawPhone);
-        orderData.customerPhone =
-          normPhone.length >= 8 ? normPhone : rawPhone.replace(/\D/g, '') || rawPhone;
         const name = typeof customerName === 'string' ? customerName.trim() : '';
         if (name) {
           orderData.customerName = name;
@@ -427,8 +427,12 @@ export function createOrdersRouter(io: SocketIOServer): Router {
   router.get('/active-all', async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { Order } = orderModels();
+      /** 仅「当前店铺 + 当地日历当日 00:00～次日 00:00」内创建的订单（左闭右开），避免历史 checked_out 等占满队列 */
+      const tz = process.env.CASHIER_ACTIVE_ORDER_TIMEZONE?.trim() || 'Europe/Dublin';
+      const { start: dayStart, endExclusive: dayEndExclusive } = zonedDayBoundsForRef(new Date(), tz);
       const orders = await Order.find({
         storeId: req.storeId,
+        createdAt: { $gte: dayStart, $lt: dayEndExclusive },
         $or: [
           // Dine-in and takeout keep existing active statuses.
           {
@@ -459,14 +463,16 @@ export function createOrdersRouter(io: SocketIOServer): Router {
             status: { $in: ['pending', 'paid_online'] },
           },
         ],
-      }).sort({
-        type: 1,
-        status: 1,
-        tableNumber: 1,
-        seatNumber: 1,
-        dailyOrderNumber: 1,
-        createdAt: 1,
-      });
+      })
+        .sort({
+          type: 1,
+          status: 1,
+          tableNumber: 1,
+          seatNumber: 1,
+          dailyOrderNumber: 1,
+          createdAt: 1,
+        })
+        .lean();
       res.json(orders);
     } catch (err) {
       next(err);

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { io } from 'socket.io-client';
 import { useAuth } from '../../context/AuthContext';
@@ -113,8 +113,13 @@ export default function UnifiedOrderCenter() {
   const fetchAll = useCallback(async () => {
     setLoading(true);
     try {
-      const cfgReq = apiFetch('/api/admin/config');
-      const ordersRes = await apiFetch('/api/orders/active-all', { headers: { Authorization: `Bearer ${token}` } });
+      const [ordersRes, cfgRes] = await Promise.all([
+        apiFetch('/api/orders/active-all', { headers: { Authorization: `Bearer ${token}` } }),
+        apiFetch('/api/admin/config'),
+      ]);
+      if (cfgRes.ok) {
+        setConfig(await cfgRes.json());
+      }
       if (ordersRes.ok) {
         setOrders(await ordersRes.json());
         setLoadHint('');
@@ -127,31 +132,42 @@ export default function UnifiedOrderCenter() {
           apiFetch('/api/orders/phone', { headers: { Authorization: `Bearer ${token}` } }),
         ]);
         const merged: OrderRow[] = [];
-        if (dineInRes.ok) merged.push(...await dineInRes.json() as OrderRow[]);
-        if (takeoutRes.ok) merged.push(...await takeoutRes.json() as OrderRow[]);
-        if (phoneRes.ok) merged.push(...await phoneRes.json() as OrderRow[]);
+        if (dineInRes.ok) merged.push(...(await dineInRes.json()) as OrderRow[]);
+        if (takeoutRes.ok) merged.push(...(await takeoutRes.json()) as OrderRow[]);
+        if (phoneRes.ok) merged.push(...(await phoneRes.json()) as OrderRow[]);
         setOrders(merged);
         setLoadHint('当前后端未提供统一队列接口，已回退旧接口展示（delivery 可能不完整）。请重启后端以启用完整订单中心。');
         setQueueMode('fallback');
       }
-      const cfgRes = await cfgReq;
-      if (cfgRes.ok) setConfig(await cfgRes.json());
     } finally {
       setLoading(false);
     }
   }, [token]);
+
+  /** Socket 高频事件时合并为一次拉取，避免订单中心「越用越卡」 */
+  const fetchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleFetchAll = useCallback(() => {
+    if (fetchDebounceRef.current) clearTimeout(fetchDebounceRef.current);
+    fetchDebounceRef.current = setTimeout(() => {
+      fetchDebounceRef.current = null;
+      void fetchAll();
+    }, 400);
+  }, [fetchAll]);
 
   useEffect(() => { void fetchAll(); }, [fetchAll]);
 
   useEffect(() => {
     const query = user?.storeId ? { storeId: user.storeId } : {};
     const socket = io({ transports: ['websocket'], query });
-    socket.on('order:new', fetchAll);
-    socket.on('order:updated', fetchAll);
-    socket.on('order:checked-out', fetchAll);
-    socket.on('order:cancelled', fetchAll);
-    return () => { socket.disconnect(); };
-  }, [fetchAll, user?.storeId]);
+    socket.on('order:new', scheduleFetchAll);
+    socket.on('order:updated', scheduleFetchAll);
+    socket.on('order:checked-out', scheduleFetchAll);
+    socket.on('order:cancelled', scheduleFetchAll);
+    return () => {
+      if (fetchDebounceRef.current) clearTimeout(fetchDebounceRef.current);
+      socket.disconnect();
+    };
+  }, [scheduleFetchAll, user?.storeId]);
 
   useEffect(() => {
     const allowed = new Set(

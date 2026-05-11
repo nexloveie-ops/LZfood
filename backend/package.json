@@ -12,7 +12,8 @@
     "migrate:singlestore-menu": "ts-node scripts/migrate-singlestore-menu-to-lzfood.ts",
     "purge:store-orders": "ts-node scripts/purge-store-orders.ts",
     "sales:overview": "ts-node scripts/sales-data-overview.ts",
-    "import:legacy-orders": "ts-node scripts/import-legacy-store-orders.ts"
+    "import:legacy-orders": "ts-node scripts/import-legacy-store-orders.ts",
+    "bench:active-all": "ts-node scripts/benchmark-active-all.ts"
   },
   "dependencies": {
     "@google-cloud/storage": "^7.19.0",

@@ -61,5 +61,9 @@ const OrderSchema = new mongoose.Schema({
 /** 常点统计：先按店+电话+时间收窄，再 $unwind items */
 OrderSchema.index({ storeId: 1, customerPhone: 1, createdAt: -1 });
 OrderSchema.index({ storeId: 1, memberPhoneSnapshot: 1, createdAt: -1 }, { sparse: true });
+/** 收银「订单中心」GET /api/orders/active-all：按店 + type + status（+ deliverySource）过滤，避免历史订单增多后 $or 扫描过慢 */
+OrderSchema.index({ storeId: 1, type: 1, status: 1, deliverySource: 1 });
+/** 与「当日 createdAt」区间并用 storeId 收窄 */
+OrderSchema.index({ storeId: 1, createdAt: -1 });
 
 export { OrderSchema, OrderItemSubdocSchema };
