@@ -65,7 +65,10 @@ export default function CashierLayout() {
         apiFetch(`/api/reports/detailed?startDate=${today}&endDate=${today}`, { headers: { Authorization: `Bearer ${token}` } }),
         apiFetch('/api/admin/config'),
       ]);
-      if (!statsRes.ok) { alert('Failed to load report'); return; }
+      if (!statsRes.ok) {
+        alert(t('cashier.settlementReportFailed'));
+        return;
+      }
       const stats = await statsRes.json();
       const config = configRes.ok ? await configRes.json() : {};
 
@@ -110,11 +113,11 @@ export default function CashierLayout() {
 
       printViaIframe(html, 1);
     } catch {
-      alert('Settlement failed');
+      alert(t('cashier.settlementFailed'));
     } finally {
       setSettling(false);
     }
-  }, [token, user]);
+  }, [token, user, t]);
 
   const tabStyle = (isActive: boolean): React.CSSProperties => ({
     padding: '12px 24px', fontWeight: isActive ? 700 : 500, fontSize: 14,
@@ -137,9 +140,15 @@ export default function CashierLayout() {
         </h1>
         <div style={{ display: 'flex', gap: 12, alignItems: 'center', fontSize: 13, color: 'var(--text-secondary)' }}>
           {showSettle && (
-            <button className="btn" onClick={handleSettle} disabled={settling}
-              style={{ padding: '5px 14px', fontSize: 12, background: '#4CAF50', color: '#fff', border: 'none', borderRadius: 6, fontWeight: 600 }}>
-              {settling ? '...' : '💰 结账'}
+            <button
+              type="button"
+              className="btn"
+              onClick={handleSettle}
+              disabled={settling}
+              title={t('cashier.dailySettlementHint')}
+              style={{ padding: '5px 14px', fontSize: 12, background: '#4CAF50', color: '#fff', border: 'none', borderRadius: 6, fontWeight: 600 }}
+            >
+              {settling ? '...' : `💰 ${t('cashier.dailySettlement')}`}
             </button>
           )}
           <LanguageSwitcher />

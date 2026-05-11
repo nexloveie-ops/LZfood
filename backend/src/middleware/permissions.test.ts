@@ -18,6 +18,7 @@ describe('rolePermissions', () => {
     expect(cashierPerms).toContain('checkout:*');
     expect(cashierPerms).toContain('receipt:print');
     expect(cashierPerms).toContain('takeout:complete');
+    expect(cashierPerms).toContain('report:view');
     expect(cashierPerms).not.toContain('menu:*');
     expect(cashierPerms).not.toContain('admin:*');
   });
@@ -72,8 +73,9 @@ describe('hasPermission', () => {
     expect(hasPermission(Role.CASHIER, 'admin:users')).toBe(false);
   });
 
-  it('should deny cashier report permissions', () => {
-    expect(hasPermission(Role.CASHIER, 'report:view')).toBe(false);
+  it('should grant cashier report:view (evening settlement slip + same APIs as detailed report)', () => {
+    expect(hasPermission(Role.CASHIER, 'report:view')).toBe(true);
+    expect(hasPermission(Role.CASHIER, 'report:summary')).toBe(false);
   });
 
   it('should deny cashier config permissions', () => {

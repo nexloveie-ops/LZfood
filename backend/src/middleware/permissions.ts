@@ -6,7 +6,8 @@ export enum Role {
 
 export const rolePermissions: Record<Role, string[]> = {
   [Role.OWNER]: ['menu:*', 'order:*', 'checkout:*', 'report:*', 'admin:*', 'config:*'],
-  [Role.CASHIER]: ['order:read', 'checkout:*', 'receipt:print', 'takeout:complete', 'menu:sold-out'],
+  /** report:view：收银晚间「交班结算」小票依赖 GET /api/reports/detailed（与营业报表同一套日汇总口径） */
+  [Role.CASHIER]: ['order:read', 'checkout:*', 'receipt:print', 'takeout:complete', 'menu:sold-out', 'report:view'],
   [Role.PLATFORM_OWNER]: ['menu:*', 'order:*', 'checkout:*', 'report:*', 'admin:*', 'config:*'],
 };
 
