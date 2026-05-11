@@ -338,6 +338,10 @@ export default function MemberPortalPage() {
   const [topUpAmount, setTopUpAmount] = useState(20);
   const [profileExpanded, setProfileExpanded] = useState(false);
   const [topUpExpanded, setTopUpExpanded] = useState(false);
+  const [cardCodeInput, setCardCodeInput] = useState('');
+  const [cardPinInput, setCardPinInput] = useState('');
+  const [cardRedeemBusy, setCardRedeemBusy] = useState(false);
+  const [walletHint, setWalletHint] = useState('');
 
   const authFetch = useMemo(
     () => (path: string, init?: RequestInit) => memberApiFetch(storeSlug, token, path, init),
@@ -413,6 +417,47 @@ export default function MemberPortalPage() {
     },
     [loadTxns],
   );
+
+  const redeemTopUpCard = async () => {
+    if (!token) return;
+    const code = cardCodeInput.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const pin = cardPinInput.trim();
+    if (code.length !== 6 || !/^\d{6}$/.test(pin)) {
+      setWalletHint('');
+      setError(t('member.topUpCardHint'));
+      return;
+    }
+    setCardRedeemBusy(true);
+    setError('');
+    setWalletHint('');
+    try {
+      const r = await authFetch('/api/members/me/wallet/redeem-topup-card', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cardCode: code, pin, storeSlug }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        throw new Error(formatMemberApiError(r.status, d, storeSlug, r.statusText));
+      }
+      const bal = Number((d as { creditBalance?: number }).creditBalance);
+      const credited = Number((d as { creditedEuro?: number }).creditedEuro);
+      setProfile((p) => (p ? { ...p, creditBalance: bal } : null));
+      setCardCodeInput('');
+      setCardPinInput('');
+      setWalletHint(
+        t('member.topUpCardSuccess', {
+          amount: Number.isFinite(credited) ? credited.toFixed(2) : '',
+          balance: Number.isFinite(bal) ? bal.toFixed(2) : '',
+        }),
+      );
+      void loadTxns(1);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Error');
+    } finally {
+      setCardRedeemBusy(false);
+    }
+  };
 
   const openTopUpModal = () => {
     const n = Number.parseFloat(String(topUpDraft).replace(',', '.'));
@@ -794,6 +839,48 @@ export default function MemberPortalPage() {
               <button type="button" className="btn btn-primary" style={{ width: '100%' }} onClick={openTopUpModal}>
                 {t('member.topUpOpen')}
               </button>
+
+              <div
+                style={{
+                  marginTop: 20,
+                  paddingTop: 16,
+                  borderTop: '1px solid var(--border, #e8e8e8)',
+                }}
+              >
+                <div style={{ fontWeight: 600, marginBottom: 8 }}>{t('member.topUpCardSection')}</div>
+                <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 10, lineHeight: 1.45 }}>
+                  {t('member.topUpCardHint')}
+                </div>
+                <label style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>{t('member.topUpCardCode')}</label>
+                <input
+                  className="input"
+                  value={cardCodeInput}
+                  onChange={(e) => setCardCodeInput(e.target.value.toUpperCase())}
+                  maxLength={12}
+                  autoCapitalize="characters"
+                  style={{ width: '100%', marginBottom: 8, fontFamily: 'monospace', letterSpacing: '0.05em' }}
+                />
+                <label style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>{t('member.topUpCardPin')}</label>
+                <input
+                  className="input"
+                  type="password"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  value={cardPinInput}
+                  onChange={(e) => setCardPinInput(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  maxLength={6}
+                  style={{ width: '100%', marginBottom: 12 }}
+                />
+                <button
+                  type="button"
+                  className="btn btn-outline"
+                  style={{ width: '100%' }}
+                  disabled={cardRedeemBusy}
+                  onClick={() => void redeemTopUpCard()}
+                >
+                  {cardRedeemBusy ? t('common.loading') : t('member.topUpCardSubmit')}
+                </button>
+              </div>
             </>
           )}
         </div>
@@ -882,6 +969,9 @@ export default function MemberPortalPage() {
         <div style={{ marginTop: 24, textAlign: 'center' }}>
           <Link to={`/${storeSlug}`} style={{ color: 'var(--red-primary)', fontSize: 14 }}>{t('member.backStore', '返回店铺')}</Link>
         </div>
+        {walletHint ? (
+          <div style={{ color: 'var(--green, #2e7d32)', marginTop: 12, fontSize: 13, whiteSpace: 'pre-line' }}>{walletHint}</div>
+        ) : null}
         {error ? <div style={{ color: 'var(--red-primary)', marginTop: 12, fontSize: 13, whiteSpace: 'pre-line' }}>{error}</div> : null}
         {detailTxn && token ? (
           <TxnDetailModal txn={detailTxn} storeSlug={storeSlug} token={token} onClose={() => setDetailTxn(null)} />

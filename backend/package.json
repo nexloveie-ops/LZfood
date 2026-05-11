@@ -8,6 +8,8 @@
     "start": "node dist/server.js",
     "test": "jest",
     "seed:store": "ts-node scripts/seed-lzfood-store.ts",
+    "import:menu-backup": "ts-node scripts/import-menu-from-backup.ts",
+    "migrate:singlestore-menu": "ts-node scripts/migrate-singlestore-menu-to-lzfood.ts",
     "purge:store-orders": "ts-node scripts/purge-store-orders.ts",
     "sales:overview": "ts-node scripts/sales-data-overview.ts",
     "import:legacy-orders": "ts-node scripts/import-legacy-store-orders.ts"
@@ -17,6 +19,7 @@
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "dotenv": "^16.5.0",
+    "exceljs": "^4.4.0",
     "express": "^5.1.0",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.16.2",

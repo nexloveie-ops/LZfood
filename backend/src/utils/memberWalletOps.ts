@@ -233,15 +233,35 @@ export async function creditMemberWallet(params: {
   storeId: mongoose.Types.ObjectId;
   memberId: mongoose.Types.ObjectId;
   amountEuro: number;
-  type: 'recharge' | 'refund_credit' | 'adjustment' | 'reversal';
+  type: 'recharge' | 'recharge_card' | 'refund_credit' | 'adjustment' | 'reversal';
   orderId?: mongoose.Types.ObjectId;
   checkoutId?: mongoose.Types.ObjectId;
   note?: string;
   operatorAdminId?: mongoose.Types.ObjectId;
   stripePaymentIntentId?: string;
+  topUpCardId?: mongoose.Types.ObjectId;
 }): Promise<{ balanceAfter: number; alreadyCredited?: boolean }> {
   const amt = round2(params.amountEuro);
   if (amt <= 0) throw createAppError('VALIDATION_ERROR', '入账金额须大于 0');
+
+  const cardId = params.topUpCardId;
+  if (cardId) {
+    const dupCard = (await params.MemberWalletTxn.findOne({ topUpCardId: cardId }).lean()) as {
+      memberId?: mongoose.Types.ObjectId;
+      storeId?: mongoose.Types.ObjectId;
+    } | null;
+    if (dupCard) {
+      if (
+        dupCard.memberId?.toString() !== params.memberId.toString() ||
+        dupCard.storeId?.toString() !== params.storeId.toString()
+      ) {
+        throw createAppError('VALIDATION_ERROR', '充值卡记录异常');
+      }
+      const m = (await params.Member.findById(params.memberId).lean()) as MemberDoc | null;
+      if (!m) throw createAppError('NOT_FOUND', '会员不存在');
+      return { balanceAfter: round2(m.creditBalance), alreadyCredited: true };
+    }
+  }
 
   const piId = params.stripePaymentIntentId?.trim();
   if (piId) {
@@ -297,6 +317,7 @@ export async function creditMemberWallet(params: {
     note: params.note || '',
     operatorAdminId: params.operatorAdminId,
     stripePaymentIntentId: piId || undefined,
+    topUpCardId: cardId || undefined,
   });
 
   return { balanceAfter };

@@ -5,7 +5,7 @@ const MemberWalletTxnSchema = new mongoose.Schema(
     memberId: { type: mongoose.Schema.Types.ObjectId, ref: 'Member', required: true, index: true },
     type: {
       type: String,
-      enum: ['recharge', 'spend', 'refund_credit', 'adjustment', 'reversal'],
+      enum: ['recharge', 'recharge_card', 'spend', 'refund_credit', 'adjustment', 'reversal'],
       required: true,
     },
     /** 正数入账、负数出账（spend 存负数） */
@@ -19,11 +19,14 @@ const MemberWalletTxnSchema = new mongoose.Schema(
     operatorAdminId: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin' },
     /** 会员自助 Stripe 充值幂等键（与 Stripe PaymentIntent id 一一对应） */
     stripePaymentIntentId: { type: String, trim: true, default: undefined },
+    /** 实体储值卡核销（每张卡仅一笔入账） */
+    topUpCardId: { type: mongoose.Schema.Types.ObjectId, ref: 'MemberTopUpCard', default: undefined },
   },
   { timestamps: true },
 );
 
 MemberWalletTxnSchema.index({ storeId: 1, memberId: 1, createdAt: -1 });
 MemberWalletTxnSchema.index({ stripePaymentIntentId: 1 }, { unique: true, sparse: true });
+MemberWalletTxnSchema.index({ topUpCardId: 1 }, { unique: true, sparse: true });
 
 export { MemberWalletTxnSchema };

@@ -22,5 +22,8 @@ export function translateMemberWalletTxnNote(note: string | undefined | null, t:
   const stripe = /^Stripe 自助充值 (.+)$/.exec(n);
   if (stripe) return t('member.txnNote.stripeTopUp', { ref: stripe[1] });
 
+  const card = /^实体储值卡 (.+)$/.exec(n);
+  if (card) return t('member.txnNote.physicalTopUpCard', { code: card[1] });
+
   return n;
 }

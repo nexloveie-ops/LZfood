@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useAuth } from '../../context/AuthContext';
 import { apiFetch } from '../../api/client';
 import { translateMemberWalletTxnNote } from '../../utils/memberTxnNoteI18n';
+import MemberTopUpCardsPanel from './MemberTopUpCardsPanel';
 
 interface MemberRow {
   _id: string;
@@ -24,6 +25,7 @@ type WalletTxnRow = {
   checkoutId?: string;
   stripePaymentIntentId?: string;
   operatorAdminId?: string;
+  topUpCardId?: string | null;
   createdAt: string;
 };
 
@@ -44,6 +46,7 @@ export default function MemberManager() {
   const [ledgerTxns, setLedgerTxns] = useState<WalletTxnRow[]>([]);
   const [ledgerLoading, setLedgerLoading] = useState(false);
   const [ledgerErr, setLedgerErr] = useState('');
+  const [adminTab, setAdminTab] = useState<'members' | 'cards'>('members');
 
   const authH = { Authorization: `Bearer ${token}` };
 
@@ -170,7 +173,30 @@ export default function MemberManager() {
 
   return (
     <div>
-      <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 16 }}>👤 {t('admin.membersTitle', '会员与储值')}</h2>
+      <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 12 }}>👤 {t('admin.membersTitle', '会员与储值')}</h2>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+        <button
+          type="button"
+          className={adminTab === 'members' ? 'btn btn-primary' : 'btn btn-outline'}
+          style={{ fontSize: 13 }}
+          onClick={() => { setAdminTab('members'); }}
+        >
+          {t('admin.membersNav')}
+        </button>
+        <button
+          type="button"
+          className={adminTab === 'cards' ? 'btn btn-primary' : 'btn btn-outline'}
+          style={{ fontSize: 13 }}
+          onClick={() => { setAdminTab('cards'); }}
+        >
+          {t('admin.topupCardsTab')}
+        </button>
+      </div>
+
+      {adminTab === 'cards' ? (
+        <MemberTopUpCardsPanel />
+      ) : (
+        <>
       <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 8 }}>
         {t('admin.membersHint', '按手机号、会员号、姓名搜索；顾客自助入口：/店铺/customer/member')}
       </p>
@@ -305,7 +331,7 @@ export default function MemberManager() {
           <div
             className="card"
             style={{
-              width: 720,
+              width: 960,
               maxWidth: '100%',
               maxHeight: '85vh',
               overflow: 'hidden',
@@ -344,6 +370,7 @@ export default function MemberManager() {
                       <th style={{ textAlign: 'left', padding: '8px 10px' }}>{t('member.txnFieldType')}</th>
                       <th style={{ textAlign: 'right', padding: '8px 10px' }}>{t('member.txnFieldAmount')}</th>
                       <th style={{ textAlign: 'right', padding: '8px 10px' }}>{t('member.txnFieldBalanceAfter')}</th>
+                      <th style={{ textAlign: 'left', padding: '8px 10px', whiteSpace: 'nowrap' }}>{t('admin.memberLedgerTopUpCardId', '充值卡 ID')}</th>
                       <th style={{ textAlign: 'left', padding: '8px 10px' }}>{t('member.txnFieldNote')}</th>
                     </tr>
                   </thead>
@@ -351,6 +378,7 @@ export default function MemberManager() {
                     {ledgerTxns.map((x) => {
                       const amt = Number(x.amountEuro);
                       const amtColor = amt < 0 ? 'var(--red-primary)' : '#2e7d32';
+                      const cardId = x.topUpCardId?.trim();
                       return (
                         <tr key={x._id} style={{ borderBottom: '1px solid var(--border-light)' }}>
                           <td style={{ padding: '8px 10px', whiteSpace: 'nowrap', color: 'var(--text-secondary)' }}>
@@ -362,6 +390,9 @@ export default function MemberManager() {
                             €{amt.toFixed(2)}
                           </td>
                           <td style={{ padding: '8px 10px', textAlign: 'right' }}>€{Number(x.balanceAfter).toFixed(2)}</td>
+                          <td style={{ padding: '8px 10px', fontFamily: 'monospace', fontSize: 11, wordBreak: 'break-all', color: 'var(--text-secondary)' }}>
+                            {cardId || '—'}
+                          </td>
                           <td style={{ padding: '8px 10px', color: 'var(--text-secondary)', wordBreak: 'break-word' }}>
                             {translateMemberWalletTxnNote(x.note, t)}
                             {x.stripePaymentIntentId?.trim() ? (
@@ -378,6 +409,8 @@ export default function MemberManager() {
           </div>
         </div>
       ) : null}
+        </>
+      )}
     </div>
   );
 }

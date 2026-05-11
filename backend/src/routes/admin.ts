@@ -28,6 +28,14 @@ import {
   round2Euro,
   sumRefundedItemsGrossEuroFromOrders,
 } from '../utils/memberRefundAlign';
+import { topUpCardsToXlsxBuffer } from '../utils/memberTopUpCardXlsx';
+import {
+  generateTopUpCardCode,
+  generateTopUpCardPin,
+  hashTopUpCardPin,
+  normalizeTopUpCardCode,
+  TOPUP_CARD_CODE_LEN,
+} from '../utils/memberTopUpCard';
 
 function adminModels() {
   return getModels() as {
@@ -38,6 +46,7 @@ function adminModels() {
     FeatureAddon: mongoose.Model<any>;
     Member: mongoose.Model<any>;
     MemberWalletTxn: mongoose.Model<any>;
+    MemberTopUpCard: mongoose.Model<any>;
   };
 }
 
@@ -381,6 +390,7 @@ router.get(
           checkoutId: doc.checkoutId,
           stripePaymentIntentId: doc.stripePaymentIntentId,
           operatorAdminId: doc.operatorAdminId,
+          topUpCardId: doc.topUpCardId ?? null,
           createdAt: doc.createdAt,
         })),
       );
@@ -517,6 +527,471 @@ router.post(
       });
 
       res.json({ ok: true, creditBalance: balanceAfter });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+type TopUpCardLean = {
+  _id: mongoose.Types.ObjectId;
+  cardCode: string;
+  batch: string;
+  amountEuro: number | null;
+  status: string;
+  pinFailedAttempts?: number;
+  usedAt?: Date | null;
+  usedByMemberId?: mongoose.Types.ObjectId | null;
+  createdAt?: Date;
+  updatedAt?: Date;
+  activatedAt?: Date | null;
+};
+
+function serializeTopUpCard(
+  c: TopUpCardLean,
+  usedByMemberNo?: number | null,
+): Record<string, unknown> {
+  return {
+    _id: c._id,
+    cardCode: c.cardCode,
+    batch: c.batch,
+    amountEuro: c.amountEuro,
+    status: c.status,
+    pinFailedAttempts: c.pinFailedAttempts ?? 0,
+    usedAt: c.usedAt ?? null,
+    usedByMemberId: c.usedByMemberId ?? null,
+    usedByMemberNo: usedByMemberNo ?? null,
+    createdAt: c.createdAt,
+    updatedAt: c.updatedAt,
+    activatedAt: c.activatedAt ?? null,
+  };
+}
+
+// POST /api/admin/topup-cards/batch — 批量生成未激活卡（响应含一次性明文 PIN；可选 xlsx 下载）
+router.post(
+  '/topup-cards/batch',
+  ...requireAuthSameStore,
+  requirePermission('config:*'),
+  requireFeature(FeatureKeys.CashierMemberWallet),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { MemberTopUpCard } = adminModels();
+      const count = Math.min(300, Math.max(1, Number(req.body.count) || 0));
+      if (!Number.isFinite(count) || count < 1) {
+        throw createAppError('VALIDATION_ERROR', 'count 须为 1–300 的整数');
+      }
+      const batchLabel = String(req.body.batch || '').trim().slice(0, 80);
+      if (!batchLabel) throw createAppError('VALIDATION_ERROR', '请填写批次名称');
+      const wantXlsx = req.query.download === '1' || req.body.download === true;
+
+      const rows: { cardCode: string; pin: string }[] = [];
+      for (let i = 0; i < count; i++) {
+        let cardCode = '';
+        let attempts = 0;
+        while (attempts < 100) {
+          attempts++;
+          cardCode = generateTopUpCardCode();
+          const dup = await MemberTopUpCard.findOne({
+            storeId: req.storeId,
+            cardCode,
+          }).lean();
+          if (!dup) break;
+        }
+        if (!cardCode || attempts >= 100) {
+          throw createAppError('CONFLICT', '卡号生成冲突过多，请重试');
+        }
+        const pin = generateTopUpCardPin();
+        const pinHash = await hashTopUpCardPin(pin);
+        await MemberTopUpCard.create({
+          storeId: req.storeId,
+          cardCode,
+          pinHash,
+          batch: batchLabel,
+          status: 'inactive',
+          amountEuro: null,
+        });
+        rows.push({ cardCode, pin });
+      }
+
+      if (wantXlsx) {
+        const now = new Date();
+        const xlsxRows = rows.map((r) => ({
+          batch: batchLabel,
+          createdAt: now,
+          cardCode: r.cardCode,
+          pin: r.pin,
+          amountEuro: '',
+          status: '未激活',
+          usedAt: '',
+          usedBy: '',
+        }));
+        const buf = await topUpCardsToXlsxBuffer(xlsxRows);
+        res.setHeader(
+          'Content-Type',
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        );
+        res.setHeader(
+          'Content-Disposition',
+          `attachment; filename="topup-cards-${encodeURIComponent(batchLabel)}-${now.getTime()}.xlsx"`,
+        );
+        res.send(buf);
+        return;
+      }
+
+      res.status(201).json({ batch: batchLabel, count: rows.length, rows });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// POST /api/admin/topup-cards/activate-by-codes — 按卡号激活（统一面额；支持数组或逗号/空格/换行分隔的字符串）
+router.post(
+  '/topup-cards/activate-by-codes',
+  ...requireAuthSameStore,
+  requirePermission('config:*'),
+  requireFeature(FeatureKeys.CashierMemberWallet),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { MemberTopUpCard } = adminModels();
+      const raw = req.body.cardCodes;
+      const parts: string[] = Array.isArray(raw)
+        ? raw.map((x) => String(x ?? ''))
+        : String(raw || '')
+            .split(/[\s,;，；]+/)
+            .map((s) => s.trim())
+            .filter(Boolean);
+      const codes = [
+        ...new Set(
+          parts
+            .map((p) => normalizeTopUpCardCode(p))
+            .filter((c) => c.length === TOPUP_CARD_CODE_LEN),
+        ),
+      ];
+      if (codes.length === 0) {
+        throw createAppError('VALIDATION_ERROR', '请填写至少一个有效卡号（6 位大写字母与数字）');
+      }
+      if (codes.length > 500) {
+        throw createAppError('VALIDATION_ERROR', '单次最多激活 500 张卡');
+      }
+      const amount = Number(req.body.amountEuro);
+      if (!Number.isFinite(amount) || amount <= 0) {
+        throw createAppError('VALIDATION_ERROR', 'amountEuro 须为正数');
+      }
+      const amt = Math.round(amount * 100) / 100;
+      const adminId = req.user?.userId;
+      const opId =
+        adminId && mongoose.Types.ObjectId.isValid(adminId) ? new mongoose.Types.ObjectId(adminId) : undefined;
+
+      let modified = 0;
+      for (const cardCode of codes) {
+        const r = await MemberTopUpCard.updateOne(
+          {
+            storeId: req.storeId,
+            cardCode,
+            status: 'inactive',
+            $or: [{ amountEuro: null }, { amountEuro: { $exists: false } }],
+          },
+          {
+            $set: {
+              amountEuro: amt,
+              status: 'active',
+              activatedAt: new Date(),
+              activatedByAdminId: opId,
+            },
+          },
+        );
+        if (r.modifiedCount > 0) modified += 1;
+      }
+
+      res.json({ ok: true, requested: codes.length, modified });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// POST /api/admin/topup-cards/:id/activate — 单张激活
+router.post(
+  '/topup-cards/:id/activate',
+  ...requireAuthSameStore,
+  requirePermission('config:*'),
+  requireFeature(FeatureKeys.CashierMemberWallet),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { MemberTopUpCard } = adminModels();
+      const id = typeof req.params.id === 'string' ? req.params.id : req.params.id[0];
+      if (!mongoose.Types.ObjectId.isValid(id)) {
+        throw createAppError('VALIDATION_ERROR', 'Invalid card id');
+      }
+      const amount = Number(req.body.amountEuro);
+      if (!Number.isFinite(amount) || amount <= 0) {
+        throw createAppError('VALIDATION_ERROR', 'amountEuro 须为正数');
+      }
+      const amt = Math.round(amount * 100) / 100;
+      const adminId = req.user?.userId;
+      const opId =
+        adminId && mongoose.Types.ObjectId.isValid(adminId) ? new mongoose.Types.ObjectId(adminId) : undefined;
+      const updated = await MemberTopUpCard.findOneAndUpdate(
+        {
+          _id: new mongoose.Types.ObjectId(id),
+          storeId: req.storeId,
+          status: 'inactive',
+          $or: [{ amountEuro: null }, { amountEuro: { $exists: false } }],
+        },
+        {
+          $set: {
+            amountEuro: amt,
+            status: 'active',
+            activatedAt: new Date(),
+            activatedByAdminId: opId,
+          },
+        },
+        { new: true },
+      ).lean();
+      if (!updated) throw createAppError('NOT_FOUND', '未找到可激活的卡（须为未激活）');
+      res.json({ ok: true, card: serializeTopUpCard(updated as unknown as TopUpCardLean) });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// GET /api/admin/topup-cards — 列表
+router.get(
+  '/topup-cards',
+  ...requireAuthSameStore,
+  requirePermission('config:*'),
+  requireFeature(FeatureKeys.CashierMemberWallet),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { MemberTopUpCard, Member } = adminModels();
+      const batchQ = String(req.query.batch || '').trim();
+      const statusQ = String(req.query.status || '').trim();
+      const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 80));
+      const skip = Math.max(0, Number(req.query.skip) || 0);
+      const filter: Record<string, unknown> = { storeId: req.storeId };
+      if (batchQ) filter.batch = batchQ;
+      if (statusQ && ['inactive', 'active', 'used', 'locked'].includes(statusQ)) {
+        filter.status = statusQ;
+      }
+      const [listRaw, total] = await Promise.all([
+        MemberTopUpCard.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+        MemberTopUpCard.countDocuments(filter),
+      ]);
+      const list = listRaw as unknown as TopUpCardLean[];
+      const mids = [
+        ...new Set(
+          list
+            .map((c) => c.usedByMemberId?.toString())
+            .filter((x): x is string => !!x),
+        ),
+      ];
+      const memberNos = new Map<string, number>();
+      if (mids.length) {
+        const mems = await Member.find({
+          storeId: req.storeId,
+          _id: { $in: mids.map((m) => new mongoose.Types.ObjectId(m)) },
+        })
+          .select('_id memberNo')
+          .lean();
+        for (const m of mems as unknown as { _id: mongoose.Types.ObjectId; memberNo: number }[]) {
+          memberNos.set(m._id.toString(), m.memberNo);
+        }
+      }
+      res.json({
+        items: list.map((c) =>
+          serializeTopUpCard(
+            c,
+            c.usedByMemberId ? memberNos.get(c.usedByMemberId.toString()) ?? null : null,
+          ),
+        ),
+        total,
+        skip,
+        limit,
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// GET /api/admin/topup-cards/:id — 详情
+router.get(
+  '/topup-cards/:id',
+  ...requireAuthSameStore,
+  requirePermission('config:*'),
+  requireFeature(FeatureKeys.CashierMemberWallet),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { MemberTopUpCard, Member } = adminModels();
+      const id = typeof req.params.id === 'string' ? req.params.id : req.params.id[0];
+      if (!mongoose.Types.ObjectId.isValid(id)) {
+        throw createAppError('VALIDATION_ERROR', 'Invalid card id');
+      }
+      const c = (await MemberTopUpCard.findOne({
+        _id: new mongoose.Types.ObjectId(id),
+        storeId: req.storeId,
+      }).lean()) as unknown as TopUpCardLean | null;
+      if (!c) throw createAppError('NOT_FOUND', '卡不存在');
+      let usedByMemberNo: number | null = null;
+      let usedByMemberPhone: string | null = null;
+      let usedByMemberDisplayName: string | null = null;
+      if (c.usedByMemberId) {
+        let memberOid: mongoose.Types.ObjectId | null = null;
+        try {
+          memberOid =
+            c.usedByMemberId instanceof mongoose.Types.ObjectId
+              ? c.usedByMemberId
+              : new mongoose.Types.ObjectId(String(c.usedByMemberId));
+        } catch {
+          memberOid = null;
+        }
+        if (memberOid) {
+          /** findById + 校验 storeId，避免复合条件因类型不一致漏查 */
+          const m = (await Member.findById(memberOid)
+            .select('memberNo phone displayName storeId')
+            .lean()) as {
+            memberNo?: number;
+            phone?: string;
+            displayName?: string;
+            storeId?: mongoose.Types.ObjectId;
+          } | null;
+          if (m && req.storeId && String(m.storeId) === String(req.storeId)) {
+            usedByMemberNo = m.memberNo ?? null;
+            const ph = m.phone != null ? String(m.phone).trim() : '';
+            const nm = m.displayName != null ? String(m.displayName).trim() : '';
+            usedByMemberPhone = ph || null;
+            usedByMemberDisplayName = nm || null;
+          }
+        }
+      }
+      const failures = ((c as unknown as { pinFailures?: { at: Date; memberId?: mongoose.Types.ObjectId }[] })
+        .pinFailures || []) as { at: Date; memberId?: mongoose.Types.ObjectId }[];
+      res.json({
+        ...serializeTopUpCard(c, usedByMemberNo),
+        usedByMemberPhone,
+        usedByMemberDisplayName,
+        pinFailures: failures.map((f) => ({
+          at: f.at,
+          memberId: f.memberId ?? null,
+        })),
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// GET /api/admin/topup-cards-export.xlsx — 导出（无 PIN，含批次与生成时间等）
+router.get(
+  '/topup-cards-export.xlsx',
+  ...requireAuthSameStore,
+  requirePermission('config:*'),
+  requireFeature(FeatureKeys.CashierMemberWallet),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { MemberTopUpCard, Member } = adminModels();
+      const batchQ = String(req.query.batch || '').trim();
+      const statusQ = String(req.query.status || '').trim();
+      const filter: Record<string, unknown> = { storeId: req.storeId };
+      if (batchQ) filter.batch = batchQ;
+      if (statusQ && ['inactive', 'active', 'used', 'locked'].includes(statusQ)) {
+        filter.status = statusQ;
+      }
+      const list = (await MemberTopUpCard.find(filter)
+        .sort({ createdAt: -1 })
+        .limit(5000)
+        .lean()) as unknown as TopUpCardLean[];
+      const mids = [
+        ...new Set(
+          list.map((c) => c.usedByMemberId?.toString()).filter((x): x is string => !!x),
+        ),
+      ];
+      const memberNos = new Map<string, number>();
+      if (mids.length) {
+        const mems = await Member.find({
+          storeId: req.storeId,
+          _id: { $in: mids.map((m) => new mongoose.Types.ObjectId(m)) },
+        })
+          .select('_id memberNo phone')
+          .lean();
+        for (const m of mems as unknown as { _id: mongoose.Types.ObjectId; memberNo: number; phone?: string }[]) {
+          memberNos.set(m._id.toString(), m.memberNo);
+        }
+      }
+      const statusZh: Record<string, string> = {
+        inactive: '未激活',
+        active: '已激活',
+        used: '已核销',
+        locked: '已锁定',
+      };
+      const xlsxRows = list.map((c) => ({
+        batch: c.batch,
+        createdAt: c.createdAt ?? new Date(),
+        cardCode: c.cardCode,
+        pin: '',
+        amountEuro:
+          c.amountEuro != null && Number.isFinite(Number(c.amountEuro))
+            ? String(Number(c.amountEuro).toFixed(2))
+            : '',
+        status: statusZh[c.status] || c.status,
+        usedAt: c.usedAt ? new Date(c.usedAt).toISOString() : '',
+        usedBy:
+          c.usedByMemberId && memberNos.has(c.usedByMemberId.toString())
+            ? `#${memberNos.get(c.usedByMemberId.toString())}`
+            : '',
+      }));
+      const buf = await topUpCardsToXlsxBuffer(xlsxRows);
+      res.setHeader(
+        'Content-Type',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      );
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="topup-cards-export-${Date.now()}.xlsx"`,
+      );
+      res.send(buf);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// POST /api/admin/topup-cards/:id/unlock — 解锁（清零失败次数）
+router.post(
+  '/topup-cards/:id/unlock',
+  ...requireAuthSameStore,
+  requirePermission('config:*'),
+  requireFeature(FeatureKeys.CashierMemberWallet),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { MemberTopUpCard } = adminModels();
+      const id = typeof req.params.id === 'string' ? req.params.id : req.params.id[0];
+      if (!mongoose.Types.ObjectId.isValid(id)) {
+        throw createAppError('VALIDATION_ERROR', 'Invalid card id');
+      }
+      const c = (await MemberTopUpCard.findOne({
+        _id: new mongoose.Types.ObjectId(id),
+        storeId: req.storeId,
+      }).lean()) as unknown as TopUpCardLean | null;
+      if (!c) throw createAppError('NOT_FOUND', '卡不存在');
+      if (c.status === 'used') {
+        throw createAppError('VALIDATION_ERROR', '已核销的卡无法解锁');
+      }
+      const nextStatus =
+        c.amountEuro != null && Number(c.amountEuro) > 0 ? 'active' : 'inactive';
+      const updated = await MemberTopUpCard.findOneAndUpdate(
+        { _id: c._id, storeId: req.storeId },
+        {
+          $set: {
+            status: nextStatus,
+            pinFailedAttempts: 0,
+          },
+        },
+        { new: true },
+      ).lean();
+      res.json({ ok: true, card: serializeTopUpCard(updated as unknown as TopUpCardLean) });
     } catch (err) {
       next(err);
     }

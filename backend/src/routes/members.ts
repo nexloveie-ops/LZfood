@@ -17,6 +17,14 @@ import {
   assertMemberPinOk,
   creditMemberWallet,
 } from '../utils/memberWalletOps';
+import {
+  TOPUP_CARD_DUMMY_PIN_HASH,
+  TOPUP_CARD_REDEEM_GENERIC_MESSAGE,
+  assertTopUpCardCodeFormat,
+  assertTopUpCardPinFormat,
+  normalizeTopUpCardCode,
+  verifyTopUpCardPin,
+} from '../utils/memberTopUpCard';
 import { createStripeClient } from '../utils/stripeConfig';
 import { requireFeature } from '../middleware/featureAccess';
 import { FeatureKeys } from '../utils/featureCatalog';
@@ -41,6 +49,7 @@ function mModels() {
   return getModels() as {
     Member: mongoose.Model<any>;
     MemberWalletTxn: mongoose.Model<any>;
+    MemberTopUpCard: mongoose.Model<any>;
     Store: mongoose.Model<any>;
     CustomerProfile: mongoose.Model<any>;
   };
@@ -694,6 +703,131 @@ router.post('/me/wallet/stripe-confirm', memberAuthMiddleware, async (req: Reque
     });
 
     res.json({ creditBalance: balanceAfter, alreadyCredited: !!alreadyCredited });
+  } catch (err) {
+    next(err);
+  }
+});
+
+type MemberTopUpCardLean = {
+  _id: mongoose.Types.ObjectId;
+  pinHash: string;
+  status: string;
+  amountEuro?: number | null;
+};
+
+/**
+ * 实体储值卡核销入账（卡须已激活；PIN 仅 bcrypt；错误文案统一防枚举）。
+ * POST /api/members/me/wallet/redeem-topup-card  body: { cardCode: string, pin: string }
+ */
+router.post('/me/wallet/redeem-topup-card', memberAuthMiddleware, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { Member, MemberWalletTxn, MemberTopUpCard } = mModels();
+    const codeRaw = normalizeTopUpCardCode(String(req.body.cardCode || ''));
+    assertTopUpCardCodeFormat(codeRaw);
+    const pin = String(req.body.pin || '');
+    assertTopUpCardPinFormat(pin);
+
+    const card = (await MemberTopUpCard.findOne({
+      storeId: req.storeId,
+      cardCode: codeRaw,
+    }).lean()) as MemberTopUpCardLean | null;
+
+    const memberOid = new mongoose.Types.ObjectId(req.memberAuth!.memberId);
+
+    if (!card) {
+      await verifyMemberPin(pin, TOPUP_CARD_DUMMY_PIN_HASH);
+      throw createAppError('FORBIDDEN', TOPUP_CARD_REDEEM_GENERIC_MESSAGE);
+    }
+
+    const pinOk = await verifyTopUpCardPin(pin, card.pinHash);
+
+    if (!pinOk) {
+      if (card.status !== 'used' && card.status !== 'locked') {
+        await MemberTopUpCard.updateOne(
+          { _id: card._id },
+          {
+            $inc: { pinFailedAttempts: 1 },
+            $push: {
+              pinFailures: {
+                $each: [{ at: new Date(), memberId: memberOid, reason: 'bad_pin' }],
+                $slice: -40,
+              },
+            },
+          },
+        );
+        const fresh = (await MemberTopUpCard.findById(card._id).lean()) as {
+          pinFailedAttempts?: number;
+          status?: string;
+        } | null;
+        if (
+          fresh &&
+          (fresh.pinFailedAttempts ?? 0) >= 3 &&
+          fresh.status !== 'used'
+        ) {
+          await MemberTopUpCard.updateOne({ _id: card._id }, { $set: { status: 'locked' } });
+        }
+      }
+      throw createAppError('FORBIDDEN', TOPUP_CARD_REDEEM_GENERIC_MESSAGE);
+    }
+
+    if (card.status === 'used' || card.status === 'locked') {
+      throw createAppError('FORBIDDEN', TOPUP_CARD_REDEEM_GENERIC_MESSAGE);
+    }
+    if (card.status !== 'active') {
+      throw createAppError('FORBIDDEN', TOPUP_CARD_REDEEM_GENERIC_MESSAGE);
+    }
+
+    const amt = Number(card.amountEuro);
+    if (!Number.isFinite(amt) || amt <= 0) {
+      throw createAppError('FORBIDDEN', TOPUP_CARD_REDEEM_GENERIC_MESSAGE);
+    }
+
+    const cardId = card._id;
+    const reserved = await MemberTopUpCard.findOneAndUpdate(
+      { _id: cardId, storeId: req.storeId, status: 'active' },
+      {
+        $set: {
+          status: 'used',
+          usedAt: new Date(),
+          usedByMemberId: memberOid,
+        },
+      },
+      { new: true },
+    ).lean();
+
+    if (!reserved) {
+      throw createAppError('FORBIDDEN', TOPUP_CARD_REDEEM_GENERIC_MESSAGE);
+    }
+
+    try {
+      const { balanceAfter, alreadyCredited } = await creditMemberWallet({
+        Member,
+        MemberWalletTxn,
+        storeId: req.storeId!,
+        memberId: memberOid,
+        amountEuro: amt,
+        type: 'recharge_card',
+        note: `实体储值卡 ${codeRaw}`,
+        topUpCardId: cardId,
+      });
+      res.json({
+        creditBalance: balanceAfter,
+        creditedEuro: amt,
+        alreadyCredited: !!alreadyCredited,
+      });
+    } catch (e) {
+      await MemberTopUpCard.updateOne(
+        { _id: cardId },
+        {
+          $set: {
+            status: 'active',
+            usedAt: null,
+            usedByMemberId: null,
+          },
+        },
+      );
+      throw e;
+    }
   } catch (err) {
     next(err);
   }
