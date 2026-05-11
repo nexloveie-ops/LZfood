@@ -35,13 +35,28 @@ interface OrderRow {
   customerOnlinePaymentAt?: string;
   pickupSlotLabel?: string;
   pickupSlotStart?: string;
-  items: { _id: string; quantity: number; unitPrice: number; itemName: string; lineKind?: string; selectedOptions?: { extraPrice?: number }[] }[];
+  items: {
+    _id: string;
+    quantity: number;
+    unitPrice: number;
+    itemName: string;
+    lineKind?: string;
+    selectedOptions?: {
+      groupName?: string;
+      groupNameEn?: string;
+      choiceName?: string;
+      choiceNameEn?: string;
+      extraPrice?: number;
+    }[];
+  }[];
   appliedBundles?: { discount: number; name?: string; nameEn?: string }[];
   createdAt: string;
   stripePaymentIntentId?: string;
   memberCreditUsed?: number;
   memberPhoneSnapshot?: string;
   memberId?: string;
+  /** 外卖：收银 JWT 创建为 cashier，顾客端为 customer */
+  takeoutPlacementSource?: 'cashier' | 'customer';
 }
 
 interface RestaurantConfig {
@@ -59,6 +74,13 @@ function orderNoForDisplay(o: OrderRow): string {
   if (o.type === 'dine_in' && o.dineInOrderNumber?.trim()) return o.dineInOrderNumber.trim();
   if (o.dailyOrderNumber != null && Number.isFinite(o.dailyOrderNumber)) return `#${o.dailyOrderNumber}`;
   return '—';
+}
+
+/** 收银端创建的外卖在 checked_out 下不再要求先点「打印厨房」 */
+function isTakeoutCheckedOutKitchenStepDone(o: OrderRow, printedIds: Record<string, true>): boolean {
+  if (o.type !== 'takeout' || o.status !== 'checked_out') return false;
+  if (o.takeoutPlacementSource === 'cashier') return true;
+  return !!printedIds[o._id];
 }
 
 function calcTotal(order: OrderRow): number {
@@ -100,7 +122,7 @@ export default function UnifiedOrderCenter() {
   const [mixedCard, setMixedCard] = useState('');
   const [memberPhone, setMemberPhone] = useState('');
   const [memberPreview, setMemberPreview] = useState<CashierMemberPreview | null>(null);
-  /** 外卖自提 paid_online / checked_out：先厨房小票，再完结（与 Stripe 网单一致；checked_out 含误带店员 JWT 导致的旧数据） */
+  /** 外卖自提 paid_online：先厨房小票再完结。checked_out 且 takeoutPlacementSource=cashier 则视同厨房小票已在点单结账时完成 */
   const [takeoutKitchenTicketPrintedIds, setTakeoutKitchenTicketPrintedIds] = useState<Record<string, true>>({});
 
   useEffect(() => {
@@ -439,8 +461,8 @@ export default function UnifiedOrderCenter() {
       itemName: item.itemName,
       itemNameEn: (item as { itemNameEn?: string }).itemNameEn,
       selectedOptions: (item.selectedOptions || []).map((opt) => ({
-        groupName: '',
-        choiceName: '',
+        groupName: String(opt.groupName ?? '').trim(),
+        choiceName: String(opt.choiceName ?? '').trim(),
         extraPrice: opt.extraPrice || 0,
       })),
     }));
@@ -1140,7 +1162,7 @@ export default function UnifiedOrderCenter() {
                           ) : null}
                           {o.type === 'takeout' && o.status === 'checked_out' ? (
                             <>
-                              {!takeoutKitchenTicketPrintedIds[o._id] ? (
+                              {!isTakeoutCheckedOutKitchenStepDone(o, takeoutKitchenTicketPrintedIds) ? (
                                 <button
                                   className="btn btn-outline"
                                   style={{ fontSize: 12, minWidth: 198 }}

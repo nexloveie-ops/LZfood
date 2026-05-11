@@ -47,6 +47,8 @@ const OrderSchema = new mongoose.Schema({
   pickupSlotLabel: { type: String, default: '' },
   /** 该时段起始时间，便于收银排序；可选 */
   pickupSlotStart: { type: Date },
+  /** 外卖：收银端 JWT 创建为 cashier；顾客端匿名/非本店店员为 customer（订单中心「已结账」后是否跳过厨房打印步） */
+  takeoutPlacementSource: { type: String, enum: ['cashier', 'customer'] },
   status: { type: String, enum: ['pending', 'paid_online', 'checked_out', 'completed', 'refunded', 'checked_out-hide', 'completed-hide'], default: 'pending' },
   memberId: { type: mongoose.Schema.Types.ObjectId, ref: 'Member' },
   /** 送餐客户档案（CustomerProfile），非会员也可关联 */

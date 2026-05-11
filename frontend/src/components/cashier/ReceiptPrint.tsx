@@ -204,7 +204,13 @@ function buildReceiptHTML(
       if (item.itemNameEn && item.itemNameEn !== item.itemName) html += `<div class="sub">${item.itemNameEn}</div>`;
       if (item.selectedOptions && item.selectedOptions.length > 0) {
         for (const o of item.selectedOptions) {
-          html += `<div class="sub">  · ${o.choiceName}${o.extraPrice > 0 ? ` +€${o.extraPrice}` : ''}</div>`;
+          const label =
+            [o.groupName, o.choiceName].filter((s) => String(s || '').trim()).join(': ') ||
+            (o.extraPrice > 0 ? 'Option' : '');
+          const pricePart = o.extraPrice > 0 ? ` +€${o.extraPrice}` : '';
+          if (label || pricePart) {
+            html += `<div class="sub">  · ${escapeReceiptHtml(label)}${pricePart}</div>`;
+          }
         }
       }
       html += `</td><td class="qty">x${item.quantity}</td><td class="amt">€${(item.unitPrice * item.quantity).toFixed(2)}</td></tr>`;
@@ -261,7 +267,9 @@ function buildReceiptHTML(
   }
 
   // Footer
-  html += `<div class="footer"><div>${checkedOutAt.toLocaleString('en-GB')}</div><div style="margin-top:4px;font-size:12px">Thank you for dining with us!</div></div>`;
+  const thanks =
+    isDineIn ? 'Thank you for dining with us!' : isPhone ? 'Thank you!' : isDelivery ? 'Thank you for your order!' : 'Thank you for your order!';
+  html += `<div class="footer"><div>${checkedOutAt.toLocaleString('en-GB')}</div><div style="margin-top:4px;font-size:12px">${thanks}</div></div>`;
   html += `</body></html>`;
   return html;
 }

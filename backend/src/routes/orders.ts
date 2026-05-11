@@ -14,7 +14,8 @@ import {
   parseDeliveryFeeRulesJson,
 } from '../utils/deliveryFeeRules';
 import { computeOrderPayableTotalEuro } from '../utils/orderPayableTotal';
-import { requirePermission } from '../middleware/auth';
+import { optionalAuthMiddleware, requirePermission } from '../middleware/auth';
+import { Role } from '../middleware/permissions';
 import { requireAuthSameStore } from '../middleware/authForStore';
 import { customerPhoneMatchCandidates, normalizeMemberPhone } from '../utils/memberWalletOps';
 import { attachCustomerProfileToDeliveryOrder } from '../utils/customerProfileDelivery';
@@ -140,8 +141,8 @@ export function createOrdersRouter(io: SocketIOServer): Router {
     });
   }
 
-  // POST /api/orders — Create a new order
-  router.post('/', async (req: Request, res: Response, next: NextFunction) => {
+  // POST /api/orders — Create a new order（可选 Bearer：店员创建外卖时标记 takeoutPlacementSource）
+  router.post('/', optionalAuthMiddleware, async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { MenuItem, Order, DailyOrderCounter, SystemConfig, CustomerProfile } = orderModels();
       const {
@@ -344,6 +345,14 @@ export function createOrdersRouter(io: SocketIOServer): Router {
             orderData.pickupSlotStart = d;
           }
         }
+        const u = req.user;
+        const isCashierPlacement =
+          !!req.storeId &&
+          !!u &&
+          u.role !== 'platform_owner' &&
+          u.storeId === req.storeId.toString() &&
+          (u.role === Role.OWNER || u.role === Role.CASHIER);
+        orderData.takeoutPlacementSource = isCashierPlacement ? 'cashier' : 'customer';
       }
 
       if (type === 'phone') {

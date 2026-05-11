@@ -658,6 +658,7 @@ describe('POST /api/orders (takeout)', () => {
     expect(res.status).toBe(201);
     expect(res.body.type).toBe('takeout');
     expect(res.body.status).toBe('pending');
+    expect(res.body.takeoutPlacementSource).toBe('customer');
     expect(res.body.dailyOrderNumber).toBe(1);
     expect(res.body.items).toHaveLength(1);
     expect(res.body.items[0].unitPrice).toBe(20);
