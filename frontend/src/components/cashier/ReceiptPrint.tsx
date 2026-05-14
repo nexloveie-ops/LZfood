@@ -1,5 +1,10 @@
 import { useEffect, useState, useRef, useCallback, type ReactElement } from 'react';
 import { apiFetch } from '../../api/client';
+import {
+  receiptOptionDisplayLabel,
+  receiptOptionExtraEuro,
+  receiptOptionExtraSuffix,
+} from '../../utils/receiptOptionPrice';
 
 interface ReceiptOrderItem {
   _id: string;
@@ -9,7 +14,7 @@ interface ReceiptOrderItem {
   unitPrice: number;
   itemName: string;
   itemNameEn?: string;
-  selectedOptions?: { groupName: string; choiceName: string; extraPrice: number }[];
+  selectedOptions?: { groupName?: string; choiceName?: string; extraPrice?: unknown }[];
 }
 
 interface ReceiptOrder {
@@ -264,9 +269,8 @@ function buildReceiptHTML(
       if (L.options && L.options.length > 0) {
         for (const o of L.options) {
           const label =
-            [o.groupName, o.choiceName].filter((s) => String(s || '').trim()).join(': ') ||
-            (o.extraPrice > 0 ? 'Option' : '');
-          const pricePart = o.extraPrice > 0 ? ` +€${o.extraPrice}` : '';
+            receiptOptionDisplayLabel(o) || (receiptOptionExtraEuro(o.extraPrice) > 0 ? 'Option' : '');
+          const pricePart = receiptOptionExtraSuffix(o.extraPrice);
           if (label || pricePart) {
             html += `<div class="sub">  · ${escapeReceiptHtml(label)}${pricePart}</div>`;
           }
@@ -293,9 +297,8 @@ function buildReceiptHTML(
         if (item.selectedOptions && item.selectedOptions.length > 0) {
           for (const o of item.selectedOptions) {
             const label =
-              [o.groupName, o.choiceName].filter((s) => String(s || '').trim()).join(': ') ||
-              (o.extraPrice > 0 ? 'Option' : '');
-            const pricePart = o.extraPrice > 0 ? ` +€${o.extraPrice}` : '';
+              receiptOptionDisplayLabel(o) || (receiptOptionExtraEuro(o.extraPrice) > 0 ? 'Option' : '');
+            const pricePart = receiptOptionExtraSuffix(o.extraPrice);
             if (label || pricePart) {
               html += `<div class="sub">  · ${escapeReceiptHtml(label)}${pricePart}</div>`;
             }
@@ -579,7 +582,11 @@ export default function ReceiptPrint({ checkoutId, cashReceived, changeAmount, b
                 <div>{L.title}</div>
                 {L.titleEn && L.titleEn !== L.title && <div style={{ fontSize: 12 }}>{L.titleEn}</div>}
                 {L.options && L.options.length > 0 && L.options.map((o, oi) => (
-                  <div key={oi} style={{ fontSize: 12 }}>  · {o.choiceName}{o.extraPrice > 0 && ` +€${o.extraPrice}`}</div>
+                  <div key={oi} style={{ fontSize: 12 }}>
+                    {'  · '}
+                    {receiptOptionDisplayLabel(o) || (receiptOptionExtraEuro(o.extraPrice) > 0 ? 'Option' : '')}
+                    {receiptOptionExtraSuffix(o.extraPrice)}
+                  </div>
                 ))}
               </div>
               <div style={{ whiteSpace: 'nowrap' }}>x{L.qty} €{L.amountEuro.toFixed(2)}</div>
@@ -614,7 +621,11 @@ export default function ReceiptPrint({ checkoutId, cashReceived, changeAmount, b
                   <div>{item.itemName}</div>
                   {item.itemNameEn && item.itemNameEn !== item.itemName && <div style={{ fontSize: 12 }}>{item.itemNameEn}</div>}
                   {item.selectedOptions && item.selectedOptions.length > 0 && item.selectedOptions.map((o, idx) => (
-                    <div key={idx} style={{ fontSize: 12 }}>  · {o.choiceName}{o.extraPrice > 0 && ` +€${o.extraPrice}`}</div>
+                    <div key={idx} style={{ fontSize: 12 }}>
+                      {'  · '}
+                      {receiptOptionDisplayLabel(o) || (receiptOptionExtraEuro(o.extraPrice) > 0 ? 'Option' : '')}
+                      {receiptOptionExtraSuffix(o.extraPrice)}
+                    </div>
                   ))}
                 </div>
                 <div style={{ whiteSpace: 'nowrap' }}>x{item.quantity} €{(item.unitPrice * item.quantity).toFixed(2)}</div>

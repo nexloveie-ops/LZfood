@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../../context/AuthContext';
 import { buildReceiptHTML, printViaIframe } from '../../components/cashier/ReceiptPrint';
+import { receiptOptionDisplayLabel, receiptOptionExtraEuro, receiptOptionExtraSuffix } from '../../utils/receiptOptionPrice';
 import { bundleAdjustedLineTotals, lineGrossEuro, type AppliedBundleLite } from '../../utils/bundleLineAllocation';
 import { apiFetch } from '../../api/client';
 
@@ -15,7 +16,7 @@ interface OrderItem {
   quantity: number;
   unitPrice: number;
   refunded?: boolean;
-  selectedOptions?: { groupName: string; choiceName: string; extraPrice: number }[];
+  selectedOptions?: { groupName?: string; choiceName?: string; extraPrice?: number }[];
 }
 
 function isVirtualCheckoutId(checkoutId: string): boolean {
@@ -411,7 +412,19 @@ export default function ReprintReceipt() {
                             )}
                             {item.selectedOptions && item.selectedOptions.length > 0 && (
                               <div style={{ fontSize: 10, color: 'var(--text-light)' }}>
-                                {item.selectedOptions.map((o, i) => <span key={i}>{i > 0 && ' · '}{o.choiceName}{o.extraPrice > 0 && ` +€${o.extraPrice}`}</span>)}
+                                {item.selectedOptions.map((o, i) => {
+                                  const label =
+                                    receiptOptionDisplayLabel(o) ||
+                                    (receiptOptionExtraEuro(o.extraPrice) > 0 ? 'Option' : '');
+                                  const suf = receiptOptionExtraSuffix(o.extraPrice);
+                                  const text = label ? `${label}${suf}` : suf.trim() ? `Option${suf}` : '';
+                                  return (
+                                    <span key={i}>
+                                      {i > 0 && ' · '}
+                                      {text}
+                                    </span>
+                                  );
+                                })}
                               </div>
                             )}
                           </div>

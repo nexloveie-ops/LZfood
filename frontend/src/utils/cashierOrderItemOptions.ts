@@ -1,12 +1,13 @@
+import { receiptOptionExtraEuro } from './receiptOptionPrice';
+
 /** Snapshot lines persisted on orders (see backend `snapshotSelectedOptionsFromMenuItem`). */
 export type CashierSelectedOptionSnapshot = {
   groupName?: string;
   groupNameEn?: string;
   choiceName?: string;
   choiceNameEn?: string;
-  extraPrice?: number;
+  extraPrice?: unknown;
 };
-
 export type CashierGroupedOptionRow = {
   groupLabel: string;
   choices: { label: string; extraEuro: number }[];
@@ -34,7 +35,7 @@ export function groupCashierSelectedOptions(
     const cZh = (o.choiceName || '').trim();
     const cEn = (o.choiceNameEn || '').trim();
     const label = isEn ? cEn || cZh || '—' : cZh || cEn || '—';
-    const extra = typeof o.extraPrice === 'number' && Number.isFinite(o.extraPrice) ? o.extraPrice : 0;
+    const extra = receiptOptionExtraEuro(o.extraPrice);
 
     let row = byKey.get(key);
     if (!row) {
