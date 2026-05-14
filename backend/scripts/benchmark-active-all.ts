@@ -133,10 +133,13 @@ async function main(): Promise<void> {
 
   const tz = process.env.CASHIER_ACTIVE_ORDER_TIMEZONE?.trim() || 'Europe/Dublin';
   const { start: dayStart, endExclusive: dayEndEx } = zonedDayBoundsForRef(new Date(), tz);
-  const filterToday = { ...filterBase, createdAt: { $gte: dayStart, $lt: dayEndEx } };
-  console.log('\n当日窗口（与现网 active-all 一致）IANA:', tz);
-  console.log('  createdAt >=', dayStart.toISOString());
-  console.log('  createdAt < ', dayEndEx.toISOString());
+  const hourMs = 3600 * 1000;
+  const activeAllStart = new Date(dayStart.getTime() - hourMs);
+  const activeAllEndExclusive = new Date(dayEndEx.getTime() + hourMs);
+  const filterToday = { ...filterBase, createdAt: { $gte: activeAllStart, $lt: activeAllEndExclusive } };
+  console.log('\n当日窗口±1h（与现网 active-all 一致）IANA:', tz);
+  console.log('  createdAt >=', activeAllStart.toISOString());
+  console.log('  createdAt < ', activeAllEndExclusive.toISOString());
 
   await runSection('B. 与现网 active-all 等价（当日 createdAt + CASHIER_ACTIVE_ORDER_TIMEZONE）', filterToday, Order);
 

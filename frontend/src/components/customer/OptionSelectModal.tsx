@@ -1,6 +1,8 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import type { CartItemOption } from '../../context/CartContext';
+import { getOptionalMinSelect, getOptionalMaxSelect, optionalMaxReached, optionalSelectionValid } from '../../utils/optionGroupLimits';
 
 interface OptionChoice {
   _id: string;
@@ -12,6 +14,10 @@ interface OptionChoice {
 export interface OptionGroup {
   _id: string;
   required: boolean;
+  /** 仅非必选：最少选几项，默认 0 */
+  minSelect?: number;
+  /** 仅非必选：最多选几项，0 表示不限制 */
+  maxSelect?: number;
   translations: { locale: string; name: string }[];
   choices: OptionChoice[];
 }
@@ -40,7 +46,11 @@ export default function OptionSelectModal({ itemName, price, optionGroups, onCon
   const [singleSelections, setSingleSelections] = useState<Record<string, string>>({});
   const [multiSelections, setMultiSelections] = useState<Record<string, string[]>>({});
 
-  const canConfirm = optionGroups.every(g => !g.required || singleSelections[g._id]);
+  const canConfirm = optionGroups.every((g) => {
+    if (g.required) return !!singleSelections[g._id];
+    const n = (multiSelections[g._id] || []).length;
+    return optionalSelectionValid(g, n);
+  });
 
   const toggleSingle = (groupId: string, choiceId: string) => {
     setSingleSelections(prev => {
@@ -52,12 +62,15 @@ export default function OptionSelectModal({ itemName, price, optionGroups, onCon
   };
 
   const toggleMulti = (groupId: string, choiceId: string) => {
-    setMultiSelections(prev => {
+    const group = optionGroups.find((x) => x._id === groupId);
+    if (!group) return;
+    setMultiSelections((prev) => {
       const current = prev[groupId] || [];
-      const next = current.includes(choiceId)
-        ? current.filter(id => id !== choiceId)
-        : [...current, choiceId];
-      return { ...prev, [groupId]: next };
+      if (current.includes(choiceId)) {
+        return { ...prev, [groupId]: current.filter((id) => id !== choiceId) };
+      }
+      if (optionalMaxReached(group, current.length)) return prev;
+      return { ...prev, [groupId]: [...current, choiceId] };
     });
   };
 
@@ -107,36 +120,140 @@ export default function OptionSelectModal({ itemName, price, optionGroups, onCon
     return sum;
   })();
 
-  return (
-    <div onClick={onClose} style={{
-      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000,
-      display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
-    }}>
-      <div onClick={e => e.stopPropagation()} style={{
-        background: 'var(--bg-white, #fff)', borderRadius: '16px 16px 0 0',
-        width: '100%', maxWidth: 430, maxHeight: '80vh', display: 'flex', flexDirection: 'column',
-      }}>
-        {/* Header */}
-        <div style={{ padding: '16px 20px 12px', borderBottom: '1px solid var(--border, #eee)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div>
-            <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-dark)' }}>{itemName}</div>
-            <div style={{ fontSize: 14, color: 'var(--red-primary)', fontWeight: 600 }}>€{price}</div>
+  useEffect(() => {
+    const root = document.getElementById('root');
+    if (root) root.setAttribute('data-customer-sheet-open', '1');
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => {
+      if (root) root.removeAttribute('data-customer-sheet-open');
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [onClose]);
+
+  const sheet = (
+    <div
+      role="presentation"
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 10050,
+        display: 'flex',
+        flexDirection: 'column',
+        justifyContent: 'flex-end',
+        alignItems: 'center',
+        pointerEvents: 'auto',
+      }}
+    >
+      <div
+        role="presentation"
+        onClick={onClose}
+        style={{
+          position: 'absolute',
+          inset: 0,
+          background: 'rgba(0,0,0,0.5)',
+          touchAction: 'none',
+        }}
+        aria-hidden
+      />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="option-modal-title"
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          position: 'relative',
+          zIndex: 1,
+          background: 'var(--bg-white, #fff)',
+          borderRadius: '16px 16px 0 0',
+          width: '100%',
+          maxWidth: 430,
+          maxHeight: 'min(88dvh, 88vh)',
+          minHeight: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+          boxShadow: '0 -8px 32px rgba(0,0,0,0.18)',
+          paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+        }}
+      >
+        {/* Header — flexShrink:0 so long option lists never push ✕ off-screen */}
+        <div
+          style={{
+            flexShrink: 0,
+            padding: '12px 16px 10px',
+            borderBottom: '1px solid var(--border, #eee)',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'flex-start',
+            gap: 12,
+          }}
+        >
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div id="option-modal-title" style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-dark)', lineHeight: 1.25 }}>
+              {itemName}
+            </div>
+            <div style={{ fontSize: 14, color: 'var(--red-primary)', fontWeight: 600, marginTop: 2 }}>€{price}</div>
           </div>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 22, color: 'var(--text-light)', cursor: 'pointer', padding: 4 }}>✕</button>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label={t('customer.closeOptionSheet')}
+            style={{
+              flexShrink: 0,
+              width: 44,
+              height: 44,
+              marginTop: -4,
+              marginRight: -4,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              background: 'var(--bg, #f5f5f5)',
+              border: 'none',
+              borderRadius: 12,
+              fontSize: 20,
+              color: 'var(--text-dark)',
+              cursor: 'pointer',
+            }}
+          >
+            ✕
+          </button>
         </div>
 
-        {/* Option groups */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: '12px 20px' }}>
+        {/* Option groups — minHeight:0 + overscroll-behavior stops scroll chaining to menu */}
+        <div
+          style={{
+            flex: 1,
+            minHeight: 0,
+            overflowY: 'auto',
+            overflowX: 'hidden',
+            WebkitOverflowScrolling: 'touch',
+            overscrollBehavior: 'contain',
+            touchAction: 'pan-y',
+            padding: '12px 16px',
+          }}
+        >
           {optionGroups.map(group => (
             <div key={group._id} style={{ marginBottom: 20 }}>
-              <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                 {getName(group.translations)}
                 {group.required
                   ? <span style={{ fontSize: 11, color: '#fff', background: 'var(--red-primary)', padding: '1px 6px', borderRadius: 4 }}>{t('admin.required')}</span>
                   : <span style={{ fontSize: 11, color: 'var(--text-light)', padding: '1px 6px', borderRadius: 4, border: '1px solid var(--border)' }}>多选</span>
                 }
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 8 }}>
+              {!group.required && (getOptionalMinSelect(group) > 0 || getOptionalMaxSelect(group) > 0) && (
+                <div style={{ fontSize: 11, color: 'var(--text-light)', marginBottom: 8 }}>
+                  {getOptionalMaxSelect(group) === 0
+                    ? t('customer.optionalAtLeast', { count: getOptionalMinSelect(group) })
+                    : getOptionalMinSelect(group) === 0
+                      ? t('customer.optionalAtMost', { count: getOptionalMaxSelect(group) })
+                      : t('customer.optionalBetween', { min: getOptionalMinSelect(group), max: getOptionalMaxSelect(group) })}
+                </div>
+              )}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8 }}>
                 {group.choices.map(choice => {
                   const selected = group.required
                     ? singleSelections[group._id] === choice._id
@@ -149,20 +266,38 @@ export default function OptionSelectModal({ itemName, price, optionGroups, onCon
                         border: selected ? '2px solid var(--red-primary)' : '1px solid var(--border, #ddd)',
                         background: selected ? 'var(--red-light, #FFF5F5)' : 'var(--bg, #fafafa)',
                         textAlign: 'center', minHeight: 52,
+                        minWidth: 0,
                       }}>
-                      <span style={{ fontSize: 13, fontWeight: selected ? 700 : 500, lineHeight: 1.3, color: selected ? 'var(--red-primary)' : 'var(--text-dark)' }}>
+                      <div
+                        style={{
+                          fontSize: 13,
+                          fontWeight: selected ? 700 : 500,
+                          lineHeight: 1.35,
+                          color: selected ? 'var(--red-primary)' : 'var(--text-dark)',
+                          wordBreak: 'break-word',
+                          textAlign: 'center',
+                        }}
+                      >
                         {getName(choice.translations)}
-                      </span>
-                      {(choice.extraPrice > 0 || (choice.originalPrice && choice.originalPrice > choice.extraPrice)) && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 2 }}>
-                          {choice.originalPrice && choice.originalPrice > choice.extraPrice && (
-                            <span style={{ fontSize: 10, color: 'var(--text-light)', textDecoration: 'line-through' }}>+€{choice.originalPrice}</span>
-                          )}
-                          {choice.extraPrice > 0 && (
-                            <span style={{ fontSize: 11, color: 'var(--red-primary)', fontWeight: 600 }}>+€{choice.extraPrice}</span>
-                          )}
-                        </div>
-                      )}
+                        {((choice.extraPrice || 0) > 0
+                          || (choice.originalPrice != null && choice.originalPrice > (choice.extraPrice || 0))) && (
+                          <span style={{ whiteSpace: 'nowrap', fontWeight: 600, color: 'var(--red-primary)', fontSize: 12 }}>
+                            {' '}
+                            {choice.originalPrice != null && choice.originalPrice > (choice.extraPrice || 0) && (
+                              <span style={{
+                                fontSize: 10,
+                                color: 'var(--text-light)',
+                                textDecoration: 'line-through',
+                                fontWeight: 500,
+                                marginRight: 4,
+                              }}>
+                                +€{choice.originalPrice}
+                              </span>
+                            )}
+                            {(choice.extraPrice || 0) > 0 ? `+€${choice.extraPrice}` : ''}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   );
                 })}
@@ -171,20 +306,50 @@ export default function OptionSelectModal({ itemName, price, optionGroups, onCon
           ))}
         </div>
 
-        {/* Footer */}
-        <div style={{ padding: '12px 20px 20px', borderTop: '1px solid var(--border, #eee)' }}>
-          <button onClick={handleConfirm} disabled={!canConfirm}
+        {/* Footer — explicit cancel when ✕ is hard to reach */}
+        <div
+          style={{
+            flexShrink: 0,
+            padding: '10px 16px 16px',
+            borderTop: '1px solid var(--border, #eee)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 10,
+          }}
+        >
+          <button
+            type="button"
+            onClick={handleConfirm}
+            disabled={!canConfirm}
             className="btn btn-primary"
             style={{
-              width: '100%', padding: '14px 0', fontSize: 15, letterSpacing: 1,
-              opacity: canConfirm ? 1 : 0.5, cursor: canConfirm ? 'pointer' : 'not-allowed',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-            }}>
+              width: '100%',
+              padding: '14px 0',
+              fontSize: 15,
+              letterSpacing: 1,
+              opacity: canConfirm ? 1 : 0.5,
+              cursor: canConfirm ? 'pointer' : 'not-allowed',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 8,
+            }}
+          >
             {t('customer.confirmAdd')}
             <span style={{ fontWeight: 700 }}>€{(price + totalExtra).toFixed(2)}</span>
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            className="btn btn-outline"
+            style={{ width: '100%', padding: '12px 0', fontSize: 14 }}
+          >
+            {t('common.cancel')}
           </button>
         </div>
       </div>
     </div>
   );
+
+  return typeof document !== 'undefined' ? createPortal(sheet, document.body) : null;
 }

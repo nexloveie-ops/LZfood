@@ -8,7 +8,7 @@ interface Category { _id: string; translations: Translation[]; }
 interface MenuItemRow { _id: string; categoryId: string; price: number; translations: Translation[]; }
 
 interface OptionChoiceData { extraPrice?: number; originalPrice?: number; translations?: Translation[]; }
-interface OptionGroupData { required?: boolean; translations?: Translation[]; choices?: OptionChoiceData[]; }
+interface OptionGroupData { required?: boolean; minSelect?: number; maxSelect?: number; translations?: Translation[]; choices?: OptionChoiceData[]; }
 
 interface TemplateDoc {
   _id: string;
@@ -30,7 +30,7 @@ interface RuleDoc {
 }
 
 interface FormOptionChoice { nameZh: string; nameEn: string; extraPrice: number; originalPrice: number; }
-interface FormOptionGroup { nameZh: string; nameEn: string; required: boolean; choices: FormOptionChoice[]; }
+interface FormOptionGroup { nameZh: string; nameEn: string; required: boolean; minSelect: number; maxSelect: number; choices: FormOptionChoice[]; }
 
 const emptyTemplateForm = { _id: null as string | null, name: '', enabled: true, optionGroups: [] as FormOptionGroup[] };
 
@@ -116,7 +116,7 @@ function isGroupLikeObject(x: unknown): x is Record<string, unknown> {
     x != null &&
     typeof x === 'object' &&
     !Array.isArray(x) &&
-    ('translations' in (x as object) || 'choices' in (x as object) || 'required' in (x as object))
+    ('translations' in (x as object) || 'choices' in (x as object) || 'required' in (x as object) || 'minSelect' in (x as object))
   );
 }
 
@@ -196,7 +196,15 @@ function coerceOptionGroupsFromApi(raw: unknown): OptionGroupData[] {
           translations: ctr,
         };
       });
-    out.push({ required: !!g.required, translations, choices });
+    const minSel =
+      typeof (g as Record<string, unknown>).minSelect === 'number' && Number.isFinite((g as Record<string, unknown>).minSelect as number)
+        ? Math.max(0, Math.floor((g as Record<string, unknown>).minSelect as number))
+        : 0;
+    const maxSel =
+      typeof (g as Record<string, unknown>).maxSelect === 'number' && Number.isFinite((g as Record<string, unknown>).maxSelect as number)
+        ? Math.max(0, Math.floor((g as Record<string, unknown>).maxSelect as number))
+        : 0;
+    out.push({ required: !!g.required, minSelect: minSel, maxSelect: maxSel, translations, choices });
   }
   return out;
 }
@@ -215,13 +223,14 @@ function toFormGroups(raw: unknown): FormOptionGroup[] {
     if (choices.length === 0) {
       choices = [{ nameZh: '', nameEn: '', extraPrice: 0, originalPrice: 0 }];
     }
-    return { nameZh, nameEn, required: !!g.required, choices };
+    return { nameZh, nameEn, required: !!g.required, minSelect: g.minSelect ?? 0, maxSelect: g.maxSelect ?? 0, choices };
   });
 }
 
 function fromFormGroups(groups: FormOptionGroup[]): OptionGroupData[] {
   return groups.map((g) => ({
     required: g.required,
+    ...(!g.required ? { minSelect: Math.max(0, Math.floor(Number(g.minSelect) || 0)), maxSelect: Math.max(0, Math.floor(Number(g.maxSelect) || 0)) } : {}),
     translations: [
       { locale: 'zh-CN', name: g.nameZh },
       { locale: 'en-US', name: g.nameEn },
@@ -297,7 +306,7 @@ export default function OptionGroupTemplates() {
   const addTemplateGroup = () => {
     setTemplateForm((prev) => ({
       ...prev,
-      optionGroups: [...prev.optionGroups, { nameZh: '', nameEn: '', required: false, choices: [{ nameZh: '', nameEn: '', extraPrice: 0, originalPrice: 0 }] }],
+      optionGroups: [...prev.optionGroups, { nameZh: '', nameEn: '', required: false, minSelect: 0, maxSelect: 0, choices: [{ nameZh: '', nameEn: '', extraPrice: 0, originalPrice: 0 }] }],
     }));
   };
   const removeTemplateGroup = (gi: number) => {
@@ -337,6 +346,33 @@ export default function OptionGroupTemplates() {
   const saveTemplate = async () => {
     setSavingTemplate(true);
     try {
+      for (let gi = 0; gi < templateForm.optionGroups.length; gi++) {
+        const g = templateForm.optionGroups[gi];
+        if (!g.choices?.length) {
+          alert(`选项组 #${gi + 1} 须至少包含一个选项`);
+          setSavingTemplate(false);
+          return;
+        }
+        if (!g.required) {
+          const minS = Math.max(0, Math.floor(Number(g.minSelect) || 0));
+          const maxS = Math.max(0, Math.floor(Number(g.maxSelect) || 0));
+          if (maxS > 0 && minS > maxS) {
+            alert(`选项组 #${gi + 1}：最少选择数不能大于最多选择数`);
+            setSavingTemplate(false);
+            return;
+          }
+          if (minS > g.choices.length) {
+            alert(`选项组 #${gi + 1}：最少选择数不能大于选项个数`);
+            setSavingTemplate(false);
+            return;
+          }
+          if (maxS > 0 && maxS > g.choices.length) {
+            alert(`选项组 #${gi + 1}：最多选择数不能大于选项个数`);
+            setSavingTemplate(false);
+            return;
+          }
+        }
+      }
       const body = {
         name: templateForm.name,
         enabled: templateForm.enabled,
@@ -532,11 +568,50 @@ export default function OptionGroupTemplates() {
                     </div>
                     <div style={{ display: 'flex', alignItems: 'flex-end', paddingBottom: 2 }}>
                       <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
-                        <input type="checkbox" checked={group.required} onChange={(e) => updateTemplateGroup(gi, 'required', e.target.checked)} />
+                        <input
+                          type="checkbox"
+                          checked={group.required}
+                          onChange={(e) => {
+                            const checked = e.target.checked;
+                            setTemplateForm((prev) => ({
+                              ...prev,
+                              optionGroups: prev.optionGroups.map((g, i) =>
+                                i !== gi ? g : { ...g, required: checked, ...(checked ? { minSelect: 0, maxSelect: 0 } : {}) },
+                              ),
+                            }));
+                          }}
+                        />
                         {t('admin.required')}
                       </label>
                     </div>
                   </div>
+
+                  {!group.required && (
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
+                      <div>
+                        <label style={{ fontSize: 11, color: 'var(--text-light)' }}>{t('admin.optionGroupMinSelect')}</label>
+                        <input
+                          className="input"
+                          type="number"
+                          min={0}
+                          value={group.minSelect}
+                          onChange={(e) => updateTemplateGroup(gi, 'minSelect', Math.max(0, Math.floor(Number(e.target.value) || 0)))}
+                        />
+                      </div>
+                      <div>
+                        <label style={{ fontSize: 11, color: 'var(--text-light)' }}>
+                          {t('admin.optionGroupMaxSelect')} <span style={{ opacity: 0.75 }}>({t('admin.optionGroupMaxSelectHint')})</span>
+                        </label>
+                        <input
+                          className="input"
+                          type="number"
+                          min={0}
+                          value={group.maxSelect}
+                          onChange={(e) => updateTemplateGroup(gi, 'maxSelect', Math.max(0, Math.floor(Number(e.target.value) || 0)))}
+                        />
+                      </div>
+                    </div>
+                  )}
 
                   {group.choices.map((choice, ci) => (
                     <div key={ci} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 90px 90px auto', gap: 6, marginBottom: 4 }}>

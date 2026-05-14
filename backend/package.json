@@ -13,7 +13,9 @@
     "purge:store-orders": "ts-node scripts/purge-store-orders.ts",
     "sales:overview": "ts-node scripts/sales-data-overview.ts",
     "import:legacy-orders": "ts-node scripts/import-legacy-store-orders.ts",
-    "bench:active-all": "ts-node scripts/benchmark-active-all.ts"
+    "bench:active-all": "ts-node scripts/benchmark-active-all.ts",
+    "db:dump-full": "ts-node scripts/dump-mongodb-full.ts",
+    "db:mongodump": "ts-node scripts/mongodump-backup.ts"
   },
   "dependencies": {
     "@google-cloud/storage": "^7.19.0",

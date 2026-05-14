@@ -18,7 +18,7 @@ interface MenuItemData {
   translations: { locale: string; name: string; description?: string }[];
   allergenIds?: string[];
   optionGroups?: {
-    _id: string; required: boolean;
+    _id: string; required: boolean; minSelect?: number; maxSelect?: number;
     translations: { locale: string; name: string }[];
     choices: { _id: string; extraPrice: number; translations: { locale: string; name: string }[] }[];
   }[];
@@ -214,12 +214,24 @@ export default function MenuView({ storeFrontEmbed = false }: { storeFrontEmbed?
   // Get cart quantity for a menu item
   const getCartQty = (menuItemId: string) => cartItems.filter(ci => ci.menuItemId === menuItemId).reduce((s, ci) => s + ci.quantity, 0);
 
+  /** 该菜品在购物车中仍可被减掉的份数（已锁定订单行只计超出 lockedBaselineQty 的部分） */
+  const reducibleQtyForMenuItem = (menuItemId: string) =>
+    cartItems
+      .filter(ci => ci.menuItemId === menuItemId)
+      .reduce((sum, ci) => {
+        const floor = typeof ci.lockedBaselineQty === 'number' ? ci.lockedBaselineQty : 0;
+        return sum + Math.max(0, ci.quantity - floor);
+      }, 0);
+
   const handleDecrease = (menuItemId: string) => {
-    // Find the last cart item matching this menuItemId and decrease it
-    const matching = cartItems.filter(ci => ci.menuItemId === menuItemId);
-    if (matching.length > 0) {
-      const last = matching[matching.length - 1];
-      decreaseQuantity(getItemKey(last));
+    for (let i = cartItems.length - 1; i >= 0; i--) {
+      const ci = cartItems[i];
+      if (ci.menuItemId !== menuItemId) continue;
+      const floor = typeof ci.lockedBaselineQty === 'number' ? ci.lockedBaselineQty : 0;
+      if (ci.quantity > floor) {
+        decreaseQuantity(getItemKey(ci));
+        return;
+      }
     }
   };
 
@@ -250,7 +262,7 @@ export default function MenuView({ storeFrontEmbed = false }: { storeFrontEmbed?
   const showTitleBlock = !storeFrontEmbed;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, overflow: 'hidden' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, minWidth: 0, overflow: 'hidden' }}>
       {/* Hero — hides on scroll down, shows on scroll up; storefront embed skips branded title when parent already showed it */}
       <div style={{
         position: 'relative',
@@ -391,8 +403,8 @@ export default function MenuView({ storeFrontEmbed = false }: { storeFrontEmbed?
       {/* Sticky Category Tabs */}
       <div ref={tabsRef} style={{
         display: 'flex', gap: 0, padding: '0 16px', background: 'var(--bg-white, #fff)',
-        borderBottom: '2px solid var(--border-light, #E8D5B8)', overflowX: 'auto', flexShrink: 0,
-        position: 'sticky', top: 0, zIndex: 10,
+        borderBottom: '2px solid var(--border-light, #E8D5B8)', overflowX: 'auto', overflowY: 'hidden', flexShrink: 0,
+        position: 'sticky', top: 0, zIndex: 10, WebkitOverflowScrolling: 'touch', maxWidth: '100%',
       }}>
         {categories.map(cat => (
           <button
@@ -414,7 +426,7 @@ export default function MenuView({ storeFrontEmbed = false }: { storeFrontEmbed?
       </div>
 
       {/* Scrollable Content — all categories rendered continuously */}
-      <div ref={scrollContainerRef} onScroll={handleScroll} style={{ flex: 1, minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
+      <div ref={scrollContainerRef} onScroll={handleScroll} style={{ flex: 1, minHeight: 0, minWidth: 0, overflowX: 'hidden', overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
         {categories.map((cat, catIndex) => {
           const catItems = itemsByCategory.get(cat._id) || [];
           return (
@@ -424,15 +436,16 @@ export default function MenuView({ storeFrontEmbed = false }: { storeFrontEmbed?
               ref={(el) => { if (el) sectionRefs.current.set(cat._id, el); }}
             >
               {/* Section Header */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '20px 20px 12px' }}>
-                <div style={{ flex: 1, height: 1, background: 'linear-gradient(90deg, transparent, #D4A853, transparent)' }} />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '20px 20px 12px', minWidth: 0 }}>
+                <div style={{ flex: '1 1 0', minWidth: 0, height: 1, background: 'linear-gradient(90deg, transparent, #D4A853, transparent)' }} />
                 <h2 style={{
                   fontFamily: "'Noto Serif SC', serif", fontSize: 18, fontWeight: 600,
                   color: 'var(--text-dark, #2C1810)', letterSpacing: 4, whiteSpace: 'nowrap',
+                  flexShrink: 1, minWidth: 0, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis',
                 }}>
                   {getName(cat.translations)}
                 </h2>
-                <div style={{ flex: 1, height: 1, background: 'linear-gradient(90deg, transparent, #D4A853, transparent)' }} />
+                <div style={{ flex: '1 1 0', minWidth: 0, height: 1, background: 'linear-gradient(90deg, transparent, #D4A853, transparent)' }} />
               </div>
 
               {/* Items */}
@@ -454,6 +467,7 @@ export default function MenuView({ storeFrontEmbed = false }: { storeFrontEmbed?
                     allergenIcons={(item.allergenIds || []).map(aid => allergens.find(a => a._id === aid)?.icon).filter((x): x is string => !!x)}
                     optionGroups={item.optionGroups}
                     quantity={getCartQty(item._id)}
+                    decreaseDisabled={getCartQty(item._id) > 0 && reducibleQtyForMenuItem(item._id) === 0}
                     onAdd={addItem}
                     onDecrease={handleDecrease}
                   />

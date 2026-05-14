@@ -5,6 +5,7 @@ import { useAuth } from '../../context/AuthContext';
 import { type Order, type OrderItem } from '../../components/cashier/OrderDetail';
 import ReceiptPrint from '../../components/cashier/ReceiptPrint';
 import { apiFetch } from '../../api/client';
+import { computeCustomerFacingPayableEuro } from '../../utils/orderPayableEuro';
 import CashierMemberCheckoutBlock, {
   buildMemberFullWalletCheckoutBody,
   canMemberFullWalletPay,
@@ -42,7 +43,7 @@ function calcTotal(items: EditableItem[]): number {
   return items.reduce((s, i) => s + i.editPrice * i.quantity, 0);
 }
 
-function groupBySeat(orders: Order[]): SeatGroup[] {
+function groupBySeat(orders: Order[], dineInPayAfter: boolean): SeatGroup[] {
   const map = new Map<number, Order[]>();
   for (const o of orders) {
     const seat = o.seatNumber ?? 0;
@@ -53,7 +54,26 @@ function groupBySeat(orders: Order[]): SeatGroup[] {
     .sort(([a], [b]) => a - b)
     .map(([seatNumber, seatOrders]) => {
       const mergedItems = mergeSeatItems(seatOrders);
-      return { seatNumber, orders: seatOrders, mergedItems, total: calcTotal(mergedItems) };
+      const useUnsettled = dineInPayAfter && seatOrders.some((o) => o.type === 'dine_in');
+      const total = useUnsettled
+        ? Math.round(
+            seatOrders.reduce(
+              (s, o) =>
+                s +
+                computeCustomerFacingPayableEuro(
+                  {
+                    type: o.type,
+                    status: o.status,
+                    items: o.items,
+                    appliedBundles: o.appliedBundles,
+                  },
+                  true,
+                ),
+              0,
+            ) * 100,
+          ) / 100
+        : calcTotal(mergedItems);
+      return { seatNumber, orders: seatOrders, mergedItems, total };
     });
 }
 
@@ -80,9 +100,17 @@ export default function CheckoutFlow() {
   const [useMemberCredit, setUseMemberCredit] = useState(false);
   const [memberVerified, setMemberVerified] = useState<{ creditBalance: number } | null>(null);
   const [memberLookupLoading, setMemberLookupLoading] = useState(false);
+  const [config, setConfig] = useState<Record<string, string>>({});
 
   // Editable items (for price discount)
   const [editableItems, setEditableItems] = useState<EditableItem[]>([]);
+
+  useEffect(() => {
+    void apiFetch('/api/admin/config')
+      .then((r) => (r.ok ? r.json() : {}))
+      .then(setConfig)
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (!canMemberWallet) {
@@ -118,8 +146,12 @@ export default function CheckoutFlow() {
 
   useEffect(() => { fetchOrders(); }, [fetchOrders]);
 
+  const dineInPayAfter = config.dine_in_workflow_mode === 'pay_after';
+  const lockDineInCounterEdit =
+    dineInPayAfter && orders.some((o) => o.type === 'dine_in');
+
   // Rebuild editable items when orders or mode/seat changes
-  const seatGroups = useMemo(() => groupBySeat(orders), [orders]);
+  const seatGroups = useMemo(() => groupBySeat(orders, dineInPayAfter), [orders, dineInPayAfter]);
 
   useEffect(() => {
     const activeSG = seatGroups.find(g => g.seatNumber === selectedSeat);
@@ -128,12 +160,38 @@ export default function CheckoutFlow() {
   }, [orders, mode, selectedSeat, seatGroups]);
 
   const displayTotal = useMemo(() => {
+    if (dineInPayAfter && orders.some((o) => o.type === 'dine_in')) {
+      const rel =
+        mode === 'seat' && selectedSeat != null
+          ? seatGroups.find((g) => g.seatNumber === selectedSeat)?.orders
+          : orders;
+      const list = rel && rel.length > 0 ? rel : orders;
+      return Math.max(
+        0,
+        Math.round(
+          list.reduce(
+            (s, o) =>
+              s +
+              computeCustomerFacingPayableEuro(
+                {
+                  type: o.type,
+                  status: o.status,
+                  items: o.items,
+                  appliedBundles: o.appliedBundles,
+                },
+                true,
+              ),
+            0,
+          ) * 100,
+        ) / 100,
+      );
+    }
     const itemsSum = calcTotal(editableItems);
     const sg = seatGroups.find(g => g.seatNumber === selectedSeat);
     const relevantOrders = mode === 'seat' && sg ? sg.orders : orders;
     const bundleDisc = relevantOrders.reduce((s, o) => s + (o.appliedBundles || []).reduce((a, b) => a + b.discount, 0), 0);
     return Math.max(0, itemsSum - bundleDisc);
-  }, [editableItems, orders, mode, selectedSeat, seatGroups]);
+  }, [dineInPayAfter, editableItems, orders, mode, selectedSeat, seatGroups]);
 
   // Collect bundle info for display
   const activeBundles = useMemo(() => {
@@ -342,6 +400,14 @@ export default function CheckoutFlow() {
             {t('cashier.seat')} {activeSeatGroup.seatNumber}
           </div>
         )}
+        {lockDineInCounterEdit ? (
+          <div style={{ fontSize: 12, color: '#5D4037', background: '#FFF8E1', border: '1px solid #FFE082', borderRadius: 8, padding: '8px 10px', marginBottom: 12 }}>
+            {t(
+              'cashier.dineInPayAfterCheckoutHint',
+              '后结堂食：总额为系统未结余额（含部分结账与套餐分摊）；此页不可改单价。',
+            )}
+          </div>
+        ) : null}
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
           <thead>
             <tr style={{ borderBottom: '2px solid var(--border)' }}>
@@ -353,7 +419,7 @@ export default function CheckoutFlow() {
           </thead>
           <tbody>
             {editableItems.map(item => {
-              const discounted = item.editPrice < item.unitPrice;
+              const discounted = !lockDineInCounterEdit && item.editPrice < item.unitPrice;
               return (
                 <tr key={item.menuItemId} style={{ borderBottom: '1px solid #f0f0f0' }}>
                   <td style={{ padding: '8px 0', fontWeight: 500 }}>
@@ -368,24 +434,28 @@ export default function CheckoutFlow() {
                   </td>
                   <td style={{ padding: '8px 0', textAlign: 'center' }}>×{item.quantity}</td>
                   <td style={{ padding: '8px 0', textAlign: 'right' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4 }}>
-                      {discounted && (
-                        <span style={{ textDecoration: 'line-through', color: 'var(--text-light)', fontSize: 11 }}>€{item.unitPrice}</span>
-                      )}
-                      <input
-                        type="number"
-                        value={item.editPrice}
-                        onChange={e => updateItemPrice(item.menuItemId, Number(e.target.value))}
-                        step="0.01"
-                        min="0"
-                        style={{
-                          width: 60, padding: '4px 6px', fontSize: 13, textAlign: 'right',
-                          border: discounted ? '2px solid #FF9800' : '1px solid var(--border)',
-                          borderRadius: 4, background: discounted ? '#FFF8E1' : 'var(--bg)',
-                          fontWeight: 600, color: discounted ? '#E65100' : 'var(--text-primary)',
-                        }}
-                      />
-                    </div>
+                    {lockDineInCounterEdit ? (
+                      <span style={{ fontWeight: 600 }}>€{item.editPrice.toFixed(2)}</span>
+                    ) : (
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4 }}>
+                        {discounted && (
+                          <span style={{ textDecoration: 'line-through', color: 'var(--text-light)', fontSize: 11 }}>€{item.unitPrice}</span>
+                        )}
+                        <input
+                          type="number"
+                          value={item.editPrice}
+                          onChange={e => updateItemPrice(item.menuItemId, Number(e.target.value))}
+                          step="0.01"
+                          min="0"
+                          style={{
+                            width: 60, padding: '4px 6px', fontSize: 13, textAlign: 'right',
+                            border: discounted ? '2px solid #FF9800' : '1px solid var(--border)',
+                            borderRadius: 4, background: discounted ? '#FFF8E1' : 'var(--bg)',
+                            fontWeight: 600, color: discounted ? '#E65100' : 'var(--text-primary)',
+                          }}
+                        />
+                      </div>
+                    )}
                   </td>
                   <td style={{ padding: '8px 0', textAlign: 'right', fontWeight: 600 }}>€{(item.editPrice * item.quantity).toFixed(2)}</td>
                 </tr>

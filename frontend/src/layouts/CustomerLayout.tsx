@@ -80,12 +80,13 @@ export default function CustomerLayout() {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', maxWidth: 430, margin: '0 auto', width: '100%', background: 'var(--bg-cream)' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', maxWidth: 430, margin: '0 auto', width: '100%', minWidth: 0, background: 'var(--bg-cream)', overflowX: 'hidden' }}>
       {/* Header */}
       <div style={{
         display: 'flex', justifyContent: 'space-between', alignItems: 'center',
         padding: '10px 16px', background: 'var(--bg-white)',
         borderBottom: '1px solid var(--border-light)', flexShrink: 0,
+        gap: 8, minWidth: 0, overflow: 'hidden',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
           {onStorePortal ? (
@@ -199,7 +200,7 @@ export default function CustomerLayout() {
             </>
           )}
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, minWidth: 0 }}>
           <LanguageSwitcher />
           {!isCartPage && totalItems > 0 && (
             <div onClick={goToCart} style={{
@@ -228,7 +229,7 @@ export default function CustomerLayout() {
       </div>
 
       {/* Content — minHeight:0 so nested pages (e.g. menu) can own vertical scroll; hero hide/show listens on that inner scroller */}
-      <div style={{ flex: 1, minHeight: 0, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ flex: 1, minHeight: 0, minWidth: 0, overflowX: 'hidden', overflowY: 'auto', WebkitOverflowScrolling: 'touch', display: 'flex', flexDirection: 'column' }}>
         <Outlet />
       </div>
 

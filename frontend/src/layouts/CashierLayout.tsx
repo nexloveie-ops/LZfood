@@ -2,7 +2,7 @@ import { Outlet, NavLink, useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useTranslation } from 'react-i18next';
 import { useState, useEffect, useCallback } from 'react';
-import { io } from 'socket.io-client';
+import { connectStoreSocket } from '../api/storeSocket';
 import { playDineInSound, playTakeoutSound, unlockAudio } from '../utils/orderSound';
 import { printViaIframe } from '../components/cashier/ReceiptPrint';
 import LanguageSwitcher from '../components/LanguageSwitcher';
@@ -40,7 +40,7 @@ export default function CashierLayout() {
 
   useEffect(() => {
     const query = user?.storeId ? { storeId: user.storeId } : {};
-    const socket = io({ transports: ['websocket'], query });
+    const socket = connectStoreSocket(query);
     socket.on('order:new', (order: { type?: string }) => {
       const text = `新订单：${order?.type || 'unknown'} · ${new Date().toLocaleTimeString()}`;
       const id = `${Date.now()}-${Math.random()}`;

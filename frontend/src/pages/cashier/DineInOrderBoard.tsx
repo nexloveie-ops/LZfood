@@ -1,11 +1,12 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { io } from 'socket.io-client';
+import { connectStoreSocket } from '../../api/storeSocket';
 import { useAuth } from '../../context/AuthContext';
 import OrderDetail, { type Order } from '../../components/cashier/OrderDetail';
 import { buildReceiptHTML, printViaIframe } from '../../components/cashier/ReceiptPrint';
 import { apiFetch } from '../../api/client';
+import { computeCustomerFacingPayableEuro } from '../../utils/orderPayableEuro';
 
 interface TableGroup {
   tableNumber: number;
@@ -19,7 +20,7 @@ export default function DineInOrderBoard() {
   const { t } = useTranslation();
   const { token, user } = useAuth();
   const navigate = useNavigate();
-  const [tables, setTables] = useState<TableGroup[]>([]);
+  const [rawOrders, setRawOrders] = useState<Order[]>([]);
   const [selectedTable, setSelectedTable] = useState<number | null>(null);
   const [printing, setPrinting] = useState(false);
   const [config, setConfig] = useState<Record<string, string>>({});
@@ -28,34 +29,42 @@ export default function DineInOrderBoard() {
     apiFetch('/api/admin/config').then(r => r.ok ? r.json() : {}).then(setConfig).catch(() => {});
   }, []);
 
-  const calcOrderTotal = (o: Order) => {
-    const itemsSum = o.items.reduce((s2, i) => {
-      const optExtra = (i.selectedOptions || []).reduce((a: number, opt: { extraPrice?: number }) => a + (opt.extraPrice || 0), 0);
-      return s2 + (i.unitPrice + optExtra) * i.quantity;
-    }, 0);
-    const bundleDisc = (o.appliedBundles || []).reduce((a: number, b) => a + b.discount, 0);
-    return itemsSum - bundleDisc;
-  };
+  const dineInPayAfter = config.dine_in_workflow_mode === 'pay_after';
+
+  const tables = useMemo((): TableGroup[] => {
+    const grouped = new Map<number, Order[]>();
+    for (const order of rawOrders) {
+      const tbl = order.tableNumber ?? 0;
+      if (!grouped.has(tbl)) grouped.set(tbl, []);
+      grouped.get(tbl)!.push(order);
+    }
+    const orderPayable = (o: Order) =>
+      computeCustomerFacingPayableEuro(
+        {
+          type: o.type,
+          status: o.status,
+          items: o.items,
+          appliedBundles: o.appliedBundles,
+        },
+        dineInPayAfter,
+      );
+    return [...grouped.entries()]
+      .map(([tableNumber, orders]) => ({
+        tableNumber,
+        orders,
+        total: orders.reduce((s, o) => s + orderPayable(o), 0),
+        hasPaidOnline: orders.some(o => o.status === 'paid_online'),
+        allPaidOnline: orders.length > 0 && orders.every(o => o.status === 'paid_online'),
+      }))
+      .sort((a, b) => a.tableNumber - b.tableNumber);
+  }, [rawOrders, dineInPayAfter]);
 
   const fetchOrders = useCallback(async () => {
     try {
       const res = await apiFetch('/api/orders/dine-in', { headers: { Authorization: `Bearer ${token}` } });
       if (!res.ok) return;
       const data: Order[] = await res.json();
-      const grouped = new Map<number, Order[]>();
-      for (const order of data) {
-        const tbl = order.tableNumber ?? 0;
-        if (!grouped.has(tbl)) grouped.set(tbl, []);
-        grouped.get(tbl)!.push(order);
-      }
-      const groups: TableGroup[] = [...grouped.entries()].map(([tableNumber, orders]) => ({
-        tableNumber,
-        orders,
-        total: orders.reduce((s, o) => s + calcOrderTotal(o), 0),
-        hasPaidOnline: orders.some(o => o.status === 'paid_online'),
-        allPaidOnline: orders.length > 0 && orders.every(o => o.status === 'paid_online'),
-      })).sort((a, b) => a.tableNumber - b.tableNumber);
-      setTables(groups);
+      setRawOrders(data);
     } catch { /* ignore */ }
   }, [token]);
 
@@ -63,7 +72,7 @@ export default function DineInOrderBoard() {
 
   useEffect(() => {
     const query = user?.storeId ? { storeId: user.storeId } : {};
-    const socket = io({ transports: ['websocket'], query });
+    const socket = connectStoreSocket(query);
     socket.on('order:new', fetchOrders);
     socket.on('order:updated', fetchOrders);
     socket.on('order:checked-out', fetchOrders);

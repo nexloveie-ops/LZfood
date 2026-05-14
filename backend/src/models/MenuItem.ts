@@ -17,6 +17,10 @@ const OptionChoiceSchema = new mongoose.Schema({
 
 const OptionGroupSchema = new mongoose.Schema({
   required: { type: Boolean, default: false },
+  /** 仅非必选组：最少选几项（≥0）。必选组仍为单选，保存时可忽略。 */
+  minSelect: { type: Number, default: 0 },
+  /** 仅非必选组：最多选几项；0 表示不限制。 */
+  maxSelect: { type: Number, default: 0 },
   translations: [{
     locale: { type: String, required: true },
     name: { type: String, required: true },

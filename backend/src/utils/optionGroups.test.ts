@@ -1,5 +1,23 @@
 import mongoose from 'mongoose';
-import { cloneOptionGroupsPreservingSubdocIds, type LeanOptionGroup } from './optionGroups';
+import { cloneOptionGroupsPreservingSubdocIds, validateOptionGroups, type LeanOptionGroup } from './optionGroups';
+
+describe('validateOptionGroups', () => {
+  it('rejects optional group when minSelect > maxSelect', () => {
+    const bad: LeanOptionGroup[] = [
+      {
+        required: false,
+        minSelect: 3,
+        maxSelect: 2,
+        translations: [{ locale: 'zh-CN', name: 'Topping' }],
+        choices: [
+          { translations: [{ locale: 'zh-CN', name: 'A' }], extraPrice: 0 },
+          { translations: [{ locale: 'zh-CN', name: 'B' }], extraPrice: 0 },
+        ],
+      },
+    ];
+    expect(() => validateOptionGroups(bad)).toThrow();
+  });
+});
 
 describe('cloneOptionGroupsPreservingSubdocIds', () => {
   const gid = new mongoose.Types.ObjectId();

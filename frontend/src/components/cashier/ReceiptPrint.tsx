@@ -19,6 +19,8 @@ interface ReceiptOrder {
   seatNumber?: number;
   dailyOrderNumber?: number;
   dineInOrderNumber?: string;
+  /** 后结堂食：称呼/桌边备注（整桌小票分单分隔行展示） */
+  dineInGuestLabel?: string;
   status: string;
   items: ReceiptOrderItem[];
   customerName?: string;
@@ -28,18 +30,58 @@ interface ReceiptOrder {
   deliveryFeeEuro?: number;
 }
 
+export type DineInPartialLineSettlement = {
+  orderLineItemId: string;
+  quantity: number;
+  amountEuro: number;
+};
+
 interface ReceiptData {
   checkoutId: string;
   type: 'table' | 'seat';
   tableNumber?: number;
   totalAmount: number;
-  paymentMethod: 'cash' | 'card' | 'mixed' | 'online' | 'member';
+  paymentMethod: 'cash' | 'card' | 'mixed' | 'online' | 'member' | 'pending';
   cashAmount?: number;
   cardAmount?: number;
   memberCreditUsed?: number;
   memberPhoneSnapshot?: string;
   checkedOutAt: string;
   orders: ReceiptOrder[];
+  /** 堂食后结部分结账：仅本次结账行（小票不重复打印整单未结菜品） */
+  dineInPartialLineSettlements?: DineInPartialLineSettlement[];
+  /** 本桌多订单合并到一张厨房小票时在抬头展示「全桌」说明 */
+  wholeTableKitchenTicket?: boolean;
+}
+
+/** 解析部分结账行 + 本次「套餐分摊/券等」差额（行小计之和 − checkout.totalAmount） */
+function describeDineInPartialLines(receipt: ReceiptData): {
+  lines: { key: string; title: string; titleEn?: string; qty: number; amountEuro: number; options: ReceiptOrderItem['selectedOptions'] }[];
+  subtotalLinesEuro: number;
+  bundleOrAdjustmentsEuro: number;
+} | null {
+  const settlements = receipt.dineInPartialLineSettlements;
+  if (!settlements?.length) return null;
+  const lineById = new Map<string, ReceiptOrderItem>();
+  for (const o of receipt.orders) {
+    for (const it of o.items) {
+      if (it._id) lineById.set(String(it._id), it);
+    }
+  }
+  const lines = settlements.map((row, idx) => {
+    const it = lineById.get(String(row.orderLineItemId));
+    return {
+      key: `${String(row.orderLineItemId)}-${idx}`,
+      title: it?.itemName || 'Item',
+      titleEn: it?.itemNameEn,
+      qty: row.quantity,
+      amountEuro: row.amountEuro,
+      options: it?.selectedOptions,
+    };
+  });
+  const subtotalLinesEuro = Math.round(settlements.reduce((s, r) => s + r.amountEuro, 0) * 100) / 100;
+  const bundleOrAdjustmentsEuro = Math.max(0, Math.round((subtotalLinesEuro - receipt.totalAmount) * 100) / 100);
+  return { lines, subtotalLinesEuro, bundleOrAdjustmentsEuro };
 }
 
 function paymentMethodLabel(pm: ReceiptData['paymentMethod']): string {
@@ -47,6 +89,7 @@ function paymentMethodLabel(pm: ReceiptData['paymentMethod']): string {
   if (pm === 'card') return 'Card';
   if (pm === 'online') return 'Online';
   if (pm === 'member') return 'Member balance';
+  if (pm === 'pending') return 'Pay later / 后结待付';
   return 'Mixed';
 }
 
@@ -159,8 +202,21 @@ function buildReceiptHTML(
     if (receipt.tableNumber != null && receipt.tableNumber > 0) html += `<div class="big">Table ${receipt.tableNumber}</div>`;
     const seats = [...new Set(receipt.orders.map(o => o.seatNumber).filter(s => s != null && s > 0))].sort();
     if (seats.length > 0) html += `<div class="big">Seat ${seats.join(', ')}</div>`;
-    const orderNum = receipt.orders.find(o => o.dineInOrderNumber)?.dineInOrderNumber;
-    if (orderNum) html += `<div class="big">Order #${orderNum}</div>`;
+    if (receipt.wholeTableKitchenTicket) {
+      html += `<div style="font-size:15px;margin-top:6px;font-weight:700">全桌厨房单 / Whole table kitchen</div>`;
+      const nums = receipt.orders.map((o) => o.dineInOrderNumber).filter((n): n is string => Boolean(n && String(n).trim()));
+      const labels = receipt.orders
+        .map((o) => o.dineInGuestLabel?.trim())
+        .filter((g): g is string => Boolean(g && g.length > 0));
+      if (labels.length > 0) {
+        html += `<div style="font-size:12px;margin-top:4px">标识 / Label · ${labels.map((g) => escapeReceiptHtml(g)).join(' · ')}</div>`;
+      } else if (nums.length > 0) {
+        html += `<div style="font-size:12px;margin-top:4px">单号 · ${nums.map((n) => escapeReceiptHtml(String(n).trim())).join(' · ')}</div>`;
+      }
+    } else {
+      const orderNum = receipt.orders.find(o => o.dineInOrderNumber)?.dineInOrderNumber;
+      if (orderNum) html += `<div class="big">Order #${escapeReceiptHtml(String(orderNum))}</div>`;
+    }
     html += `<div style="font-size:12px;margin-top:4px">Ref: ${String(receipt.checkoutId).slice(-8).toUpperCase()}</div>`;
   } else if (isPhone) {
     html += `<div class="big">Phone #${receipt.orders[0]?.dailyOrderNumber || ''}</div>`;
@@ -196,14 +252,17 @@ function buildReceiptHTML(
   }
   html += `</div><div class="divider"></div>`;
 
+  const partialDesc = describeDineInPartialLines(receipt);
+
   // Items
   html += `<table>`;
-  for (const order of receipt.orders) {
-    for (const item of order.items) {
-      html += `<tr><td><div>${item.itemName}</div>`;
-      if (item.itemNameEn && item.itemNameEn !== item.itemName) html += `<div class="sub">${item.itemNameEn}</div>`;
-      if (item.selectedOptions && item.selectedOptions.length > 0) {
-        for (const o of item.selectedOptions) {
+  if (partialDesc) {
+    html += `<tr><td colspan="3" style="font-size:12px;text-align:center;padding:6px 0;font-weight:bold">Partial checkout / 部分结账</td></tr>`;
+    for (const L of partialDesc.lines) {
+      html += `<tr><td><div>${escapeReceiptHtml(L.title)}</div>`;
+      if (L.titleEn && L.titleEn !== L.title) html += `<div class="sub">${escapeReceiptHtml(L.titleEn)}</div>`;
+      if (L.options && L.options.length > 0) {
+        for (const o of L.options) {
           const label =
             [o.groupName, o.choiceName].filter((s) => String(s || '').trim()).join(': ') ||
             (o.extraPrice > 0 ? 'Option' : '');
@@ -213,7 +272,37 @@ function buildReceiptHTML(
           }
         }
       }
-      html += `</td><td class="qty">x${item.quantity}</td><td class="amt">€${(item.unitPrice * item.quantity).toFixed(2)}</td></tr>`;
+      html += `</td><td class="qty">x${L.qty}</td><td class="amt">€${L.amountEuro.toFixed(2)}</td></tr>`;
+    }
+  } else {
+    for (let oi = 0; oi < receipt.orders.length; oi++) {
+      const order = receipt.orders[oi];
+      if (receipt.wholeTableKitchenTicket && receipt.orders.length > 1 && order.type === 'dine_in') {
+        const guest = order.dineInGuestLabel?.trim();
+        const sub = order.dineInOrderNumber?.trim() || String(order._id || '').slice(-6);
+        const topPad = oi === 0 ? '0' : '8px';
+        const borderTop = oi > 0 ? 'border-top:1px dashed #bbb;' : '';
+        const rowLabel = guest
+          ? `— 标识 ${escapeReceiptHtml(guest)} —`
+          : `— 标识（未填）· #${escapeReceiptHtml(sub)} —`;
+        html += `<tr><td colspan="3" style="font-size:11px;padding:${topPad} 0 4px;${borderTop}font-weight:700">${rowLabel}</td></tr>`;
+      }
+      for (const item of order.items) {
+        html += `<tr><td><div>${item.itemName}</div>`;
+        if (item.itemNameEn && item.itemNameEn !== item.itemName) html += `<div class="sub">${item.itemNameEn}</div>`;
+        if (item.selectedOptions && item.selectedOptions.length > 0) {
+          for (const o of item.selectedOptions) {
+            const label =
+              [o.groupName, o.choiceName].filter((s) => String(s || '').trim()).join(': ') ||
+              (o.extraPrice > 0 ? 'Option' : '');
+            const pricePart = o.extraPrice > 0 ? ` +€${o.extraPrice}` : '';
+            if (label || pricePart) {
+              html += `<div class="sub">  · ${escapeReceiptHtml(label)}${pricePart}</div>`;
+            }
+          }
+        }
+        html += `</td><td class="qty">x${item.quantity}</td><td class="amt">€${(item.unitPrice * item.quantity).toFixed(2)}</td></tr>`;
+      }
     }
   }
   html += `</table><div class="divider"></div>`;
@@ -221,7 +310,16 @@ function buildReceiptHTML(
   // Total
   const { deliveryAmt, showLegacyDeliveryRow } = receiptDeliveryFeeBreakdown(receipt);
   const totalBundleDiscount = (bundleDiscounts || []).reduce((s, b) => s + b.discount, 0);
-  if (totalBundleDiscount > 0) {
+  if (partialDesc) {
+    html += `<div class="row"><span>Subtotal (lines) / 行小计</span><span>€${partialDesc.subtotalLinesEuro.toFixed(2)}</span></div>`;
+    if (partialDesc.bundleOrAdjustmentsEuro > 0.001) {
+      html += `<div class="row"><span>Bundle / coupon (this payment) / 本次分摊或优惠</span><span>-€${partialDesc.bundleOrAdjustmentsEuro.toFixed(2)}</span></div>`;
+    }
+    if (showLegacyDeliveryRow) {
+      html += `<div class="row"><span>Delivery</span><span>€${deliveryAmt.toFixed(2)}</span></div>`;
+    }
+    html += `<div class="row" style="font-size:18px;margin-top:4px"><span>Total</span><span>€${receipt.totalAmount.toFixed(2)}</span></div>`;
+  } else if (totalBundleDiscount > 0) {
     const foodAfterBundles = receipt.totalAmount - deliveryAmt;
     const subtotal = foodAfterBundles + totalBundleDiscount;
     html += `<div class="row"><span>Subtotal</span><span>€${subtotal.toFixed(2)}</span></div>`;
@@ -415,6 +513,7 @@ export default function ReceiptPrint({ checkoutId, cashReceived, changeAmount, b
   const paymentLabel = paymentMethodLabel(receipt.paymentMethod);
   const restaurantName = config.restaurant_name_en || config.restaurant_name_zh || '';
   const termsSegments = config.receipt_terms ? parseQRCodes(config.receipt_terms) : [];
+  const partialDescPreview = describeDineInPartialLines(receipt);
 
   return (
     <div style={{ fontFamily: 'Arial, Helvetica, sans-serif', maxWidth: 420, margin: '0 auto', padding: 16, fontSize: 14, fontWeight: 'bold', color: '#000', background: '#fff', border: '1px solid #ddd', borderRadius: 8 }}>
@@ -427,7 +526,24 @@ export default function ReceiptPrint({ checkoutId, cashReceived, changeAmount, b
             <>
               {receipt.tableNumber != null && receipt.tableNumber > 0 && <div style={{ fontSize: 20 }}>Table {receipt.tableNumber}</div>}
               {(() => { const s = [...new Set(receipt.orders.map(o => o.seatNumber).filter(v => v != null && v > 0))].sort(); return s.length > 0 ? <div style={{ fontSize: 20 }}>Seat {s.join(', ')}</div> : null; })()}
-              {(() => { const n = receipt.orders.find(o => o.dineInOrderNumber)?.dineInOrderNumber; return n ? <div style={{ fontSize: 20 }}>Order #{n}</div> : null; })()}
+              {receipt.wholeTableKitchenTicket ? (
+                <>
+                  <div style={{ fontSize: 16, marginTop: 4 }}>全桌厨房单 / Whole table kitchen</div>
+                  {(() => {
+                    const labels = receipt.orders.map((o) => o.dineInGuestLabel?.trim()).filter((g): g is string => Boolean(g && g.length > 0));
+                    const nums = receipt.orders.map((o) => o.dineInOrderNumber).filter((n): n is string => Boolean(n && String(n).trim()));
+                    if (labels.length > 0) {
+                      return <div style={{ fontSize: 13, marginTop: 4 }}>标识 / Label · {labels.join(' · ')}</div>;
+                    }
+                    if (nums.length > 0) {
+                      return <div style={{ fontSize: 13, marginTop: 4 }}>单号 · {nums.map((n) => String(n).trim()).join(' · ')}</div>;
+                    }
+                    return null;
+                  })()}
+                </>
+              ) : (
+                (() => { const n = receipt.orders.find(o => o.dineInOrderNumber)?.dineInOrderNumber; return n ? <div style={{ fontSize: 20 }}>Order #{n}</div> : null; })()
+              )}
             </>
           ) : isPhonePreview ? (
             <div style={{ fontSize: 20 }}>Phone #{receipt.orders[0]?.dailyOrderNumber}</div>
@@ -454,23 +570,79 @@ export default function ReceiptPrint({ checkoutId, cashReceived, changeAmount, b
         </div>
       </div>
 
-      {receipt.orders.flatMap(order => order.items.map(item => (
-        <div key={item._id} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', borderBottom: '1px solid #ddd' }}>
-          <div style={{ flex: 1 }}>
-            <div>{item.itemName}</div>
-            {item.itemNameEn && item.itemNameEn !== item.itemName && <div style={{ fontSize: 12 }}>{item.itemNameEn}</div>}
-            {item.selectedOptions && item.selectedOptions.length > 0 && item.selectedOptions.map((o, oi) => (
-              <div key={oi} style={{ fontSize: 12 }}>  · {o.choiceName}{o.extraPrice > 0 && ` +€${o.extraPrice}`}</div>
-            ))}
-          </div>
-          <div style={{ whiteSpace: 'nowrap' }}>x{item.quantity} €{(item.unitPrice * item.quantity).toFixed(2)}</div>
-        </div>
-      )))}
+      {partialDescPreview ? (
+        <>
+          <div style={{ fontSize: 12, textAlign: 'center', marginBottom: 6 }}>Partial checkout / 部分结账</div>
+          {partialDescPreview.lines.map((L) => (
+            <div key={L.key} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', borderBottom: '1px solid #ddd' }}>
+              <div style={{ flex: 1 }}>
+                <div>{L.title}</div>
+                {L.titleEn && L.titleEn !== L.title && <div style={{ fontSize: 12 }}>{L.titleEn}</div>}
+                {L.options && L.options.length > 0 && L.options.map((o, oi) => (
+                  <div key={oi} style={{ fontSize: 12 }}>  · {o.choiceName}{o.extraPrice > 0 && ` +€${o.extraPrice}`}</div>
+                ))}
+              </div>
+              <div style={{ whiteSpace: 'nowrap' }}>x{L.qty} €{L.amountEuro.toFixed(2)}</div>
+            </div>
+          ))}
+        </>
+      ) : (
+        receipt.orders.flatMap((order, oi) => {
+          const subRows: JSX.Element[] = [];
+          if (receipt.wholeTableKitchenTicket && receipt.orders.length > 1 && order.type === 'dine_in') {
+            const guest = order.dineInGuestLabel?.trim();
+            const sub = order.dineInOrderNumber?.trim() || String(order._id || '').slice(-6);
+            subRows.push(
+              <div
+                key={`wt-hdr-${order._id}`}
+                style={{
+                  fontSize: 11,
+                  fontWeight: 700,
+                  paddingTop: oi > 0 ? 8 : 0,
+                  marginTop: oi > 0 ? 6 : 0,
+                  borderTop: oi > 0 ? '1px dashed #bbb' : 'none',
+                }}
+              >
+                {guest ? `— 标识 ${guest} —` : `— 标识（未填）· #${sub} —`}
+              </div>,
+            );
+          }
+          for (const item of order.items) {
+            subRows.push(
+              <div key={`${order._id}-${item._id}`} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', borderBottom: '1px solid #ddd' }}>
+                <div style={{ flex: 1 }}>
+                  <div>{item.itemName}</div>
+                  {item.itemNameEn && item.itemNameEn !== item.itemName && <div style={{ fontSize: 12 }}>{item.itemNameEn}</div>}
+                  {item.selectedOptions && item.selectedOptions.length > 0 && item.selectedOptions.map((o, idx) => (
+                    <div key={idx} style={{ fontSize: 12 }}>  · {o.choiceName}{o.extraPrice > 0 && ` +€${o.extraPrice}`}</div>
+                  ))}
+                </div>
+                <div style={{ whiteSpace: 'nowrap' }}>x{item.quantity} €{(item.unitPrice * item.quantity).toFixed(2)}</div>
+              </div>,
+            );
+          }
+          return subRows;
+        })
+      )}
 
       <div style={{ borderTop: '2px dashed #000', margin: '8px 0' }} />
       {(() => {
         const { deliveryAmt, showLegacyDeliveryRow } = receiptDeliveryFeeBreakdown(receipt);
         const totalBD = (bundleDiscounts || []).reduce((s, b) => s + b.discount, 0);
+        if (partialDescPreview) {
+          return (
+            <>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Subtotal (lines)</span><span>€{partialDescPreview.subtotalLinesEuro.toFixed(2)}</span></div>
+              {partialDescPreview.bundleOrAdjustmentsEuro > 0.001 ? (
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}><span>Bundle / coupon (this payment)</span><span>-€{partialDescPreview.bundleOrAdjustmentsEuro.toFixed(2)}</span></div>
+              ) : null}
+              {showLegacyDeliveryRow ? (
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Delivery</span><span>€{deliveryAmt.toFixed(2)}</span></div>
+              ) : null}
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 17, marginTop: 4 }}><span>Total</span><span>€{receipt.totalAmount.toFixed(2)}</span></div>
+            </>
+          );
+        }
         if (totalBD > 0) {
           const foodAfterBundles = receipt.totalAmount - deliveryAmt;
           const subtotal = foodAfterBundles + totalBD;

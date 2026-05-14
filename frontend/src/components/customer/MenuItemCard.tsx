@@ -20,13 +20,15 @@ interface MenuItemCardProps {
   allergenIcons?: string[];
   optionGroups?: OptionGroup[];
   quantity?: number;
+  /** 已点份数均来自不可减的订单行时禁用「−」 */
+  decreaseDisabled?: boolean;
   onAdd: (id: string, names: Record<string, string>, price: number, options?: CartItemOption[]) => void;
   onDecrease?: (menuItemId: string) => void;
 }
 
 export default function MenuItemCard({
   id, name, names, description, price, calories, avgWaitMinutes,
-  photoUrl, photoFetchPriority = 'auto', arFileUrl, isSoldOut, allergenIcons, optionGroups, quantity, onAdd, onDecrease,
+  photoUrl, photoFetchPriority = 'auto', arFileUrl, isSoldOut, allergenIcons, optionGroups, quantity, decreaseDisabled, onAdd, onDecrease,
 }: MenuItemCardProps) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
@@ -212,11 +214,13 @@ export default function MenuItemCard({
             {quantity != null && quantity > 0 && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 0, border: '1px solid var(--border, #ddd)', borderRadius: 20, overflow: 'hidden' }}>
                 <button
-                  onClick={() => onDecrease?.(id)}
+                  type="button"
+                  onClick={() => !decreaseDisabled && onDecrease?.(id)}
+                  disabled={decreaseDisabled}
                   style={{
                     width: 30, height: 30, border: 'none', background: 'var(--bg, #f5f5f5)',
-                    color: 'var(--red-primary)', fontSize: 16, fontWeight: 700,
-                    cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    color: decreaseDisabled ? 'var(--text-light, #bbb)' : 'var(--red-primary)', fontSize: 16, fontWeight: 700,
+                    cursor: decreaseDisabled ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
                   }}
                 >−</button>
                 <span style={{ width: 28, textAlign: 'center', fontSize: 14, fontWeight: 700 }}>{quantity}</span>

@@ -41,6 +41,7 @@ export default function RestaurantInfo() {
     return init as Record<ConfigKey, string>;
   });
   const [logoUrl, setLogoUrl] = useState('');
+  const [dineInWorkflowMode, setDineInWorkflowMode] = useState<'pay_first' | 'pay_after'>('pay_first');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
@@ -60,6 +61,9 @@ export default function RestaurantInfo() {
           return next;
         });
         if (data.restaurant_logo) setLogoUrl(data.restaurant_logo);
+        if (data.dine_in_workflow_mode === 'pay_after' || data.dine_in_workflow_mode === 'pay_first') {
+          setDineInWorkflowMode(data.dine_in_workflow_mode);
+        }
       }
     } catch { /* ignore */ }
   }, [token]);
@@ -77,6 +81,7 @@ export default function RestaurantInfo() {
     try {
       const body: Record<string, string> = {};
       CONFIG_KEYS.forEach(k => { body[k] = values[k]; });
+      body.dine_in_workflow_mode = dineInWorkflowMode;
       const res = await apiFetch('/api/admin/config', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -139,6 +144,33 @@ export default function RestaurantInfo() {
               支持 JPG, PNG, SVG, 最大 5MB
             </div>
           </div>
+        </div>
+      </div>
+
+      <div className="card" style={{ padding: 20, marginBottom: 16 }}>
+        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 10 }}>{t('admin.dineInWorkflowTitle')}</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer' }}>
+            <input
+              type="radio"
+              name="dineInWorkflow"
+              checked={dineInWorkflowMode === 'pay_first'}
+              onChange={() => { setDineInWorkflowMode('pay_first'); setSaved(false); }}
+            />
+            <span>{t('admin.dineInWorkflowPayFirst')}</span>
+          </label>
+          <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer' }}>
+            <input
+              type="radio"
+              name="dineInWorkflow"
+              checked={dineInWorkflowMode === 'pay_after'}
+              onChange={() => { setDineInWorkflowMode('pay_after'); setSaved(false); }}
+            />
+            <span>{t('admin.dineInWorkflowPayAfter')}</span>
+          </label>
+        </div>
+        <div style={{ fontSize: 12, color: 'var(--text-light)', marginTop: 10, lineHeight: 1.5 }}>
+          {t('admin.dineInWorkflowHint')}
         </div>
       </div>
 

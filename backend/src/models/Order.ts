@@ -16,6 +16,10 @@ const OrderItemSubdocSchema = new mongoose.Schema({
     extraPrice: { type: Number, default: 0 },
   }],
   refunded: { type: Boolean, default: false },
+  /** 已送至厨房打印的份数（≤ quantity）；用于后结堂食「只打新增」 */
+  kitchenPrintedQty: { type: Number, default: 0, min: 0 },
+  /** 后结堂食：已通过收银/Stripe 结清的份数（≤ quantity），用于部分结账与剩余应付 */
+  settledQty: { type: Number, default: 0, min: 0 },
 }, { _id: true });
 
 const AppliedBundleSchema = new mongoose.Schema({
@@ -31,6 +35,12 @@ const OrderSchema = new mongoose.Schema({
   seatNumber: { type: Number },
   dailyOrderNumber: { type: Number },
   dineInOrderNumber: { type: String },
+  /** 后结堂食：顾客自选称呼/桌边备注（可选，短字符串） */
+  dineInGuestLabel: { type: String, default: '' },
+  /** 后结堂食：顾客修改中暂不对店员展示时为 false；缺省视为 true（与 pay_first 历史单一致） */
+  dineInExposedToStaff: { type: Boolean },
+  /** 后结堂食：店员锁定后顾客仅可加菜不可减删（由 PUT items 校验） */
+  dineInStaffLockedAt: { type: Date },
   customerName: { type: String, default: '' },
   customerPhone: { type: String, default: '' },
   deliveryAddress: { type: String, default: '' },
@@ -65,7 +75,7 @@ OrderSchema.index({ storeId: 1, customerPhone: 1, createdAt: -1 });
 OrderSchema.index({ storeId: 1, memberPhoneSnapshot: 1, createdAt: -1 }, { sparse: true });
 /** 收银「订单中心」GET /api/orders/active-all：按店 + type + status（+ deliverySource）过滤，避免历史订单增多后 $or 扫描过慢 */
 OrderSchema.index({ storeId: 1, type: 1, status: 1, deliverySource: 1 });
-/** 与「当日 createdAt」区间并用 storeId 收窄 */
+/** 与 active-all 的 createdAt 区间（当地日 ±1h）并用 storeId 收窄 */
 OrderSchema.index({ storeId: 1, createdAt: -1 });
 
 export { OrderSchema, OrderItemSubdocSchema };

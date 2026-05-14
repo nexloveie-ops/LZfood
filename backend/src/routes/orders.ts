@@ -5,7 +5,7 @@ import { getModels } from '../getModels';
 import { createAppError } from '../middleware/errorHandler';
 import { getBusinessStatus } from '../utils/businessHours';
 import { mergeTemplateOptionGroupsForItem, type MenuItemLike } from '../utils/optionGroupTemplateApply';
-import type { LeanOptionGroup } from '../utils/optionGroups';
+import { optionGroupSelectionBounds, type LeanOptionGroup } from '../utils/optionGroups';
 import { storeIoRoom } from '../socketRooms';
 import { resolveStoreEffectiveFeatures, FeatureKeys } from '../utils/featureCatalog';
 import {
@@ -21,6 +21,19 @@ import { customerPhoneMatchCandidates, normalizeMemberPhone } from '../utils/mem
 import { attachCustomerProfileToDeliveryOrder } from '../utils/customerProfileDelivery';
 import { aggregateFrequentMenuItemsForCustomer } from '../utils/customerFrequentOrderItems';
 import { zonedDayBoundsForRef } from '../utils/zonedDayBounds';
+import { getDineInWorkflowModeForStore } from '../utils/dineInWorkflowMode';
+import { assertDineInItemsAdditiveOnly, mergeDineInKitchenPrintedAndSettledFromPrevious } from '../utils/dineInPayAfterItems';
+
+function isStaffCashierOrOwner(req: Request): boolean {
+  const u = req.user;
+  return !!(
+    u &&
+    u.role !== 'platform_owner' &&
+    req.storeId &&
+    u.storeId === req.storeId.toString() &&
+    (u.role === Role.OWNER || u.role === Role.CASHIER)
+  );
+}
 
 function orderModels() {
   return getModels() as {
@@ -57,6 +70,27 @@ export function createOrdersRouter(io: SocketIOServer): Router {
       optionGroups: (menuItem.optionGroups || []) as unknown as LeanOptionGroup[],
     });
 
+    const countsByGroup = new Map<string, number>();
+    for (const sel of selectedOptions) {
+      if (!sel.groupId || !mongoose.Types.ObjectId.isValid(sel.groupId)) continue;
+      if (!sel.choiceId || !mongoose.Types.ObjectId.isValid(sel.choiceId)) continue;
+      countsByGroup.set(sel.groupId, (countsByGroup.get(sel.groupId) || 0) + 1);
+    }
+    for (const g of merged) {
+      const gid = g._id?.toString();
+      if (!gid) continue;
+      const n = countsByGroup.get(gid) || 0;
+      const { min, max } = optionGroupSelectionBounds(g);
+      if (n < min) {
+        const gn = g.translations?.find((t) => t.locale === 'zh-CN')?.name || g.translations?.[0]?.name || gid;
+        throw createAppError('VALIDATION_ERROR', `选项组「${gn}」至少需选 ${min} 项（当前 ${n} 项）`);
+      }
+      if (max > 0 && n > max) {
+        const gn = g.translations?.find((t) => t.locale === 'zh-CN')?.name || g.translations?.[0]?.name || gid;
+        throw createAppError('VALIDATION_ERROR', `选项组「${gn}」最多可选 ${max} 项（当前 ${n} 项）`);
+      }
+    }
+
     const snapshots: { groupName: string; groupNameEn: string; choiceName: string; choiceNameEn: string; extraPrice: number }[] = [];
     for (const sel of selectedOptions) {
       if (!sel.groupId || !mongoose.Types.ObjectId.isValid(sel.groupId)) {
@@ -66,7 +100,14 @@ export function createOrdersRouter(io: SocketIOServer): Router {
         throw createAppError('VALIDATION_ERROR', `Invalid choiceId: ${sel.choiceId}`);
       }
 
-      const group = merged.find((g) => g._id && g._id.toString() === sel.groupId);
+      let group = merged.find((g) => g._id && g._id.toString() === sel.groupId);
+      // 客户端 groupId 可能与当前合并结果不一致（名称回退错组、旧缓存、模板子文档 _id 变更等），
+      // 若 choiceId 仍落在合并后的某一组内，则按 choice 反查组，避免堂食/外卖下单失败。
+      if (!group) {
+        group = merged.find((g) =>
+          (g.choices || []).some((c) => c._id && c._id.toString() === sel.choiceId),
+        );
+      }
       if (!group) {
         throw createAppError('VALIDATION_ERROR', `Unknown option group: ${sel.groupId}`);
       }
@@ -259,6 +300,16 @@ export function createOrdersRouter(io: SocketIOServer): Router {
           String(now.getHours()).padStart(2, '0') +
           String(now.getMinutes()).padStart(2, '0') +
           String(now.getSeconds()).padStart(2, '0');
+        const dineInWf = await getDineInWorkflowModeForStore(req.storeId!);
+        const rawGuest =
+          typeof (req.body as { dineInGuestLabel?: unknown }).dineInGuestLabel === 'string'
+            ? String((req.body as { dineInGuestLabel: string }).dineInGuestLabel).trim()
+            : '';
+        orderData.dineInGuestLabel = rawGuest.slice(0, 40);
+        if (dineInWf === 'pay_after') {
+          // 首次下单对店端可见；顾客点「改单」会先调 dine-in-exposed 隐藏
+          orderData.dineInExposedToStaff = true;
+        }
       }
 
       if (type === 'takeout' || type === 'phone') {
@@ -382,7 +433,14 @@ export function createOrdersRouter(io: SocketIOServer): Router {
   router.get('/dine-in', async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { Order } = orderModels();
-      const orders = await Order.find({ storeId: req.storeId, type: 'dine_in', status: { $in: ['pending', 'paid_online'] } }).sort({ tableNumber: 1, seatNumber: 1 });
+      const q: Record<string, unknown> = {
+        storeId: req.storeId,
+        type: 'dine_in',
+        status: { $in: ['pending', 'paid_online'] },
+        /** 与后结「改单中隐藏」一致：先付下也必须排除，否则切换流程后顾客扫码仍被旧单劫持 */
+        dineInExposedToStaff: { $ne: false },
+      };
+      const orders = await Order.find(q).sort({ tableNumber: 1, seatNumber: 1 });
       res.json(orders);
     } catch (err) {
       next(err);
@@ -397,13 +455,16 @@ export function createOrdersRouter(io: SocketIOServer): Router {
         return res.json([]);
       }
       const { Order } = orderModels();
-      const orders = await Order.find({
+      const q: Record<string, unknown> = {
         storeId: req.storeId,
         type: 'dine_in',
         tableNumber: Number(table),
         seatNumber: Number(seat),
         status: { $in: ['pending', 'paid_online'] },
-      }).sort({ createdAt: -1 });
+        /** 后结改单隐藏时 dineInExposedToStaff=false；先付扫码不应把这类单当作「本座未完成」 */
+        dineInExposedToStaff: { $ne: false },
+      };
+      const orders = await Order.find(q).sort({ createdAt: -1 });
       res.json(orders);
     } catch (err) {
       next(err);
@@ -436,18 +497,24 @@ export function createOrdersRouter(io: SocketIOServer): Router {
   router.get('/active-all', async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { Order } = orderModels();
-      /** 仅「当前店铺 + 当地日历当日 00:00～次日 00:00」内创建的订单（左闭右开），避免历史 checked_out 等占满队列 */
+      /** 当地日历当日 00:00～次日 00:00（左闭右开）各扩 1h，减少跨日/时钟边界订单漏出订单中心 */
       const tz = process.env.CASHIER_ACTIVE_ORDER_TIMEZONE?.trim() || 'Europe/Dublin';
       const { start: dayStart, endExclusive: dayEndExclusive } = zonedDayBoundsForRef(new Date(), tz);
+      const hourMs = 3600 * 1000;
+      const activeAllStart = new Date(dayStart.getTime() - hourMs);
+      const activeAllEndExclusive = new Date(dayEndExclusive.getTime() + hourMs);
+      const dineInActive: Record<string, unknown> = {
+        type: 'dine_in',
+        status: { $in: [...ACTIVE_ORDER_STATUSES] },
+        /** 后结改单隐藏；先付下也不应出现在统一队列（与 /dine-in/active 对齐） */
+        dineInExposedToStaff: { $ne: false },
+      };
       const orders = await Order.find({
         storeId: req.storeId,
-        createdAt: { $gte: dayStart, $lt: dayEndExclusive },
+        createdAt: { $gte: activeAllStart, $lt: activeAllEndExclusive },
         $or: [
-          // Dine-in and takeout keep existing active statuses.
-          {
-            type: { $in: ['dine_in', 'takeout'] },
-            status: { $in: [...ACTIVE_ORDER_STATUSES] },
-          },
+          { type: 'takeout', status: { $in: [...ACTIVE_ORDER_STATUSES] } },
+          dineInActive,
           // Phone orders should disappear after checkout.
           {
             type: 'phone',
@@ -648,7 +715,18 @@ export function createOrdersRouter(io: SocketIOServer): Router {
       }, 0);
       const bundleDiscount = ((order as unknown as { appliedBundles?: { discount: number }[] }).appliedBundles || [])
         .reduce((s: number, b: { discount: number }) => s + b.discount, 0);
-      const totalAmount = Math.round((itemTotal - bundleDiscount) * 100) / 100;
+      let totalAmount = Math.round((itemTotal - bundleDiscount) * 100) / 100;
+      const wfDn = await getDineInWorkflowModeForStore(req.storeId!);
+      if (wfDn === 'pay_after') {
+        const priorCheckouts = await Checkout.find({ storeId: req.storeId, orderIds: order._id }).lean();
+        let partialSum = 0;
+        for (const c of priorCheckouts as { totalAmount?: number; dineInPartialLineSettlements?: unknown[] }[]) {
+          if (Array.isArray(c.dineInPartialLineSettlements) && c.dineInPartialLineSettlements.length > 0) {
+            partialSum += Number(c.totalAmount) || 0;
+          }
+        }
+        totalAmount = Math.max(0, Math.round((totalAmount - partialSum) * 100) / 100);
+      }
 
       const stripePi = String(order.stripePaymentIntentId || '').trim();
       const memberUsed = Number(order.memberCreditUsed) || 0;
@@ -797,6 +875,185 @@ export function createOrdersRouter(io: SocketIOServer): Router {
     }
   });
 
+  // PUT /api/orders/:id/dine-in-exposed — 后结堂食：顾客改单前隐藏 / 保存后重新对店端展示（须置于 /:id 的 GET 之前）
+  router.put('/:id/dine-in-exposed', optionalAuthMiddleware, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { Order } = orderModels();
+      const id = req.params.id as string;
+      if (!mongoose.Types.ObjectId.isValid(id)) {
+        throw createAppError('VALIDATION_ERROR', 'Invalid order ID');
+      }
+      const wf = await getDineInWorkflowModeForStore(req.storeId!);
+      if (wf !== 'pay_after') {
+        throw createAppError('VALIDATION_ERROR', '当前店铺未启用后结堂食流程');
+      }
+      const exposed = Boolean(req.body?.exposed);
+      const order = await Order.findOne({ _id: id, storeId: req.storeId });
+      if (!order) {
+        throw createAppError('NOT_FOUND', 'Order not found');
+      }
+      if (order.type !== 'dine_in') {
+        throw createAppError('VALIDATION_ERROR', 'Only dine-in orders support this action');
+      }
+      if (!['pending', 'paid_online'].includes(String(order.status))) {
+        throw createAppError('ORDER_NOT_MODIFIABLE', 'Order status does not allow visibility changes');
+      }
+      if (!exposed && order.dineInStaffLockedAt) {
+        throw createAppError('ORDER_NOT_MODIFIABLE', '店员已锁定本单，无法再对店端隐藏');
+      }
+      order.dineInExposedToStaff = exposed;
+      await order.save();
+      io.to(storeIoRoom(req.storeId!)).emit('order:updated', order);
+      res.json(order);
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // PUT /api/orders/:id/dine-in-staff-lock — 后结堂食：店员锁定（顾客仅可加菜）
+  router.put(
+    '/:id/dine-in-staff-lock',
+    ...requireAuthSameStore,
+    requirePermission('checkout:process'),
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const { Order } = orderModels();
+        const id = req.params.id as string;
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+          throw createAppError('VALIDATION_ERROR', 'Invalid order ID');
+        }
+        const wf = await getDineInWorkflowModeForStore(req.storeId!);
+        if (wf !== 'pay_after') {
+          throw createAppError('VALIDATION_ERROR', '当前店铺未启用后结堂食流程');
+        }
+        const order = await Order.findOne({ _id: id, storeId: req.storeId });
+        if (!order) {
+          throw createAppError('NOT_FOUND', 'Order not found');
+        }
+        if (order.type !== 'dine_in') {
+          throw createAppError('VALIDATION_ERROR', 'Only dine-in orders can be locked');
+        }
+        if (order.status !== 'pending') {
+          throw createAppError('ORDER_NOT_MODIFIABLE', 'Only pending dine-in orders can be locked', {
+            currentStatus: order.status,
+          });
+        }
+        order.dineInStaffLockedAt = new Date();
+        order.dineInExposedToStaff = true;
+        await order.save();
+        io.to(storeIoRoom(req.storeId!)).emit('order:updated', order);
+        res.json(order);
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  // POST /api/orders/:id/kitchen-printed-increment — 堂食厨房出单：按行累加已打印份数（后结增量打印成功后调用）
+  router.post(
+    '/:id/kitchen-printed-increment',
+    ...requireAuthSameStore,
+    requirePermission('checkout:process'),
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const { Order } = orderModels();
+        const id = req.params.id as string;
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+          throw createAppError('VALIDATION_ERROR', 'Invalid order ID');
+        }
+        const raw = (req.body as { increments?: unknown }).increments;
+        if (!Array.isArray(raw) || raw.length === 0) {
+          throw createAppError('VALIDATION_ERROR', 'increments must be a non-empty array');
+        }
+        const order = await Order.findOne({ _id: id, storeId: req.storeId });
+        if (!order) {
+          throw createAppError('NOT_FOUND', 'Order not found');
+        }
+        if (order.type !== 'dine_in') {
+          throw createAppError('VALIDATION_ERROR', 'Only dine-in orders support kitchen print marks');
+        }
+        if (!['pending', 'paid_online', 'checked_out'].includes(String(order.status))) {
+          throw createAppError('ORDER_NOT_MODIFIABLE', 'Order status does not allow kitchen print updates');
+        }
+        for (const row of raw) {
+          const lineId =
+            row && typeof row === 'object' && typeof (row as { lineId?: unknown }).lineId === 'string'
+              ? (row as { lineId: string }).lineId
+              : '';
+          const qtyRaw = row && typeof row === 'object' ? (row as { qty?: unknown }).qty : undefined;
+          const qty = typeof qtyRaw === 'number' && Number.isFinite(qtyRaw) ? qtyRaw : NaN;
+          if (!mongoose.Types.ObjectId.isValid(lineId) || !(qty >= 1)) {
+            throw createAppError('VALIDATION_ERROR', 'Each increment needs valid lineId and qty >= 1');
+          }
+          const line = order.items.id(lineId);
+          if (!line) {
+            throw createAppError('VALIDATION_ERROR', `Unknown line id: ${lineId}`);
+          }
+          if ((line as { lineKind?: string }).lineKind === 'delivery_fee') {
+            throw createAppError('VALIDATION_ERROR', 'Cannot mark delivery_fee lines');
+          }
+          if ((line as { refunded?: boolean }).refunded) {
+            throw createAppError('VALIDATION_ERROR', 'Cannot mark refunded lines');
+          }
+          const maxQ = typeof line.quantity === 'number' ? line.quantity : 0;
+          const cur = Math.max(0, Math.min(Number((line as { kitchenPrintedQty?: number }).kitchenPrintedQty) || 0, maxQ));
+          if (cur + qty > maxQ) {
+            throw createAppError('VALIDATION_ERROR', 'kitchenPrintedQty would exceed line quantity', {
+              lineId,
+              current: cur,
+              add: qty,
+              max: maxQ,
+            });
+          }
+          (line as { kitchenPrintedQty?: number }).kitchenPrintedQty = cur + qty;
+        }
+        await order.save();
+        io.to(storeIoRoom(req.storeId!)).emit('order:updated', order);
+        res.json(order);
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  // POST /api/orders/:id/kitchen-printed-all — 将该单所有菜品行标记为已全部打印
+  router.post(
+    '/:id/kitchen-printed-all',
+    ...requireAuthSameStore,
+    requirePermission('checkout:process'),
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const { Order } = orderModels();
+        const id = req.params.id as string;
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+          throw createAppError('VALIDATION_ERROR', 'Invalid order ID');
+        }
+        const order = await Order.findOne({ _id: id, storeId: req.storeId });
+        if (!order) {
+          throw createAppError('NOT_FOUND', 'Order not found');
+        }
+        if (order.type !== 'dine_in') {
+          throw createAppError('VALIDATION_ERROR', 'Only dine-in orders support kitchen print marks');
+        }
+        if (!['pending', 'paid_online', 'checked_out'].includes(String(order.status))) {
+          throw createAppError('ORDER_NOT_MODIFIABLE', 'Order status does not allow kitchen print updates');
+        }
+        for (const line of order.items) {
+          const lk = (line as { lineKind?: string }).lineKind;
+          if (lk === 'delivery_fee') continue;
+          if ((line as { refunded?: boolean }).refunded) continue;
+          const maxQ = typeof line.quantity === 'number' ? line.quantity : 0;
+          (line as { kitchenPrintedQty?: number }).kitchenPrintedQty = maxQ;
+        }
+        await order.save();
+        io.to(storeIoRoom(req.storeId!)).emit('order:updated', order);
+        res.json(order);
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
   // GET /api/orders/:id — Get order details
   router.get('/:id', async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -818,7 +1075,7 @@ export function createOrdersRouter(io: SocketIOServer): Router {
   });
 
   // PUT /api/orders/:id/items — Modify order items
-  router.put('/:id/items', async (req: Request, res: Response, next: NextFunction) => {
+  router.put('/:id/items', optionalAuthMiddleware, async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { MenuItem, Order } = orderModels();
       const id = req.params.id as string;
@@ -884,6 +1141,20 @@ export function createOrdersRouter(io: SocketIOServer): Router {
         Number(order.deliveryFeeEuro) || 0,
       );
 
+      if (order.type === 'dine_in' && order.dineInStaffLockedAt) {
+        const dineInWf = await getDineInWorkflowModeForStore(req.storeId!);
+        if (dineInWf === 'pay_after' && !isStaffCashierOrOwner(req)) {
+          assertDineInItemsAdditiveOnly(order.items, orderItems as Record<string, unknown>[]);
+        }
+      }
+
+      if (order.type === 'dine_in') {
+        mergeDineInKitchenPrintedAndSettledFromPrevious(
+          order.items as Parameters<typeof mergeDineInKitchenPrintedAndSettledFromPrevious>[0],
+          orderItems as Record<string, unknown>[],
+        );
+      }
+
       const updated = await Order.findOneAndUpdate(
         { _id: id, storeId: req.storeId },
         { $set: { items: orderItems } },
@@ -916,6 +1187,33 @@ export function createOrdersRouter(io: SocketIOServer): Router {
         throw createAppError('ORDER_NOT_MODIFIABLE', 'Only pending orders can be cancelled', {
           currentStatus: order.status,
         });
+      }
+
+      if (order.type === 'dine_in') {
+        const lines = (order.items || []) as Array<{
+          lineKind?: string;
+          refunded?: boolean;
+          quantity: number;
+          kitchenPrintedQty?: number;
+          settledQty?: number;
+        }>;
+        for (const it of lines) {
+          if (it.lineKind === 'delivery_fee' || it.refunded) continue;
+          if ((Number(it.kitchenPrintedQty) || 0) > 0) {
+            throw createAppError(
+              'ORDER_NOT_MODIFIABLE',
+              'Cannot cancel dine-in order: kitchen ticket already printed',
+              { reason: 'kitchen_printed' },
+            );
+          }
+          if ((Number(it.settledQty) || 0) > 0) {
+            throw createAppError(
+              'ORDER_NOT_MODIFIABLE',
+              'Cannot cancel dine-in order: partial payment already applied',
+              { reason: 'settled_qty' },
+            );
+          }
+        }
       }
 
       await Order.findOneAndDelete({ _id: id, storeId: req.storeId });

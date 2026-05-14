@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { io } from 'socket.io-client';
+import { connectStoreSocket } from '../../api/storeSocket';
 import { useAuth } from '../../context/AuthContext';
 import { apiFetch } from '../../api/client';
 
@@ -23,7 +23,7 @@ export default function TakeoutDelivery() {
 
   useEffect(() => {
     const query = user?.storeId ? { storeId: user.storeId } : {};
-    const socket = io({ transports: ['websocket'], query });
+    const socket = connectStoreSocket(query);
     socket.on('order:new', fetchPending);
     socket.on('order:updated', fetchPending);
     socket.on('order:checked-out', fetchPending);

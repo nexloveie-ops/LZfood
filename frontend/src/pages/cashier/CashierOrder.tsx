@@ -36,6 +36,65 @@ interface OrderLine {
   options?: OrderItemOption[];
 }
 
+/** GET /api/orders/dine-in/active 返回行（本桌待结列表，点击行载入点单） */
+interface ActiveDineInOrderRow {
+  _id: string;
+  dineInOrderNumber?: string;
+  dineInGuestLabel?: string;
+  items: Array<{
+    menuItemId?: string;
+    lineKind?: string;
+    quantity: number;
+    unitPrice: number;
+    itemName: string;
+    itemNameEn?: string;
+    refunded?: boolean;
+    selectedOptions?: Array<{
+      groupName?: string;
+      groupNameEn?: string;
+      choiceName?: string;
+      choiceNameEn?: string;
+      extraPrice?: number;
+    }>;
+  }>;
+}
+
+/** 从同桌 active 订单构造点单行（每份一行） */
+function buildLinesFromActiveDineInOrders(orders: ActiveDineInOrderRow[], lang: string): OrderLine[] {
+  const lines: OrderLine[] = [];
+  for (const ord of orders) {
+    for (const it of ord.items) {
+      if (it.lineKind === 'delivery_fee' || !it.menuItemId || it.refunded) continue;
+      const q = Math.max(1, Math.floor(Number(it.quantity)) || 1);
+      const rawOpts = it.selectedOptions || [];
+      const opts: OrderItemOption[] = rawOpts.map((o) => ({
+        groupName: {
+          'zh-CN': o.groupName || '',
+          'en-US': (o.groupNameEn || o.groupName || '').trim() || (o.groupName || ''),
+        },
+        choiceName: {
+          'zh-CN': o.choiceName || '',
+          'en-US': (o.choiceNameEn || o.choiceName || '').trim() || (o.choiceName || ''),
+        },
+        extraPrice: typeof o.extraPrice === 'number' ? o.extraPrice : 0,
+      }));
+      const displayName = String(lang).toLowerCase().startsWith('zh')
+        ? it.itemName
+        : (it.itemNameEn || it.itemName);
+      for (let i = 0; i < q; i++) {
+        lines.push({
+          id: nextLineId(),
+          menuItemId: String(it.menuItemId),
+          name: displayName,
+          price: it.unitPrice,
+          options: opts.length ? opts : undefined,
+        });
+      }
+    }
+  }
+  return lines;
+}
+
 let lineIdCounter = 0;
 function nextLineId() { return `line-${++lineIdCounter}-${Date.now()}`; }
 
@@ -76,6 +135,33 @@ export default function CashierOrder() {
   const [receiptBundleDiscounts, setReceiptBundleDiscounts] = useState<{ name: string; nameEn: string; discount: number }[]>([]);
   const [phoneOrderId, setPhoneOrderId] = useState<string | null>(null);
   const [offers, setOffers] = useState<OfferData[]>([]);
+
+  /** 与后台 / 管理端「堂食流程」一致：切换 pay_first / pay_after 时分流 */
+  const [dineInWorkflowMode, setDineInWorkflowMode] = useState<'pay_first' | 'pay_after'>('pay_first');
+  const [counterTableInput, setCounterTableInput] = useState('');
+  const [counterGuestLabel, setCounterGuestLabel] = useState('');
+  const [activeTableOrders, setActiveTableOrders] = useState<ActiveDineInOrderRow[]>([]);
+  const [activeTableOrdersLoading, setActiveTableOrdersLoading] = useState(false);
+  const dineInActiveFetchGen = useRef(0);
+  const [importingActiveOrderId, setImportingActiveOrderId] = useState<string | null>(null);
+  const [dineInSubmittedInfo, setDineInSubmittedInfo] = useState<{
+    id: string;
+    dineInOrderNumber?: string;
+    tableNumber: number;
+  } | null>(null);
+
+  const refreshDineInWorkflowMode = useCallback(async (): Promise<'pay_first' | 'pay_after'> => {
+    try {
+      const r = await apiFetch('/api/admin/config');
+      if (!r.ok) return 'pay_first';
+      const d = (await r.json()) as { dine_in_workflow_mode?: string };
+      const m = d.dine_in_workflow_mode === 'pay_after' ? 'pay_after' : 'pay_first';
+      setDineInWorkflowMode(m);
+      return m;
+    } catch {
+      return 'pay_first';
+    }
+  }, []);
 
   /** 按分类拉菜：避免整本菜单一次 merge；切语言时清空 */
   const loadedCategoryIds = useRef(new Set<string>());
@@ -146,6 +232,54 @@ export default function CashierOrder() {
   }, [fetchMenu]);
 
   useEffect(() => {
+    void refreshDineInWorkflowMode();
+  }, [refreshDineInWorkflowMode, token]);
+
+  useEffect(() => {
+    const gen = ++dineInActiveFetchGen.current;
+    if (!token || orderType !== 'dine_in' || dineInWorkflowMode !== 'pay_after') {
+      setActiveTableOrders([]);
+      setActiveTableOrdersLoading(false);
+      return;
+    }
+    const raw = counterTableInput.trim();
+    const n = parseInt(raw, 10);
+    if (raw === '' || !Number.isFinite(n) || n < 1) {
+      setActiveTableOrders([]);
+      setActiveTableOrdersLoading(false);
+      return;
+    }
+    const tid = window.setTimeout(() => {
+      void (async () => {
+        setActiveTableOrdersLoading(true);
+        try {
+          const res = await apiFetch(`/api/orders/dine-in/active?table=${n}&seat=0`);
+          const rows = res.ok ? ((await res.json()) as ActiveDineInOrderRow[]) : [];
+          if (gen !== dineInActiveFetchGen.current) return;
+          setActiveTableOrders(Array.isArray(rows) ? rows : []);
+        } catch {
+          if (gen !== dineInActiveFetchGen.current) return;
+          setActiveTableOrders([]);
+        } finally {
+          if (gen === dineInActiveFetchGen.current) setActiveTableOrdersLoading(false);
+        }
+      })();
+    }, 200);
+    return () => {
+      window.clearTimeout(tid);
+    };
+  }, [counterTableInput, orderType, dineInWorkflowMode, token]);
+
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState !== 'visible') return;
+      void refreshDineInWorkflowMode();
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, [refreshDineInWorkflowMode]);
+
+  useEffect(() => {
     if (!activeCat) return;
     void fetchItemsForCategory(activeCat);
   }, [activeCat, fetchItemsForCategory]);
@@ -200,10 +334,37 @@ export default function CashierOrder() {
     return list;
   }, [menuItems, activeCat, search]);
 
+  const activeTableKeyNorm = useMemo(() => {
+    const raw = counterTableInput.trim();
+    const n = parseInt(raw, 10);
+    return raw !== '' && Number.isFinite(n) && n >= 1 ? String(n) : null;
+  }, [counterTableInput]);
+
+  /** 将同桌某条待结订单的菜品追加到当前点单（显式点击列表行） */
+  const appendActiveOrderToCart = useCallback(
+    async (ord: ActiveDineInOrderRow) => {
+      const lines = buildLinesFromActiveDineInOrders([ord], lang);
+      if (lines.length === 0) return;
+      setImportingActiveOrderId(ord._id);
+      try {
+        const mids = new Set(lines.map((l) => l.menuItemId));
+        const needMerge = [...mids].some((id) => !menuItems.some((m) => m._id === id));
+        if (needMerge) {
+          const res = await apiFetch(`/api/menu/items?lang=${encodeURIComponent(lang)}`);
+          if (res.ok) mergeMenuItems(await res.json());
+        }
+        setOrder((prev) => [...prev, ...lines]);
+      } finally {
+        setImportingActiveOrderId(null);
+      }
+    },
+    [lang, menuItems, mergeMenuItems],
+  );
+
   const addToOrder = (item: MenuItem) => {
     if (item.isSoldOut) return;
     if (item.optionGroups && item.optionGroups.length > 0) { setOptionModal(item); return; }
-    setOrder(prev => [...prev, { id: nextLineId(), menuItemId: item._id, name: getName(item.translations), price: item.price }]);
+    setOrder((prev) => [...prev, { id: nextLineId(), menuItemId: item._id, name: getName(item.translations), price: item.price }]);
   };
 
   const addToOrderWithOptions = (item: MenuItem, cartOptions: CartItemOption[]) => {
@@ -214,7 +375,10 @@ export default function CashierOrder() {
       choiceName: o.choiceName,
       extraPrice: o.extraPrice,
     }));
-    setOrder(prev => [...prev, { id: nextLineId(), menuItemId: item._id, name: getName(item.translations), price: item.price, options }]);
+    setOrder((prev) => [
+      ...prev,
+      { id: nextLineId(), menuItemId: item._id, name: getName(item.translations), price: item.price, options },
+    ]);
     setOptionModal(null);
   };
 
@@ -236,7 +400,9 @@ export default function CashierOrder() {
   };
 
   const removeLine = (lineId: string) => { if (editingLineId) return; setOrder(prev => prev.filter(o => o.id !== lineId)); };
-  const clearOrder = () => setOrder([]);
+  const clearOrder = () => {
+    setOrder([]);
+  };
 
   const totalAmount = order.reduce((s, o) => s + o.price + (o.options || []).reduce((sum, opt) => sum + opt.extraPrice, 0), 0);
   const getItemCount = (menuItemId: string) => order.filter(o => o.menuItemId === menuItemId).length;
@@ -283,23 +449,10 @@ export default function CashierOrder() {
       setPhoneGuestPhone('');
       setPhoneGuestName('');
     }
-  };
-
-  // Open payment modal (no API call yet) — or create phone order directly
-  const handleOpenPayment = () => {
-    if (order.length === 0) return;
-    if (orderType === 'phone') {
-      handlePhoneOrder();
-      return;
+    if (next !== 'dine_in') {
+      setCounterTableInput('');
+      setCounterGuestLabel('');
     }
-    setPayingTotal(finalTotal);
-    setCashReceived('');
-    setPaymentMethod('cash');
-    setMemberPhone('');
-    setMemberPreview(null);
-    setSelectedCoupon(null);
-    setError('');
-    setShowPayment(true);
   };
 
   // Phone order: create order only, print kitchen receipt, no payment
@@ -370,15 +523,45 @@ export default function CashierOrder() {
       const mi = menuItems.find(m => m._id === line.menuItemId);
       let selOpts: { groupId: string; choiceId: string }[] | undefined;
       if (line.options && line.options.length > 0 && mi?.optionGroups) {
-        selOpts = line.options.map(opt => {
-          // Prefer persisted IDs from selection time; fallback to name matching for legacy lines.
+        selOpts = line.options.map((opt) => {
           if (opt.groupId && opt.choiceId) {
             return { groupId: opt.groupId, choiceId: opt.choiceId };
           }
-          const group = mi.optionGroups!.find(g => g.translations.some(t2 => Object.values(opt.groupName).includes(t2.name)));
-          const choice = group?.choices.find(c => c.translations.some(t2 => Object.values(opt.choiceName).includes(t2.name)));
+          const choiceNameVals = Object.values(opt.choiceName).filter(Boolean);
+          const groupNameVals = Object.values(opt.groupName).filter(Boolean);
+          let group: OptionGroup | undefined;
+          let choice: OptionGroup['choices'][0] | undefined;
+          for (const g of mi.optionGroups!) {
+            const hitChoice = g.choices.find((c) =>
+              c.translations.some((t2) => choiceNameVals.includes(t2.name)),
+            );
+            if (!hitChoice) continue;
+            if (groupNameVals.length === 0) {
+              group = g;
+              choice = hitChoice;
+              break;
+            }
+            const groupNameHit = g.translations.some((t2) => groupNameVals.includes(t2.name));
+            if (groupNameHit) {
+              group = g;
+              choice = hitChoice;
+              break;
+            }
+          }
+          if (!group || !choice) {
+            for (const g of mi.optionGroups!) {
+              const hitChoice = g.choices.find((c) =>
+                c.translations.some((t2) => choiceNameVals.includes(t2.name)),
+              );
+              if (hitChoice) {
+                group = g;
+                choice = hitChoice;
+                break;
+              }
+            }
+          }
           return { groupId: group?._id || '', choiceId: choice?._id || '' };
-        }).filter(o => o.groupId && o.choiceId);
+        }).filter((o) => o.groupId && o.choiceId);
       }
       const key = line.menuItemId + '|' + JSON.stringify(selOpts || []);
       const existing = grouped.get(key);
@@ -388,16 +571,182 @@ export default function CashierOrder() {
     return [...grouped.values()];
   };
 
-  // Confirm: create order + checkout in one go
+  /** 后结堂食：仅 POST 订单，不结账（与先结+外卖路径隔离） */
+  const handleSubmitDineInPayAfterOnly = async () => {
+    if (order.length === 0) return;
+    const wf = await refreshDineInWorkflowMode();
+    if (wf !== 'pay_after') {
+      setError(t('cashier.dineInModeSwitchedToPayFirst'));
+      return;
+    }
+    const rawTable = counterTableInput.trim();
+    if (rawTable === '') {
+      setError(t('cashier.counterTableRequired'));
+      return;
+    }
+    const tableNum = parseInt(rawTable, 10);
+    if (!Number.isFinite(tableNum) || tableNum < 1) {
+      setError(t('cashier.counterTableInvalidFormat'));
+      return;
+    }
+    setPaying(true);
+    setError('');
+    try {
+      const orderBody: Record<string, unknown> = {
+        type: 'dine_in',
+        tableNumber: tableNum,
+        seatNumber: 0,
+        items: buildGroupedItems(),
+      };
+      const gl = counterGuestLabel.trim();
+      if (gl) orderBody.dineInGuestLabel = gl.slice(0, 40);
+      if (matchedBundles.length > 0) {
+        orderBody.appliedBundles = matchedBundles.map((b) => ({
+          offerId: b.offer._id,
+          name: b.offer.name,
+          nameEn: b.offer.nameEn,
+          discount: b.savings,
+        }));
+      }
+      const orderRes = await apiFetch('/api/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(orderBody),
+      });
+      if (!orderRes.ok) {
+        const d = await orderRes.json().catch(() => null);
+        throw new Error(d?.error?.message || 'Failed');
+      }
+      const orderData = (await orderRes.json()) as {
+        _id: string;
+        dineInOrderNumber?: string;
+        items?: Array<{
+          _id?: string;
+          menuItemId?: string;
+          lineKind?: string;
+          quantity: number;
+          unitPrice: number;
+          itemName: string;
+          itemNameEn?: string;
+          selectedOptions?: Array<{
+            groupName?: string;
+            choiceName?: string;
+            extraPrice?: number;
+          }>;
+        }>;
+      };
+
+      // 客人凭条：后结堂食提交成功后自动打印 1 份
+      try {
+        const configRes = await apiFetch('/api/admin/config');
+        const cfg = configRes.ok ? await configRes.json() : {};
+        const rawItems = Array.isArray(orderData.items) ? orderData.items : [];
+        const receiptItems = rawItems
+          .filter((it) => it.lineKind !== 'delivery_fee')
+          .map((it) => ({
+            _id: String(it._id ?? ''),
+            menuItemId: it.menuItemId,
+            quantity: it.quantity,
+            unitPrice: it.unitPrice,
+            itemName: it.itemName,
+            itemNameEn: it.itemNameEn,
+            selectedOptions: (it.selectedOptions || []).map((o) => ({
+              groupName: o.groupName ?? '',
+              choiceName: o.choiceName ?? '',
+              extraPrice: typeof o.extraPrice === 'number' ? o.extraPrice : 0,
+            })),
+          }));
+        const receiptData = {
+          checkoutId: orderData._id,
+          type: 'seat' as const,
+          tableNumber: tableNum,
+          totalAmount: finalTotal,
+          paymentMethod: 'pending' as const,
+          checkedOutAt: new Date().toISOString(),
+          orders: [{
+            _id: orderData._id,
+            type: 'dine_in' as const,
+            tableNumber: tableNum,
+            seatNumber: 0,
+            dineInOrderNumber: orderData.dineInOrderNumber,
+            status: 'pending',
+            items: receiptItems,
+          }],
+        };
+        const html = buildReceiptHTML(
+          receiptData,
+          cfg,
+          undefined,
+          undefined,
+          matchedBundles.length > 0 ? matchedBundles.map((b) => ({ name: b.offer.name, nameEn: b.offer.nameEn, discount: b.savings })) : undefined,
+        );
+        void printViaIframe(html, 1);
+      } catch {
+        /* guest slip print is best-effort */
+      }
+
+      setDineInSubmittedInfo({
+        id: orderData._id,
+        dineInOrderNumber: orderData.dineInOrderNumber,
+        tableNumber: tableNum,
+      });
+      setOrder([]);
+      setCounterTableInput('');
+      setCounterGuestLabel('');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed');
+    } finally {
+      setPaying(false);
+    }
+  };
+
+  const handleOpenPayment = () => {
+    if (order.length === 0) return;
+    setPayingTotal(finalTotal);
+    setCashReceived('');
+    setPaymentMethod('cash');
+    setMemberPhone('');
+    setMemberPreview(null);
+    setSelectedCoupon(null);
+    setError('');
+    setShowPayment(true);
+  };
+
+  const handlePrimaryAction = async () => {
+    if (order.length === 0) return;
+    if (orderType === 'phone') {
+      await handlePhoneOrder();
+      return;
+    }
+    if (orderType === 'dine_in') {
+      const wf = await refreshDineInWorkflowMode();
+      if (wf === 'pay_after') {
+        await handleSubmitDineInPayAfterOnly();
+        return;
+      }
+    }
+    handleOpenPayment();
+  };
+
+  // Confirm: create order + checkout in one go（先结堂食、外卖、电话以外不适用）
   const couponDiscount = selectedCoupon?.amount || 0;
-  const payAfterCoupon = Math.max(0, payingTotal - couponDiscount);
+  const amountAfterCoupon = Math.max(0, payingTotal - couponDiscount);
   const cashReceivedNum = parseFloat(cashReceived) || 0;
-  const changeAmount = paymentMethod === 'cash' ? Math.max(0, cashReceivedNum - payAfterCoupon) : 0;
+  const changeAmount = paymentMethod === 'cash' ? Math.max(0, cashReceivedNum - amountAfterCoupon) : 0;
 
   const handlePay = async () => {
     setPaying(true);
     setError('');
     try {
+      if (orderType === 'dine_in') {
+        const wf = await refreshDineInWorkflowMode();
+        if (wf === 'pay_after') {
+          setShowPayment(false);
+          setError(t('cashier.modeSwitchedToPayAfterCloseModal'));
+          setPaying(false);
+          return;
+        }
+      }
       // Step 1: Create order
       const orderBody: Record<string, unknown> = { type: orderType, items: buildGroupedItems() };
       if (orderType === 'dine_in') { orderBody.tableNumber = 0; orderBody.seatNumber = 0; }
@@ -416,11 +765,11 @@ export default function CashierOrder() {
       // Step 2: Checkout immediately
       let checkoutBody: Record<string, unknown>;
       if (paymentMethod === 'member' && memberPreview) {
-        checkoutBody = buildMemberFullWalletCheckoutBody(payAfterCoupon, memberPreview.phone);
+        checkoutBody = buildMemberFullWalletCheckoutBody(amountAfterCoupon, memberPreview.phone);
       } else {
         checkoutBody = { paymentMethod };
-        if (paymentMethod === 'cash') checkoutBody.cashAmount = payAfterCoupon;
-        else if (paymentMethod === 'card') checkoutBody.cardAmount = payAfterCoupon;
+        if (paymentMethod === 'cash') checkoutBody.cashAmount = amountAfterCoupon;
+        else if (paymentMethod === 'card') checkoutBody.cardAmount = amountAfterCoupon;
         else { checkoutBody.cashAmount = Number(mixedCash); checkoutBody.cardAmount = Number(mixedCard); }
       }
       if (bundleTotals.bundleDiscount > 0) {
@@ -441,8 +790,8 @@ export default function CashierOrder() {
       setCheckoutId(checkoutData._id);
       setCheckoutMeta(
         paymentMethod === 'member'
-          ? { total: payAfterCoupon, cashReceived: 0, change: 0 }
-          : { total: payAfterCoupon, cashReceived: cashReceivedNum, change: changeAmount },
+          ? { total: amountAfterCoupon, cashReceived: 0, change: 0 }
+          : { total: amountAfterCoupon, cashReceived: cashReceivedNum, change: changeAmount },
       );
       setReceiptBundleDiscounts(matchedBundles.map(b => ({ name: b.offer.name, nameEn: b.offer.nameEn, discount: b.savings })));
       setShowPayment(false);
@@ -459,6 +808,27 @@ export default function CashierOrder() {
     setCheckoutMeta(null);
     setReceiptBundleDiscounts([]);
   };
+
+  if (dineInSubmittedInfo) {
+    const no = dineInSubmittedInfo.dineInOrderNumber || dineInSubmittedInfo.id.slice(-6);
+    return (
+      <div style={{ maxWidth: 500, margin: '0 auto' }}>
+        <div style={{ textAlign: 'center', padding: 20 }}>
+          <div style={{ fontSize: 48, marginBottom: 8 }}>🍽️</div>
+          <h2 style={{ color: 'var(--green)', marginBottom: 12 }}>{t('cashier.dineInOrderCreatedTitle')}</h2>
+          <p style={{ fontSize: 14, color: 'var(--text-secondary)', marginBottom: 16 }}>
+            {t('cashier.dineInOrderCreatedBody', {
+              table: dineInSubmittedInfo.tableNumber,
+              orderNo: no,
+            })}
+          </p>
+          <button className="btn btn-primary" onClick={() => setDineInSubmittedInfo(null)} style={{ marginBottom: 20 }}>
+            {t('cashier.continueOrder')}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   // Phone order success screen
   if (phoneOrderId) {
@@ -551,6 +921,126 @@ export default function CashierOrder() {
             <button className="btn" onClick={() => switchOrderType('phone')} style={{ flex: 1, fontSize: 12, padding: '6px 0', background: orderType === 'phone' ? 'var(--red-primary)' : 'var(--bg)', color: orderType === 'phone' ? '#fff' : 'var(--text-secondary)', border: '1px solid var(--border)' }}>📞 电话</button>
           </div>
         </div>
+
+        {orderType === 'dine_in' && dineInWorkflowMode === 'pay_after' && (
+          <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'stretch' }}>
+              <label style={{ flex: '0 0 96px', display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
+                <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)' }}>{t('cashier.table')} *</span>
+                <input
+                  className="input"
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  placeholder={t('cashier.counterTablePlaceholder')}
+                  value={counterTableInput}
+                  onChange={(e) => setCounterTableInput(e.target.value)}
+                  style={{ width: '100%', fontSize: 14, padding: '8px 10px' }}
+                />
+              </label>
+              <label style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)' }}>{t('cashier.dineInGuestLabelShort')}</span>
+                <input
+                  className="input"
+                  type="text"
+                  maxLength={40}
+                  placeholder={t('cashier.dineInGuestInputPh')}
+                  value={counterGuestLabel}
+                  onChange={(e) => setCounterGuestLabel(e.target.value)}
+                  style={{ width: '100%', fontSize: 14, padding: '8px 10px' }}
+                />
+              </label>
+            </div>
+            {(() => {
+              const rawT = counterTableInput.trim();
+              const tn = parseInt(rawT, 10);
+              const tableOk = rawT !== '' && Number.isFinite(tn) && tn >= 1;
+              if (!tableOk) return null;
+              if (activeTableOrdersLoading) {
+                return (
+                  <div style={{ fontSize: 11, color: 'var(--text-light)', padding: '2px 0' }}>…</div>
+                );
+              }
+              return (
+                <div
+                  style={{
+                    padding: '8px 8px',
+                    borderRadius: 8,
+                    border: '1px solid #eee',
+                    background: '#fafafa',
+                    fontSize: 11,
+                    lineHeight: 1.4,
+                  }}
+                >
+                  <div style={{ fontWeight: 700, color: '#424242', marginBottom: 8 }}>{t('cashier.activeTableOrdersTitle')}</div>
+                  {activeTableOrders.length === 0 ? (
+                    <div style={{ color: '#9e9e9e', fontStyle: 'italic' }}>{t('cashier.activeTableOrdersEmpty')}</div>
+                  ) : (
+                    activeTableOrders.map((ord, idx) => {
+                      const busy = importingActiveOrderId === ord._id;
+                      const summary = (ord.items || [])
+                        .filter((it) => it.lineKind !== 'delivery_fee' && it.menuItemId && !it.refunded)
+                        .map((it) => {
+                          const label = String(lang).toLowerCase().startsWith('zh')
+                            ? it.itemName
+                            : (it.itemNameEn || it.itemName);
+                          return `${label}×${it.quantity}`;
+                        })
+                        .join(' · ');
+                      return (
+                        <div
+                          key={ord._id}
+                          role="button"
+                          tabIndex={0}
+                          aria-busy={busy}
+                          aria-label={t('cashier.activeTableOrdersRowAria', {
+                            orderNo: ord.dineInOrderNumber?.trim() || ord._id.slice(-6),
+                          })}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              if (!busy) void appendActiveOrderToCart(ord);
+                            }
+                          }}
+                          onClick={() => {
+                            if (!busy) void appendActiveOrderToCart(ord);
+                          }}
+                          style={{
+                            marginBottom: idx < activeTableOrders.length - 1 ? 6 : 0,
+                            paddingBottom: idx < activeTableOrders.length - 1 ? 6 : 0,
+                            borderBottom: idx < activeTableOrders.length - 1 ? '1px dashed #e8e8e8' : 'none',
+                            cursor: busy ? 'wait' : 'pointer',
+                            opacity: busy ? 0.65 : 1,
+                            borderRadius: 6,
+                            padding: '6px 6px',
+                            marginLeft: -6,
+                            marginRight: -6,
+                            outline: 'none',
+                          }}
+                          onMouseEnter={(e) => {
+                            if (!busy) (e.currentTarget as HTMLDivElement).style.background = '#f0f0f0';
+                          }}
+                          onMouseLeave={(e) => {
+                            (e.currentTarget as HTMLDivElement).style.background = 'transparent';
+                          }}
+                        >
+                          <div style={{ fontWeight: 600, color: '#333' }}>
+                            {ord.dineInOrderNumber?.trim() || ord._id.slice(-6)}
+                            {ord.dineInGuestLabel?.trim() ? (
+                              <span style={{ fontWeight: 500, color: '#6d4c41', marginLeft: 6 }}>· {ord.dineInGuestLabel.trim()}</span>
+                            ) : null}
+                            {busy ? <span style={{ marginLeft: 6, fontWeight: 500, color: 'var(--text-light)' }}>…</span> : null}
+                          </div>
+                          <div style={{ color: '#616161', marginTop: 3 }}>{summary || '—'}</div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              );
+            })()}
+          </div>
+        )}
 
         {orderType === 'phone' && (
           <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -647,8 +1137,17 @@ export default function CashierOrder() {
               <span style={{ fontSize: 22, fontWeight: 700, color: 'var(--red-primary)', fontFamily: "'Noto Serif SC', serif" }}>€{finalTotal.toFixed(2)}</span>
             </div>
           </div>
-          <button className="btn btn-primary" onClick={handleOpenPayment} disabled={order.length === 0} style={{ width: '100%', fontSize: 15, padding: '12px 0', letterSpacing: 1 }}>
-            {orderType === 'phone' ? '创建电话订单' : '下单结账'}
+          <button
+            className="btn btn-primary"
+            onClick={() => void handlePrimaryAction()}
+            disabled={order.length === 0 || paying}
+            style={{ width: '100%', fontSize: 15, padding: '12px 0', letterSpacing: 1 }}
+          >
+            {orderType === 'phone'
+              ? t('cashier.createPhoneOrder')
+              : orderType === 'dine_in' && dineInWorkflowMode === 'pay_after'
+                ? t('cashier.submitDineInPayAfter')
+                : t('cashier.placeOrderCheckout')}
           </button>
         </div>
       </div>
@@ -689,7 +1188,7 @@ export default function CashierOrder() {
                 {selectedCoupon && (
                   <div style={{ marginTop: 8, display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: 16 }}>
                     <span style={{ color: '#2E7D32' }}>After Coupon</span>
-                    <span style={{ color: '#2E7D32' }}>€{payAfterCoupon.toFixed(2)}</span>
+                    <span style={{ color: '#2E7D32' }}>€{amountAfterCoupon.toFixed(2)}</span>
                   </div>
                 )}
               </div>
@@ -720,7 +1219,7 @@ export default function CashierOrder() {
 
             {paymentMethod === 'member' ? (
               <CashierMemberCheckoutBlock
-                payAmount={payAfterCoupon}
+                payAmount={amountAfterCoupon}
                 phone={memberPhone}
                 setPhone={setMemberPhone}
                 preview={memberPreview}
@@ -735,9 +1234,9 @@ export default function CashierOrder() {
                 <input className="input" type="number" step="0.01" value={cashReceived} onChange={e => setCashReceived(e.target.value)}
                   style={{ width: '100%', fontSize: 18, fontWeight: 700, padding: '8px 10px', textAlign: 'right' }} />
                 {cashReceivedNum > 0 && (
-                  <div style={{ marginTop: 6, display: 'flex', justifyContent: 'space-between', padding: '6px 10px', borderRadius: 6, background: cashReceivedNum >= payAfterCoupon ? '#E8F5E9' : '#FFEBEE' }}>
+                  <div style={{ marginTop: 6, display: 'flex', justifyContent: 'space-between', padding: '6px 10px', borderRadius: 6, background: cashReceivedNum >= amountAfterCoupon ? '#E8F5E9' : '#FFEBEE' }}>
                     <span style={{ fontSize: 13, fontWeight: 600 }}>{t('cashier.change')}</span>
-                    <span style={{ fontSize: 18, fontWeight: 700, color: cashReceivedNum >= payAfterCoupon ? 'var(--green)' : 'var(--red-primary)' }}>€{changeAmount.toFixed(2)}</span>
+                    <span style={{ fontSize: 18, fontWeight: 700, color: cashReceivedNum >= amountAfterCoupon ? 'var(--green)' : 'var(--red-primary)' }}>€{changeAmount.toFixed(2)}</span>
                   </div>
                 )}
               </div>
@@ -755,8 +1254,8 @@ export default function CashierOrder() {
               <button className="btn btn-primary" style={{ flex: 1 }} onClick={handlePay}
                 disabled={
                   paying ||
-                  (paymentMethod === 'cash' && cashReceivedNum < payAfterCoupon) ||
-                  (paymentMethod === 'member' && !canMemberFullWalletPay(memberPreview, payAfterCoupon))
+                  (paymentMethod === 'cash' && cashReceivedNum < amountAfterCoupon) ||
+                  (paymentMethod === 'member' && !canMemberFullWalletPay(memberPreview, amountAfterCoupon))
                 }>
                 {paying ? t('common.loading') : t('cashier.submitCheckout')}
               </button>

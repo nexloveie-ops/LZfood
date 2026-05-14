@@ -5,7 +5,16 @@ import { getModels } from '../getModels';
 import { createAppError } from '../middleware/errorHandler';
 import { createStripeClient, getStripePublishableResolved } from '../utils/stripeConfig';
 import { storeIoRoom } from '../socketRooms';
-import { computeOrderPayableTotalEuro } from '../utils/orderPayableTotal';
+import {
+  computeOrderPayableTotalEuro,
+  computeDineInUnsettledPayableEuro,
+  dineInHasUnsettledFoodLineQty,
+} from '../utils/orderPayableTotal';
+import { getDineInWorkflowModeForStore } from '../utils/dineInWorkflowMode';
+import {
+  markDineInFoodLinesFullySettled,
+  markDineInKitchenPrintedQtyFull,
+} from '../utils/dineInMarkLinesFullySettled';
 
 function paymentModels() {
   return getModels() as {
@@ -34,7 +43,13 @@ router.post('/create-intent', async (req: Request, res: Response, next: NextFunc
     if (!order) throw createAppError('NOT_FOUND', 'Order not found');
     if (order.status !== 'pending') throw createAppError('VALIDATION_ERROR', 'Order is already checked out');
 
-    const totalEuro = computeOrderPayableTotalEuro(order);
+    let totalEuro = computeOrderPayableTotalEuro(order);
+    if (order.type === 'dine_in' && order.status === 'pending') {
+      const wf = await getDineInWorkflowModeForStore(req.storeId!);
+      if (wf === 'pay_after') {
+        totalEuro = computeDineInUnsettledPayableEuro(order);
+      }
+    }
     const totalAmount = Math.round(totalEuro * 100);
 
     if (totalAmount <= 0) throw createAppError('VALIDATION_ERROR', 'Order total must be greater than 0');
@@ -103,6 +118,26 @@ router.post('/confirm', async (req: Request, res: Response, next: NextFunction) 
       });
       order.status = 'checked_out';
     } else {
+      if (order.type === 'dine_in') {
+        const wf = await getDineInWorkflowModeForStore(req.storeId!);
+        if (wf === 'pay_after') {
+          // 改单流程曾将 dineInExposedToStaff=false；顾客在线付清后必须回到收银订单中心
+          order.dineInExposedToStaff = true;
+          const expectedTotal = computeDineInUnsettledPayableEuro(order);
+          if (Math.abs(expectedTotal - totalChargedEuro) > 0.02) {
+            throw createAppError('VALIDATION_ERROR', '实付金额与订单应付不一致，请核对后重试', {
+              expectedTotal,
+              charged: totalChargedEuro,
+            });
+          }
+          for (const line of order.items as { lineKind?: string; refunded?: boolean; quantity: number; settledQty?: number }[]) {
+            if (line.lineKind === 'delivery_fee') continue;
+            if (line.refunded) continue;
+            line.settledQty = line.quantity;
+          }
+          order.markModified('items');
+        }
+      }
       // 堂食 / 外卖：保持 paid_online，由收银 finalize 生成 Checkout
       order.status = 'paid_online';
     }
@@ -156,7 +191,19 @@ router.post('/finalize', async (req: Request, res: Response, next: NextFunction)
     }, 0);
     const bundleDiscount = ((order as unknown as { appliedBundles?: { discount: number }[] }).appliedBundles || [])
       .reduce((s: number, b: { discount: number }) => s + b.discount, 0);
-    const totalAmount = Math.round((itemTotal - bundleDiscount) * 100) / 100;
+    let totalAmount = Math.round((itemTotal - bundleDiscount) * 100) / 100;
+
+    const wfFin = await getDineInWorkflowModeForStore(req.storeId!);
+    if (order.type === 'dine_in' && wfFin === 'pay_after') {
+      const priorCheckouts = await Checkout.find({ storeId: req.storeId, orderIds: order._id }).lean();
+      let partialSum = 0;
+      for (const c of priorCheckouts as { totalAmount?: number; dineInPartialLineSettlements?: unknown[] }[]) {
+        if (Array.isArray(c.dineInPartialLineSettlements) && c.dineInPartialLineSettlements.length > 0) {
+          partialSum += Number(c.totalAmount) || 0;
+        }
+      }
+      totalAmount = Math.max(0, Math.round((totalAmount - partialSum) * 100) / 100);
+    }
 
     const stripePi = String((order as { stripePaymentIntentId?: string }).stripePaymentIntentId || '').trim();
     const memberUsed = Number((order as { memberCreditUsed?: number }).memberCreditUsed) || 0;
@@ -197,6 +244,17 @@ router.post('/finalize', async (req: Request, res: Response, next: NextFunction)
       );
     }
 
+    if (markDineInFoodLinesFullySettled(order)) {
+      order.markModified('items');
+    }
+    if (order.type === 'dine_in') {
+      const rem = computeDineInUnsettledPayableEuro(order);
+      if (rem <= 0.02 && !dineInHasUnsettledFoodLineQty(order)) {
+        if (markDineInKitchenPrintedQtyFull(order)) {
+          order.markModified('items');
+        }
+      }
+    }
     order.status = 'checked_out';
     await order.save();
 

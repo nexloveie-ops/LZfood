@@ -14,6 +14,8 @@ export interface CartItem {
   price: number;
   quantity: number;
   options?: CartItemOption[];
+  /** 来自已锁定/仅可加菜的堂食改单：数量不可减至此值以下，且不可整行删除 */
+  lockedBaselineQty?: number;
 }
 
 /** Bump when option group id strategy changes so stale groupId/choiceId are not reused */
@@ -89,7 +91,11 @@ export function CartProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const removeItem = useCallback((key: string) => {
-    setItemsState((prev) => prev.filter((i) => cartItemKey(i.menuItemId, i.options) !== key));
+    setItemsState((prev) => {
+      const item = prev.find((i) => cartItemKey(i.menuItemId, i.options) === key);
+      if (item && typeof item.lockedBaselineQty === 'number') return prev;
+      return prev.filter((i) => cartItemKey(i.menuItemId, i.options) !== key);
+    });
   }, []);
 
   const increaseQuantity = useCallback((key: string) => {
@@ -104,9 +110,15 @@ export function CartProvider({ children }: { children: ReactNode }) {
     setItemsState((prev) => {
       const item = prev.find((i) => cartItemKey(i.menuItemId, i.options) === key);
       if (!item) return prev;
-      if (item.quantity <= 1) return prev.filter((i) => cartItemKey(i.menuItemId, i.options) !== key);
+      const floor = typeof item.lockedBaselineQty === 'number' ? Math.max(0, item.lockedBaselineQty) : 0;
+      if (item.quantity <= floor) return prev;
+      const nextQty = item.quantity - 1;
+      if (nextQty <= 0) {
+        if (floor > 0) return prev;
+        return prev.filter((i) => cartItemKey(i.menuItemId, i.options) !== key);
+      }
       return prev.map((i) =>
-        cartItemKey(i.menuItemId, i.options) === key ? { ...i, quantity: i.quantity - 1 } : i,
+        cartItemKey(i.menuItemId, i.options) === key ? { ...i, quantity: Math.max(floor, nextQty) } : i,
       );
     });
   }, []);

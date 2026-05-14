@@ -7,6 +7,9 @@ export interface OrderItem {
   unitPrice: number;
   itemName: string;
   itemNameEn?: string;
+  lineKind?: string;
+  refunded?: boolean;
+  settledQty?: number;
   selectedOptions?: { groupName: string; choiceName: string; extraPrice: number }[];
 }
 

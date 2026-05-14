@@ -7,7 +7,7 @@ interface Translation { locale: string; name: string; description?: string; }
 interface Category { _id: string; translations: Translation[]; }
 interface AllergenData { _id: string; name: string; icon: string; translations: { locale: string; name: string }[]; }
 interface OptionChoiceData { _id?: string; extraPrice: number; originalPrice?: number; translations: { locale: string; name: string }[]; }
-interface OptionGroupData { _id?: string; required: boolean; translations: { locale: string; name: string }[]; choices: OptionChoiceData[]; }
+interface OptionGroupData { _id?: string; required?: boolean; minSelect?: number; maxSelect?: number; translations: { locale: string; name: string }[]; choices: OptionChoiceData[]; }
 interface MenuItem {
   _id: string; categoryId: string; price: number; calories?: number;
   avgWaitMinutes?: number; photoUrl?: string; arFileUrl?: string;
@@ -16,7 +16,7 @@ interface MenuItem {
 }
 
 interface FormOptionChoice { _id?: string; nameZh: string; nameEn: string; extraPrice: number; originalPrice: number; }
-interface FormOptionGroup { _id?: string; nameZh: string; nameEn: string; required: boolean; choices: FormOptionChoice[]; }
+interface FormOptionGroup { _id?: string; nameZh: string; nameEn: string; required: boolean; minSelect: number; maxSelect: number; choices: FormOptionChoice[]; }
 
 const emptyForm = { categoryId: '', price: 0, calories: 0, avgWaitMinutes: 0, nameZh: '', nameEn: '', descZh: '', descEn: '', allergenIds: [] as string[], optionGroups: [] as FormOptionGroup[] };
 
@@ -59,6 +59,8 @@ export default function MenuItemManager() {
           nameZh: g.translations.find(t2 => t2.locale === 'zh-CN')?.name || '',
           nameEn: g.translations.find(t2 => t2.locale === 'en-US')?.name || '',
           required: g.required,
+          minSelect: Math.max(0, Math.floor(Number((g as { minSelect?: number }).minSelect) || 0)),
+          maxSelect: Math.max(0, Math.floor(Number((g as { maxSelect?: number }).maxSelect) || 0)),
           choices: choiceRows.map(c => ({
             _id: c._id != null ? String(c._id) : undefined,
             nameZh: c.translations.find(t2 => t2.locale === 'zh-CN')?.name || '',
@@ -95,6 +97,23 @@ export default function MenuItemManager() {
         alert(`选项组 #${gi + 1} 须至少包含一个选项`);
         return;
       }
+      const g = form.optionGroups[gi];
+      if (!g.required) {
+        const minS = Math.max(0, Math.floor(Number(g.minSelect) || 0));
+        const maxS = Math.max(0, Math.floor(Number(g.maxSelect) || 0));
+        if (maxS > 0 && minS > maxS) {
+          alert(`选项组 #${gi + 1}：最少选择数不能大于最多选择数`);
+          return;
+        }
+        if (minS > g.choices.length) {
+          alert(`选项组 #${gi + 1}：最少选择数不能大于选项个数`);
+          return;
+        }
+        if (maxS > 0 && maxS > g.choices.length) {
+          alert(`选项组 #${gi + 1}：最多选择数不能大于选项个数`);
+          return;
+        }
+      }
     }
     const body = {
       categoryId: form.categoryId, price: form.price,
@@ -107,6 +126,12 @@ export default function MenuItemManager() {
       optionGroups: form.optionGroups.map(g => ({
         ...(g._id ? { _id: g._id } : {}),
         required: g.required,
+        ...(!g.required
+          ? {
+              minSelect: Math.max(0, Math.floor(Number(g.minSelect) || 0)),
+              maxSelect: Math.max(0, Math.floor(Number(g.maxSelect) || 0)),
+            }
+          : {}),
         translations: [
           { locale: 'zh-CN', name: g.nameZh },
           { locale: 'en-US', name: g.nameEn },
@@ -177,7 +202,7 @@ export default function MenuItemManager() {
   const addOptionGroup = () => {
     setForm(prev => ({
       ...prev,
-      optionGroups: [...prev.optionGroups, { nameZh: '', nameEn: '', required: false, choices: [{ nameZh: '', nameEn: '', extraPrice: 0, originalPrice: 0 }] }],
+      optionGroups: [...prev.optionGroups, { nameZh: '', nameEn: '', required: false, minSelect: 0, maxSelect: 0, choices: [{ nameZh: '', nameEn: '', extraPrice: 0, originalPrice: 0 }] }],
     }));
   };
 
@@ -325,11 +350,51 @@ export default function MenuItemManager() {
                   </div>
                   <div style={{ display: 'flex', alignItems: 'flex-end', paddingBottom: 2 }}>
                     <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, cursor: 'pointer' }}>
-                      <input type="checkbox" checked={group.required} onChange={e => updateOptionGroup(gi, 'required', e.target.checked)} />
+                      <input
+                        type="checkbox"
+                        checked={group.required}
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          setForm((prev) => ({
+                            ...prev,
+                            optionGroups: prev.optionGroups.map((g, i) =>
+                              i !== gi ? g : { ...g, required: checked, ...(checked ? { minSelect: 0, maxSelect: 0 } : {}) },
+                            ),
+                          }));
+                        }}
+                      />
                       {t('admin.required')}
                     </label>
                   </div>
                 </div>
+                {!group.required && (
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
+                    <div>
+                      <label style={{ fontSize: 11, color: 'var(--text-light)' }}>{t('admin.optionGroupMinSelect')}</label>
+                      <input
+                        className="input"
+                        type="number"
+                        min={0}
+                        value={group.minSelect}
+                        onChange={(e) => updateOptionGroup(gi, 'minSelect', Math.max(0, Math.floor(Number(e.target.value) || 0)))}
+                        style={{ width: '100%' }}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: 11, color: 'var(--text-light)' }}>
+                        {t('admin.optionGroupMaxSelect')} <span style={{ opacity: 0.75 }}>({t('admin.optionGroupMaxSelectHint')})</span>
+                      </label>
+                      <input
+                        className="input"
+                        type="number"
+                        min={0}
+                        value={group.maxSelect}
+                        onChange={(e) => updateOptionGroup(gi, 'maxSelect', Math.max(0, Math.floor(Number(e.target.value) || 0)))}
+                        style={{ width: '100%' }}
+                      />
+                    </div>
+                  </div>
+                )}
                 {/* Choices */}
                 {group.choices.map((choice, ci) => (
                   <div key={ci} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 80px 80px auto', gap: 6, marginBottom: 4 }}>
@@ -424,7 +489,7 @@ export default function MenuItemManager() {
                   {allergens.length > 0 && (<div style={{ marginTop: 12 }}><label style={{ fontSize: 12, color: 'var(--text-light)', display: 'block', marginBottom: 6 }}>过敏原</label><div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>{allergens.map(a => { const ck = form.allergenIds.includes(a._id); return (<label key={a._id} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 10px', borderRadius: 6, fontSize: 13, cursor: 'pointer', background: ck ? 'var(--red-light)' : '#fff', border: ck ? '1px solid var(--red-primary)' : '1px solid var(--border)', color: ck ? 'var(--red-primary)' : 'var(--text-secondary)' }}><input type="checkbox" checked={ck} style={{ display: 'none' }} onChange={() => setForm(prev => ({ ...prev, allergenIds: ck ? prev.allergenIds.filter(id => id !== a._id) : [...prev.allergenIds, a._id] }))} /><span>{a.icon}</span><span>{a.translations.find(t2 => t2.locale === 'zh-CN')?.name || a.name}</span></label>); })}</div></div>)}
                   <div style={{ marginTop: 16, borderTop: '1px solid var(--border)', paddingTop: 14 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}><label style={{ fontSize: 13, fontWeight: 700 }}>{t('admin.optionGroups')}</label><button className="btn btn-outline" style={{ fontSize: 12, padding: '4px 10px' }} onClick={addOptionGroup}>+ {t('admin.addOptionGroup')}</button></div>
-                    {form.optionGroups.map((group, gi) => (<div key={gi} style={{ background: '#fff', borderRadius: 8, padding: 12, marginBottom: 10, border: '1px solid var(--border)' }}><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}><span style={{ fontSize: 12, fontWeight: 600 }}>#{gi + 1}</span><button className="btn btn-ghost" style={{ fontSize: 11, color: 'var(--red-primary)' }} onClick={() => removeOptionGroup(gi)}>{t('common.delete')}</button></div><div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: 8, marginBottom: 8 }}><div><label style={{ fontSize: 11, color: 'var(--text-light)' }}>名称(中)</label><input className="input" value={group.nameZh} onChange={e => updateOptionGroup(gi, 'nameZh', e.target.value)} style={{ width: '100%' }} /></div><div><label style={{ fontSize: 11, color: 'var(--text-light)' }}>Name(EN)</label><input className="input" value={group.nameEn} onChange={e => updateOptionGroup(gi, 'nameEn', e.target.value)} style={{ width: '100%' }} /></div><div style={{ display: 'flex', alignItems: 'flex-end', paddingBottom: 2 }}><label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 }}><input type="checkbox" checked={group.required} onChange={e => updateOptionGroup(gi, 'required', e.target.checked)} />{t('admin.required')}</label></div></div>{group.choices.map((choice, ci) => (<div key={ci} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 70px 70px auto', gap: 6, marginBottom: 4 }}><input className="input" placeholder="中文" value={choice.nameZh} onChange={e => updateChoice(gi, ci, 'nameZh', e.target.value)} style={{ fontSize: 12 }} /><input className="input" placeholder="EN" value={choice.nameEn} onChange={e => updateChoice(gi, ci, 'nameEn', e.target.value)} style={{ fontSize: 12 }} /><input className="input" type="number" placeholder="原价" value={choice.originalPrice || ''} onChange={e => { const v = e.target.value; const n = v === '' ? 0 : Number(v); updateChoice(gi, ci, 'originalPrice', Number.isFinite(n) ? n : 0); }} style={{ fontSize: 12 }} /><input className="input" type="number" placeholder="现价" value={choice.extraPrice} onChange={e => { const v = e.target.value; const n = v === '' ? 0 : Number(v); updateChoice(gi, ci, 'extraPrice', Number.isFinite(n) ? n : 0); }} style={{ fontSize: 12 }} /><button className="btn btn-ghost" style={{ fontSize: 14, color: 'var(--red-primary)' }} onClick={() => removeChoice(gi, ci)}>✕</button></div>))}<button className="btn btn-ghost" style={{ fontSize: 11, marginTop: 4 }} onClick={() => addChoice(gi)}>+ {t('admin.addChoice')}</button></div>))}
+                    {form.optionGroups.map((group, gi) => (<div key={gi} style={{ background: '#fff', borderRadius: 8, padding: 12, marginBottom: 10, border: '1px solid var(--border)' }}><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}><span style={{ fontSize: 12, fontWeight: 600 }}>#{gi + 1}</span><button className="btn btn-ghost" style={{ fontSize: 11, color: 'var(--red-primary)' }} onClick={() => removeOptionGroup(gi)}>{t('common.delete')}</button></div><div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: 8, marginBottom: 8 }}><div><label style={{ fontSize: 11, color: 'var(--text-light)' }}>名称(中)</label><input className="input" value={group.nameZh} onChange={e => updateOptionGroup(gi, 'nameZh', e.target.value)} style={{ width: '100%' }} /></div><div><label style={{ fontSize: 11, color: 'var(--text-light)' }}>Name(EN)</label><input className="input" value={group.nameEn} onChange={e => updateOptionGroup(gi, 'nameEn', e.target.value)} style={{ width: '100%' }} /></div><div style={{ display: 'flex', alignItems: 'flex-end', paddingBottom: 2 }}><label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 }}><input type="checkbox" checked={group.required} onChange={(e) => { const checked = e.target.checked; setForm((prev) => ({ ...prev, optionGroups: prev.optionGroups.map((g, i) => (i !== gi ? g : { ...g, required: checked, ...(checked ? { minSelect: 0, maxSelect: 0 } : {}) })) })); }} />{t('admin.required')}</label></div></div>{!group.required && (<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}><div><label style={{ fontSize: 11, color: 'var(--text-light)' }}>{t('admin.optionGroupMinSelect')}</label><input className="input" type="number" min={0} value={group.minSelect} onChange={(e) => updateOptionGroup(gi, 'minSelect', Math.max(0, Math.floor(Number(e.target.value) || 0)))} style={{ width: '100%' }} /></div><div><label style={{ fontSize: 11, color: 'var(--text-light)' }}>{t('admin.optionGroupMaxSelect')} <span style={{ opacity: 0.75 }}>({t('admin.optionGroupMaxSelectHint')})</span></label><input className="input" type="number" min={0} value={group.maxSelect} onChange={(e) => updateOptionGroup(gi, 'maxSelect', Math.max(0, Math.floor(Number(e.target.value) || 0)))} style={{ width: '100%' }} /></div></div>)}{group.choices.map((choice, ci) => (<div key={ci} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 70px 70px auto', gap: 6, marginBottom: 4 }}><input className="input" placeholder="中文" value={choice.nameZh} onChange={e => updateChoice(gi, ci, 'nameZh', e.target.value)} style={{ fontSize: 12 }} /><input className="input" placeholder="EN" value={choice.nameEn} onChange={e => updateChoice(gi, ci, 'nameEn', e.target.value)} style={{ fontSize: 12 }} /><input className="input" type="number" placeholder="原价" value={choice.originalPrice || ''} onChange={e => { const v = e.target.value; const n = v === '' ? 0 : Number(v); updateChoice(gi, ci, 'originalPrice', Number.isFinite(n) ? n : 0); }} style={{ fontSize: 12 }} /><input className="input" type="number" placeholder="现价" value={choice.extraPrice} onChange={e => { const v = e.target.value; const n = v === '' ? 0 : Number(v); updateChoice(gi, ci, 'extraPrice', Number.isFinite(n) ? n : 0); }} style={{ fontSize: 12 }} /><button className="btn btn-ghost" style={{ fontSize: 14, color: 'var(--red-primary)' }} onClick={() => removeChoice(gi, ci)}>✕</button></div>))}<button className="btn btn-ghost" style={{ fontSize: 11, marginTop: 4 }} onClick={() => addChoice(gi)}>+ {t('admin.addChoice')}</button></div>))}
                   </div>
                   <div style={{ display: 'flex', gap: 8, marginTop: 14 }}><button className="btn btn-primary" onClick={handleSave}>{t('common.save')}</button><button className="btn btn-outline" onClick={() => setShowForm(false)}>{t('common.cancel')}</button></div>
                 </td></tr>

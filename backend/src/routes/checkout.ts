@@ -6,11 +6,21 @@ import { createAppError } from '../middleware/errorHandler';
 import { optionalAuthMiddleware } from '../middleware/auth';
 import { hasPermission } from '../middleware/permissions';
 import { storeIoRoom } from '../socketRooms';
-import { computeOrderPayableTotalEuro } from '../utils/orderPayableTotal';
+import {
+  computeOrderPayableTotalEuro,
+  computeDineInUnsettledPayableEuro,
+  computePartialDineInSettlementPreview,
+  dineInHasUnsettledFoodLineQty,
+} from '../utils/orderPayableTotal';
+import { getDineInWorkflowModeForStore } from '../utils/dineInWorkflowMode';
 import { resolveMemberPaymentForCheckout } from '../utils/checkoutMemberResolve';
 import { creditMemberWallet, debitMemberWallet } from '../utils/memberWalletOps';
 import { computeRefundChannelBreakdown } from '../utils/memberRefundAlign';
 import { FeatureKeys, resolveStoreEffectiveFeatures } from '../utils/featureCatalog';
+import {
+  markDineInFoodLinesFullySettled,
+  markDineInKitchenPrintedQtyFull,
+} from '../utils/dineInMarkLinesFullySettled';
 
 function staffMayDebitMemberWithoutPin(req: Request): boolean {
   const u = req.user;
@@ -20,6 +30,38 @@ function staffMayDebitMemberWithoutPin(req: Request): boolean {
 
 function round2Euro(n: number): number {
   return Math.round(n * 100) / 100;
+}
+
+async function finalizeSeatOrderCheckedOut(
+  Order: mongoose.Model<any>,
+  storeId: mongoose.Types.ObjectId,
+  orderId: string,
+  patch: { memberId?: mongoose.Types.ObjectId; memberPhoneSnapshot?: string; memberCreditUsed?: number },
+): Promise<void> {
+  const doc = await Order.findOne({ _id: orderId, storeId });
+  if (!doc) {
+    throw createAppError('NOT_FOUND', 'Order not found');
+  }
+  /** 先结/后结统一：整单 finalize 时写满 settledQty，避免后结模式下「checked_out 却仍算出未结」 */
+  if (markDineInFoodLinesFullySettled(doc)) {
+    doc.markModified('items');
+  }
+  /** 财务已结清时同步厨房已打满份数，避免先结单 kitchenPrintedQty 全 0，切后结后订单中心仍按「待出厨房」占位 */
+  if (doc.type === 'dine_in') {
+    const rem = computeDineInUnsettledPayableEuro(doc);
+    if (rem <= 0.02 && !dineInHasUnsettledFoodLineQty(doc)) {
+      if (markDineInKitchenPrintedQtyFull(doc)) {
+        doc.markModified('items');
+      }
+    }
+  }
+  doc.status = 'checked_out';
+  if (patch.memberId) {
+    doc.memberId = patch.memberId;
+    doc.memberPhoneSnapshot = patch.memberPhoneSnapshot ?? '';
+    doc.memberCreditUsed = patch.memberCreditUsed ?? 0;
+  }
+  await doc.save();
 }
 
 /** 重印小票 / 搜索：不展示 status 含 hide 的订单（与营业报表一致） */
@@ -81,18 +123,23 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
         throw createAppError('NOT_FOUND', 'No pending orders found for this table');
       }
 
-      // Calculate total amount including bundle discounts
-      const itemsTotal = orders.reduce((sum, order) => {
-        return sum + order.items.reduce((itemSum: number, item: { unitPrice: number; quantity: number; selectedOptions?: { extraPrice?: number }[] }) => {
-          const optExtra = (item.selectedOptions || []).reduce((s: number, o: { extraPrice?: number }) => s + (o.extraPrice || 0), 0);
-          return itemSum + (item.unitPrice + optExtra) * item.quantity;
+      const dineInWf = await getDineInWorkflowModeForStore(req.storeId!);
+      let totalAmount: number;
+      if (dineInWf === 'pay_after') {
+        totalAmount = orders.reduce((sum, order) => sum + computeDineInUnsettledPayableEuro(order), 0);
+      } else {
+        const itemsTotal = orders.reduce((sum, order) => {
+          return sum + order.items.reduce((itemSum: number, item: { unitPrice: number; quantity: number; selectedOptions?: { extraPrice?: number }[] }) => {
+            const optExtra = (item.selectedOptions || []).reduce((s: number, o: { extraPrice?: number }) => s + (o.extraPrice || 0), 0);
+            return itemSum + (item.unitPrice + optExtra) * item.quantity;
+          }, 0);
         }, 0);
-      }, 0);
-      const tableBundleDiscount = orders.reduce((sum, order) => {
-        return sum + ((order as unknown as { appliedBundles?: { discount: number }[] }).appliedBundles || [])
-          .reduce((s: number, b: { discount: number }) => s + b.discount, 0);
-      }, 0);
-      const totalAmount = itemsTotal - tableBundleDiscount;
+        const tableBundleDiscount = orders.reduce((sum, order) => {
+          return sum + ((order as unknown as { appliedBundles?: { discount: number }[] }).appliedBundles || [])
+            .reduce((s: number, b: { discount: number }) => s + b.discount, 0);
+        }, 0);
+        totalAmount = itemsTotal - tableBundleDiscount;
+      }
 
       // Apply coupon discount
       let finalAmount = totalAmount;
@@ -152,16 +199,16 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
       }
 
       try {
-        const orderSet: Record<string, unknown> = { status: 'checked_out' };
-        if (mp.memberId) {
-          orderSet.memberId = mp.memberId;
-          orderSet.memberPhoneSnapshot = mp.memberPhoneSnapshot;
-          orderSet.memberCreditUsed = 0;
+        const memberPatch = mp.memberId
+          ? {
+              memberId: mp.memberId as mongoose.Types.ObjectId,
+              memberPhoneSnapshot: mp.memberPhoneSnapshot ?? '',
+              memberCreditUsed: 0,
+            }
+          : {};
+        for (const o of orders) {
+          await finalizeSeatOrderCheckedOut(Order, req.storeId!, o._id.toString(), memberPatch);
         }
-        await Order.updateMany(
-          { storeId: req.storeId, _id: { $in: orders.map(o => o._id) } },
-          { $set: orderSet },
-        );
       } catch (e) {
         if (mp.memberCreditUsed > 0 && mp.memberId) {
           await creditMemberWallet({
@@ -211,8 +258,11 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
         });
       }
 
-      // Calculate total amount from items, apply bundle discounts, allow override
-      const autoTotal = computeOrderPayableTotalEuro(order);
+      const dineInWf = await getDineInWorkflowModeForStore(req.storeId!);
+      const autoTotal =
+        order.type === 'dine_in' && dineInWf === 'pay_after'
+          ? computeDineInUnsettledPayableEuro(order)
+          : computeOrderPayableTotalEuro(order);
       const totalAmount = (totalAmountOverride != null && typeof totalAmountOverride === 'number' && totalAmountOverride >= 0)
         ? totalAmountOverride
         : autoTotal;
@@ -267,8 +317,23 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
           memberPhoneSnapshot: mp.memberPhoneSnapshot,
           memberCreditUsed: mp.memberCreditUsed,
         };
+        if (order.type === 'dine_in' && dineInWf === 'pay_after') {
+          prePaySet.dineInExposedToStaff = true;
+        }
         try {
           await Order.findOneAndUpdate({ _id: orderId, storeId: req.storeId }, { $set: prePaySet });
+          if (order.type === 'dine_in' && dineInWf === 'pay_after') {
+            const doc2 = await Order.findOne({ _id: orderId, storeId: req.storeId });
+            if (doc2) {
+              for (const line of doc2.items as { lineKind?: string; refunded?: boolean; quantity: number; settledQty?: number }[]) {
+                if (line.lineKind === 'delivery_fee') continue;
+                if (line.refunded) continue;
+                line.settledQty = line.quantity;
+              }
+              doc2.markModified('items');
+              await doc2.save();
+            }
+          }
         } catch (e) {
           await creditMemberWallet({
             Member,
@@ -342,16 +407,18 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
       }
 
       /** 与 Stripe 在线支付一致：QR 送餐预付款记为 checked_out，便于顾客端显示「已支付」与配送流程 */
-      const orderSet: Record<string, unknown> = { status: 'checked_out' };
-      if (mp.memberId) {
-        orderSet.memberId = mp.memberId;
-        orderSet.memberPhoneSnapshot = mp.memberPhoneSnapshot;
-        orderSet.memberCreditUsed = mp.memberCreditUsed;
-      }
       try {
-        await Order.findOneAndUpdate(
-          { _id: orderId, storeId: req.storeId },
-          { $set: orderSet },
+        await finalizeSeatOrderCheckedOut(
+          Order,
+          req.storeId!,
+          orderId,
+          mp.memberId
+            ? {
+                memberId: mp.memberId as mongoose.Types.ObjectId,
+                memberPhoneSnapshot: mp.memberPhoneSnapshot ?? '',
+                memberCreditUsed: mp.memberCreditUsed ?? 0,
+              }
+            : {},
         );
       } catch (e) {
         if (mp.memberCreditUsed > 0 && mp.memberId) {
@@ -379,6 +446,371 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
     }
   });
 
+  // POST /api/checkout/dine-in-partial/:orderId — 后结堂食：按行结清部分份数（Bundle 按比例摊到本次子集）
+  router.post('/dine-in-partial/:orderId', optionalAuthMiddleware, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { Order, Checkout, Member, MemberWalletTxn } = checkoutModels();
+      const orderId = req.params.orderId as string;
+      if (!mongoose.Types.ObjectId.isValid(orderId)) {
+        throw createAppError('VALIDATION_ERROR', 'Invalid order ID');
+      }
+      const wf = await getDineInWorkflowModeForStore(req.storeId!);
+      if (wf !== 'pay_after') {
+        throw createAppError('VALIDATION_ERROR', '仅后结堂食支持按行部分结账');
+      }
+      const order = await Order.findOne({ _id: orderId, storeId: req.storeId });
+      if (!order) {
+        throw createAppError('NOT_FOUND', 'Order not found');
+      }
+      if (order.type !== 'dine_in' || !['pending', 'paid_online', 'checked_out'].includes(String(order.status))) {
+        throw createAppError('VALIDATION_ERROR', '仅支持待结账或仍有未结金额的堂食订单', { currentStatus: order.status, type: order.type });
+      }
+      const raw = (req.body as Record<string, unknown>).lineSettlements;
+      if (!Array.isArray(raw) || raw.length === 0) {
+        throw createAppError('VALIDATION_ERROR', 'lineSettlements 必须为非空数组');
+      }
+      const lineSettlements = raw.map((r) => ({
+        lineId: String((r as { lineId?: unknown }).lineId ?? '').trim(),
+        qty: Number((r as { qty?: unknown }).qty),
+      }));
+      const preview = computePartialDineInSettlementPreview(order, lineSettlements);
+      if (!preview.ok) {
+        throw createAppError('VALIDATION_ERROR', preview.message);
+      }
+      const { couponName, couponAmount } = req.body as Record<string, unknown>;
+      let totalAmount = preview.payable;
+      if (couponAmount && typeof couponAmount === 'number' && couponAmount > 0) {
+        totalAmount = Math.max(0, round2Euro(totalAmount - couponAmount));
+      }
+
+      await assertMemberWalletFeatureIfNeeded(req);
+      const mp = await resolveMemberPaymentForCheckout({
+        storeId: req.storeId!,
+        Member,
+        finalAmount: totalAmount,
+        body: req.body as Record<string, unknown>,
+        skipMemberPin: staffMayDebitMemberWithoutPin(req),
+      });
+
+      const checkoutData: Record<string, unknown> = {
+        storeId: req.storeId,
+        type: 'seat',
+        totalAmount,
+        paymentMethod: mp.paymentMethod,
+        orderIds: [order._id],
+        memberCreditUsed: mp.memberCreditUsed,
+        dineInPartialLineSettlements: preview.lines.map((l) => ({
+          orderLineItemId: new mongoose.Types.ObjectId(l.orderLineItemId),
+          quantity: l.quantity,
+          amountEuro: l.amountEuro,
+        })),
+      };
+      if (order.tableNumber != null) {
+        checkoutData.tableNumber = order.tableNumber;
+      }
+      if (mp.memberId) {
+        checkoutData.memberId = mp.memberId;
+        checkoutData.memberPhoneSnapshot = mp.memberPhoneSnapshot;
+      }
+      if (mp.paymentMethod === 'mixed') {
+        checkoutData.cashAmount = mp.cashAmount;
+        checkoutData.cardAmount = mp.cardAmount;
+      } else if (mp.paymentMethod === 'cash') {
+        checkoutData.cashAmount = mp.cashAmount;
+      } else if (mp.paymentMethod === 'card' || mp.paymentMethod === 'online') {
+        checkoutData.cardAmount = mp.cardAmount;
+      }
+      if (couponName) checkoutData.couponName = couponName;
+      if (couponAmount && typeof couponAmount === 'number' && couponAmount > 0) {
+        checkoutData.couponAmount = couponAmount;
+      }
+
+      const checkout = await Checkout.create(checkoutData);
+      try {
+        if (mp.memberCreditUsed > 0 && mp.memberId) {
+          await debitMemberWallet({
+            Member,
+            MemberWalletTxn,
+            storeId: req.storeId!,
+            memberId: mp.memberId,
+            amountEuro: mp.memberCreditUsed,
+            orderId: new mongoose.Types.ObjectId(orderId),
+            checkoutId: checkout._id,
+            note: '堂食后结部分结账储值抵扣',
+          });
+        }
+      } catch (e) {
+        await Checkout.deleteOne({ _id: checkout._id });
+        throw e;
+      }
+
+      const doc = await Order.findOne({ _id: orderId, storeId: req.storeId });
+      if (!doc) {
+        if (mp.memberCreditUsed > 0 && mp.memberId) {
+          await creditMemberWallet({
+            Member,
+            MemberWalletTxn,
+            storeId: req.storeId!,
+            memberId: mp.memberId,
+            amountEuro: mp.memberCreditUsed,
+            type: 'reversal',
+            orderId: new mongoose.Types.ObjectId(orderId),
+            checkoutId: checkout._id,
+            note: '部分结账更新订单失败，冲回储值',
+          });
+        }
+        await Checkout.deleteOne({ _id: checkout._id });
+        throw createAppError('NOT_FOUND', 'Order not found');
+      }
+      for (const row of lineSettlements) {
+        const line = doc.items.id(row.lineId);
+        if (!line) {
+          if (mp.memberCreditUsed > 0 && mp.memberId) {
+            await creditMemberWallet({
+              Member,
+              MemberWalletTxn,
+              storeId: req.storeId!,
+              memberId: mp.memberId,
+              amountEuro: mp.memberCreditUsed,
+              type: 'reversal',
+              orderId: new mongoose.Types.ObjectId(orderId),
+              checkoutId: checkout._id,
+              note: '部分结账行缺失，冲回储值',
+            });
+          }
+          await Checkout.deleteOne({ _id: checkout._id });
+          throw createAppError('VALIDATION_ERROR', `行不存在: ${row.lineId}`);
+        }
+        const cur = Number((line as { settledQty?: number }).settledQty) || 0;
+        (line as { settledQty?: number }).settledQty = cur + row.qty;
+      }
+      doc.markModified('items');
+      const remaining = computeDineInUnsettledPayableEuro(doc);
+      if (remaining <= 0.02 && !dineInHasUnsettledFoodLineQty(doc)) {
+        doc.status = 'checked_out';
+        markDineInKitchenPrintedQtyFull(doc);
+        doc.markModified('items');
+      }
+      await doc.save();
+
+      if (doc.status === 'checked_out') {
+        io.to(storeIoRoom(req.storeId!)).emit('order:checked-out', {
+          orderId: doc._id.toString(),
+          tableNumber: doc.tableNumber,
+        });
+      } else {
+        io.to(storeIoRoom(req.storeId!)).emit('order:updated', doc);
+      }
+
+      res.status(201).json(checkout);
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  /**
+   * 后结堂食：整桌一次支付，仅结清勾选的行（可跨多笔 pending 单），与单笔 dine-in-partial 规则一致（Bundle 按单分摊）。
+   * body.lineSettlements: { orderId: string; lineId: string; qty: number }[]
+   */
+  router.post('/dine-in-partial-table/:tableNumber', optionalAuthMiddleware, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { Order, Checkout, Member, MemberWalletTxn } = checkoutModels();
+      const tableNumber = parseInt(req.params.tableNumber as string, 10);
+      if (isNaN(tableNumber)) {
+        throw createAppError('VALIDATION_ERROR', 'Invalid table number');
+      }
+      const wf = await getDineInWorkflowModeForStore(req.storeId!);
+      if (wf !== 'pay_after') {
+        throw createAppError('VALIDATION_ERROR', '仅后结堂食支持按桌勾选部分结账');
+      }
+      const raw = (req.body as Record<string, unknown>).lineSettlements;
+      if (!Array.isArray(raw) || raw.length === 0) {
+        throw createAppError('VALIDATION_ERROR', 'lineSettlements 必须为非空数组');
+      }
+      type Row = { orderId: string; lineId: string; qty: number };
+      const mergedByOrder = new Map<string, Map<string, number>>();
+      for (const r of raw) {
+        const orderId = String((r as { orderId?: unknown }).orderId ?? '').trim();
+        const lineId = String((r as { lineId?: unknown }).lineId ?? '').trim();
+        const qty = Number((r as { qty?: unknown }).qty);
+        if (!mongoose.Types.ObjectId.isValid(orderId) || !mongoose.Types.ObjectId.isValid(lineId) || !(qty >= 1)) {
+          throw createAppError('VALIDATION_ERROR', '每项需含有效 orderId、lineId 与 qty≥1');
+        }
+        if (!mergedByOrder.has(orderId)) mergedByOrder.set(orderId, new Map());
+        const m = mergedByOrder.get(orderId)!;
+        const prev = m.get(lineId) || 0;
+        m.set(lineId, prev + Math.floor(qty));
+      }
+      const orderIds = [...mergedByOrder.keys()];
+      const orders = await Order.find({
+        _id: { $in: orderIds.map((id) => new mongoose.Types.ObjectId(id)) },
+        storeId: req.storeId,
+        type: 'dine_in',
+        status: { $in: ['pending', 'paid_online', 'checked_out'] },
+        tableNumber,
+      });
+      if (orders.length !== orderIds.length) {
+        throw createAppError('VALIDATION_ERROR', '订单不存在、状态不允许部分结账或桌号不一致');
+      }
+      let totalPayable = 0;
+      const allCheckoutLines: { orderLineItemId: mongoose.Types.ObjectId; quantity: number; amountEuro: number }[] = [];
+      const lineSettlementsByOrder = new Map<string, { lineId: string; qty: number }[]>();
+      for (const [oid, lineMap] of mergedByOrder) {
+        const lineSettlements = [...lineMap.entries()].map(([lineId, qty]) => ({ lineId, qty }));
+        lineSettlementsByOrder.set(oid, lineSettlements);
+        const order = orders.find((o) => o._id.toString() === oid);
+        if (!order) {
+          throw createAppError('NOT_FOUND', `Order ${oid}`);
+        }
+        const preview = computePartialDineInSettlementPreview(order, lineSettlements);
+        if (!preview.ok) {
+          throw createAppError('VALIDATION_ERROR', preview.message);
+        }
+        totalPayable += preview.payable;
+        for (const l of preview.lines) {
+          allCheckoutLines.push({
+            orderLineItemId: new mongoose.Types.ObjectId(l.orderLineItemId),
+            quantity: l.quantity,
+            amountEuro: l.amountEuro,
+          });
+        }
+      }
+      totalPayable = round2Euro(totalPayable);
+      const { couponName, couponAmount } = req.body as Record<string, unknown>;
+      let finalAmount = totalPayable;
+      if (couponAmount && typeof couponAmount === 'number' && couponAmount > 0) {
+        finalAmount = Math.max(0, round2Euro(totalPayable - couponAmount));
+      }
+
+      await assertMemberWalletFeatureIfNeeded(req);
+      const mp = await resolveMemberPaymentForCheckout({
+        storeId: req.storeId!,
+        Member,
+        finalAmount,
+        body: req.body as Record<string, unknown>,
+        skipMemberPin: staffMayDebitMemberWithoutPin(req),
+      });
+
+      const checkoutData: Record<string, unknown> = {
+        storeId: req.storeId,
+        type: 'table',
+        tableNumber,
+        totalAmount: finalAmount,
+        paymentMethod: mp.paymentMethod,
+        orderIds: orders.map((o) => o._id),
+        memberCreditUsed: mp.memberCreditUsed,
+        dineInPartialLineSettlements: allCheckoutLines,
+      };
+      if (mp.memberId) {
+        checkoutData.memberId = mp.memberId;
+        checkoutData.memberPhoneSnapshot = mp.memberPhoneSnapshot;
+      }
+      if (mp.paymentMethod === 'mixed') {
+        checkoutData.cashAmount = mp.cashAmount;
+        checkoutData.cardAmount = mp.cardAmount;
+      } else if (mp.paymentMethod === 'cash') {
+        checkoutData.cashAmount = mp.cashAmount;
+      } else if (mp.paymentMethod === 'card' || mp.paymentMethod === 'online') {
+        checkoutData.cardAmount = mp.cardAmount;
+      }
+      if (couponName) checkoutData.couponName = couponName;
+      if (couponAmount && typeof couponAmount === 'number' && couponAmount > 0) {
+        checkoutData.couponAmount = couponAmount;
+      }
+
+      const checkout = await Checkout.create(checkoutData);
+      try {
+        if (mp.memberCreditUsed > 0 && mp.memberId) {
+          await debitMemberWallet({
+            Member,
+            MemberWalletTxn,
+            storeId: req.storeId!,
+            memberId: mp.memberId,
+            amountEuro: mp.memberCreditUsed,
+            checkoutId: checkout._id,
+            note: '堂食后结按桌部分结账储值抵扣',
+          });
+        }
+      } catch (e) {
+        await Checkout.deleteOne({ _id: checkout._id });
+        throw e;
+      }
+
+      const savedIds: mongoose.Types.ObjectId[] = [];
+      try {
+        for (const order of orders) {
+          const oid = order._id.toString();
+          const rows = lineSettlementsByOrder.get(oid);
+          if (!rows) continue;
+          for (const row of rows) {
+            const line = order.items.id(row.lineId);
+            if (!line) {
+              throw createAppError('VALIDATION_ERROR', `行不存在: ${row.lineId}`);
+            }
+            const cur = Number((line as { settledQty?: number }).settledQty) || 0;
+            (line as { settledQty?: number }).settledQty = cur + row.qty;
+          }
+          const remaining = computeDineInUnsettledPayableEuro(order);
+          if (remaining <= 0.02) {
+            order.status = 'checked_out';
+            if (!dineInHasUnsettledFoodLineQty(order)) {
+              markDineInKitchenPrintedQtyFull(order);
+            }
+          }
+          order.markModified('items');
+          await order.save();
+          savedIds.push(order._id);
+        }
+      } catch (err) {
+        for (const id of savedIds) {
+          const doc = await Order.findOne({ _id: id, storeId: req.storeId });
+          if (!doc) continue;
+          const rows = lineSettlementsByOrder.get(id.toString());
+          if (!rows) continue;
+          for (const row of rows) {
+            const line = doc.items.id(row.lineId);
+            if (!line) continue;
+            const cur = Number((line as { settledQty?: number }).settledQty) || 0;
+            (line as { settledQty?: number }).settledQty = Math.max(0, cur - row.qty);
+          }
+          doc.markModified('items');
+          const remaining = computeDineInUnsettledPayableEuro(doc);
+          if (remaining > 0.02 || dineInHasUnsettledFoodLineQty(doc)) doc.status = 'pending';
+          await doc.save();
+        }
+        if (mp.memberCreditUsed > 0 && mp.memberId) {
+          await creditMemberWallet({
+            Member,
+            MemberWalletTxn,
+            storeId: req.storeId!,
+            memberId: mp.memberId,
+            amountEuro: mp.memberCreditUsed,
+            type: 'reversal',
+            checkoutId: checkout._id,
+            note: '按桌部分结账失败，冲回储值',
+          });
+        }
+        await Checkout.deleteOne({ _id: checkout._id });
+        return next(err);
+      }
+
+      for (const order of orders) {
+        if (order.status === 'checked_out') {
+          io.to(storeIoRoom(req.storeId!)).emit('order:checked-out', {
+            orderId: order._id.toString(),
+            tableNumber: order.tableNumber,
+          });
+        } else {
+          io.to(storeIoRoom(req.storeId!)).emit('order:updated', order);
+        }
+      }
+
+      res.status(201).json(checkout);
+    } catch (err) {
+      next(err);
+    }
+  });
+
   // GET /api/checkout/receipt/:checkoutId — Get receipt data
   router.get('/receipt/:checkoutId', async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -398,6 +830,7 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
         cashAmount?: number;
         cardAmount?: number;
         checkedOutAt?: Date;
+        dineInPartialLineSettlements?: { orderLineItemId: mongoose.Types.ObjectId; quantity: number; amountEuro: number }[];
       } | null;
       if (!checkout) {
         throw createAppError('NOT_FOUND', 'Checkout not found');
@@ -405,6 +838,12 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
 
       // Populate orders with their items
       const orders = await Order.find({ storeId: req.storeId, _id: { $in: checkout.orderIds } }).lean();
+
+      const partial = (checkout.dineInPartialLineSettlements || []).map((r) => ({
+        orderLineItemId: r.orderLineItemId.toString(),
+        quantity: r.quantity,
+        amountEuro: r.amountEuro,
+      }));
 
       res.json({
         checkoutId: checkout._id,
@@ -417,6 +856,7 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
         memberCreditUsed: (checkout as { memberCreditUsed?: number }).memberCreditUsed,
         memberPhoneSnapshot: (checkout as { memberPhoneSnapshot?: string }).memberPhoneSnapshot,
         checkedOutAt: checkout.checkedOutAt,
+        ...(partial.length > 0 ? { dineInPartialLineSettlements: partial } : {}),
         orders: orders.map(o => ({
           _id: o._id,
           type: o.type,

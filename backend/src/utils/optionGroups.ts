@@ -3,7 +3,30 @@ import { createAppError } from '../middleware/errorHandler';
 
 export type LeanTranslation = { locale: string; name: string };
 export type LeanChoice = { _id?: mongoose.Types.ObjectId; extraPrice?: number; originalPrice?: number; translations: LeanTranslation[] };
-export type LeanOptionGroup = { _id?: mongoose.Types.ObjectId; required?: boolean; translations: LeanTranslation[]; choices: LeanChoice[] };
+export type LeanOptionGroup = {
+  _id?: mongoose.Types.ObjectId;
+  required?: boolean;
+  minSelect?: number;
+  maxSelect?: number;
+  translations: LeanTranslation[];
+  choices: LeanChoice[];
+};
+
+function readNonnegInt(v: unknown, fallback: number): number {
+  if (typeof v !== 'number' || !Number.isFinite(v)) return fallback;
+  return Math.max(0, Math.floor(v));
+}
+
+/**
+ * 必选组：固定 1 项。非必选：minSelect / maxSelect（max 0 = 不限制）。
+ */
+export function optionGroupSelectionBounds(g: LeanOptionGroup): { min: number; max: number } {
+  if (g.required) return { min: 1, max: 1 };
+  return {
+    min: readNonnegInt((g as { minSelect?: unknown }).minSelect, 0),
+    max: readNonnegInt((g as { maxSelect?: unknown }).maxSelect, 0),
+  };
+}
 
 function isGroupLikeRecord(x: unknown): boolean {
   return (
@@ -79,6 +102,25 @@ export function validateOptionGroups(optionGroups: unknown): asserts optionGroup
         throw createAppError('VALIDATION_ERROR', `optionGroups[${gi}].choices[${ci}]: originalPrice must be a number`);
       }
     }
+    if (g.minSelect != null && typeof g.minSelect !== 'number') {
+      throw createAppError('VALIDATION_ERROR', `optionGroups[${gi}]: minSelect must be a number`);
+    }
+    if (g.maxSelect != null && typeof g.maxSelect !== 'number') {
+      throw createAppError('VALIDATION_ERROR', `optionGroups[${gi}]: maxSelect must be a number`);
+    }
+    if (!g.required) {
+      const minS = readNonnegInt(g.minSelect, 0);
+      const maxS = readNonnegInt(g.maxSelect, 0);
+      if (maxS > 0 && minS > maxS) {
+        throw createAppError('VALIDATION_ERROR', `optionGroups[${gi}]: minSelect cannot exceed maxSelect`);
+      }
+      if (minS > g.choices.length) {
+        throw createAppError('VALIDATION_ERROR', `optionGroups[${gi}]: minSelect cannot exceed number of choices`);
+      }
+      if (maxS > 0 && maxS > g.choices.length) {
+        throw createAppError('VALIDATION_ERROR', `optionGroups[${gi}]: maxSelect cannot exceed number of choices`);
+      }
+    }
   }
 }
 
@@ -99,6 +141,8 @@ export function cloneOptionGroupsPreservingSubdocIds(groups: LeanOptionGroup[]):
   return flat.map((g) => ({
     _id: subdocObjectId(g._id),
     required: !!g.required,
+    minSelect: g.required ? 0 : readNonnegInt((g as { minSelect?: unknown }).minSelect, 0),
+    maxSelect: g.required ? 0 : readNonnegInt((g as { maxSelect?: unknown }).maxSelect, 0),
     translations: (g.translations || []).map((t) => ({ locale: t.locale, name: t.name })),
     choices: (g.choices || []).map((c) => ({
       _id: subdocObjectId(c._id),
@@ -115,6 +159,8 @@ export function cloneOptionGroupsWithNewIds(groups: LeanOptionGroup[]): LeanOpti
   return flat.map((g) => ({
     _id: new mongoose.Types.ObjectId(),
     required: !!g.required,
+    minSelect: g.required ? 0 : readNonnegInt((g as { minSelect?: unknown }).minSelect, 0),
+    maxSelect: g.required ? 0 : readNonnegInt((g as { maxSelect?: unknown }).maxSelect, 0),
     translations: (g.translations || []).map((t) => ({ locale: t.locale, name: t.name })),
     choices: (g.choices || []).map((c) => ({
       _id: new mongoose.Types.ObjectId(),

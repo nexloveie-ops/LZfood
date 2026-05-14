@@ -16,6 +16,14 @@ const CheckoutSchema = new mongoose.Schema({
   memberCreditRefundedEuro: { type: Number, default: 0 },
   memberPhoneSnapshot: { type: String, default: '' },
   orderIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Order' }],
+  /** 堂食后结部分结账：每行本次结清的份数与金额（审计） */
+  dineInPartialLineSettlements: [
+    {
+      orderLineItemId: { type: mongoose.Schema.Types.ObjectId, required: true },
+      quantity: { type: Number, required: true },
+      amountEuro: { type: Number, required: true },
+    },
+  ],
   checkedOutAt: { type: Date, default: Date.now },
 });
 

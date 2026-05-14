@@ -1,7 +1,7 @@
 /**
  * 列出当前 MongoDB 数据库中全部集合及文档数量（不打印文档内容，避免泄露与巨量输出）。
  * 用法：cd backend && npx ts-node scripts/db-inventory.ts
- * 全量导出请用：mongodump --uri="$LZFOOD_DBCON"
+ * 全量逻辑导出（JSONL）：npm run db:dump-full；BSON 备份：npm run db:mongodump（需本机已装 MongoDB Database Tools）
  */
 import path from 'path';
 import dotenv from 'dotenv';

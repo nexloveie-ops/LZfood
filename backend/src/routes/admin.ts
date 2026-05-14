@@ -66,12 +66,17 @@ router.get('/config', async (req: Request, res: Response, next: NextFunction) =>
       if (STRIPE_KEYS_FILTER_FROM_PUBLIC_CONFIG.has(c.key)) continue;
       configMap[c.key] = c.value;
     }
-    const storeDoc = (await Store.findById(req.storeId).lean()) as { displayName?: string } | null;
+    const storeDoc = (await Store.findById(req.storeId).lean()) as {
+      displayName?: string;
+      dineInWorkflowMode?: string;
+    } | null;
     const dn = storeDoc?.displayName?.trim();
     if (dn) {
       if (!configMap.restaurant_name_zh?.trim()) configMap.restaurant_name_zh = dn;
       if (!configMap.restaurant_name_en?.trim()) configMap.restaurant_name_en = dn;
     }
+    configMap.dine_in_workflow_mode =
+      storeDoc?.dineInWorkflowMode === 'pay_after' ? 'pay_after' : 'pay_first';
     res.json(configMap);
   } catch (err) {
     next(err);
@@ -106,13 +111,24 @@ router.get('/features', ...requireAuthSameStore, async (req: Request, res: Respo
 // PUT /api/admin/config — Update system configs (requires auth + config:update)
 router.put('/config', ...requireAuthSameStore, requirePermission('config:update'), async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { SystemConfig } = adminModels();
-    const updates = req.body;
+    const { SystemConfig, Store } = adminModels();
+    const updates = { ...(req.body as Record<string, unknown>) };
     if (!updates || typeof updates !== 'object' || Array.isArray(updates)) {
       throw createAppError('VALIDATION_ERROR', 'Request body must be a key-value object');
     }
 
     const results: Record<string, string> = {};
+
+    if (Object.prototype.hasOwnProperty.call(updates, 'dine_in_workflow_mode')) {
+      const raw = updates.dine_in_workflow_mode;
+      delete updates.dine_in_workflow_mode;
+      if (typeof raw !== 'string' || (raw !== 'pay_first' && raw !== 'pay_after')) {
+        throw createAppError('VALIDATION_ERROR', 'dine_in_workflow_mode must be "pay_first" or "pay_after"');
+      }
+      await Store.findByIdAndUpdate(req.storeId, { $set: { dineInWorkflowMode: raw } });
+      results.dine_in_workflow_mode = raw;
+    }
+
     for (const [key, value] of Object.entries(updates)) {
       if (STRIPE_KEYS_FILTER_FROM_PUBLIC_CONFIG.has(key)) {
         continue;

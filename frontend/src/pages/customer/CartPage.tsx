@@ -57,6 +57,7 @@ export default function CartPage() {
   const [deliveryGeoError, setDeliveryGeoError] = useState('');
   const eircodeReqRef = useRef(0);
   const [pickupSlotChoice, setPickupSlotChoice] = useState('');
+  const [dineInGuestLabel, setDineInGuestLabel] = useState('');
 
   const table = searchParams.get('table');
   const seat = searchParams.get('seat');
@@ -195,8 +196,19 @@ export default function CartPage() {
 
   const grandTotal = orderType === 'delivery' ? finalTotal + deliveryFeeAmount : finalTotal;
 
+  const isDineInCart =
+    orderType !== 'takeout' &&
+    orderType !== 'delivery' &&
+    table != null &&
+    seat != null &&
+    !Number.isNaN(Number(table)) &&
+    !Number.isNaN(Number(seat));
+  const showDineInGuestLabel =
+    isDineInCart && !editOrderId && config.dine_in_workflow_mode === 'pay_after';
+
   const handleSubmit = async () => {
     if (items.length === 0) return;
+    if (submitting) return;
     setSubmitting(true);
     setError('');
     try {
@@ -251,6 +263,9 @@ export default function CartPage() {
           body.type = 'dine_in';
           body.tableNumber = Number(table);
           body.seatNumber = Number(seat);
+          if (config.dine_in_workflow_mode === 'pay_after') {
+            body.dineInGuestLabel = dineInGuestLabel.trim().slice(0, 40);
+          }
         }
         // Include bundle discount info
         if (matchedBundles.length > 0) {
@@ -271,6 +286,20 @@ export default function CartPage() {
         const j = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
         setError(j?.error?.message || t('customer.updateFailed'));
         return;
+      }
+      if (editOrderId && config.dine_in_workflow_mode === 'pay_after') {
+        const chk = await apiFetch(`/api/orders/${editOrderId}`, { omitStaffToken: true });
+        if (chk.ok) {
+          const o = (await chk.json()) as { type?: string; status?: string };
+          if (o.type === 'dine_in' && (o.status === 'pending' || o.status === 'paid_online')) {
+            await apiFetch(`/api/orders/${editOrderId}/dine-in-exposed`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ exposed: true }),
+              omitStaffToken: true,
+            });
+          }
+        }
       }
       const order = await res.json();
       const rawId = editOrderId ?? order._id;
@@ -322,6 +351,8 @@ export default function CartPage() {
         {items.map(item => {
           const key = getItemKey(item);
           const optExtra = (item.options || []).reduce((s, o) => s + o.extraPrice, 0);
+          const lockedFloor = typeof item.lockedBaselineQty === 'number' ? item.lockedBaselineQty : null;
+          const atLockedFloor = lockedFloor != null && item.quantity <= lockedFloor;
           return (
             <div key={key} style={{
               display: 'flex', alignItems: 'center', gap: 12,
@@ -348,10 +379,15 @@ export default function CartPage() {
               <div style={{
                 display: 'flex', alignItems: 'center', border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden',
               }}>
-                <button onClick={() => decreaseQuantity(key)} style={{
-                  width: 34, height: 34, background: 'var(--bg)', fontSize: 16, fontWeight: 700,
-                  color: 'var(--red-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                }}>−</button>
+                <button
+                  type="button"
+                  onClick={() => !atLockedFloor && decreaseQuantity(key)}
+                  disabled={atLockedFloor}
+                  style={{
+                    width: 34, height: 34, background: 'var(--bg)', fontSize: 16, fontWeight: 700,
+                    color: atLockedFloor ? 'var(--text-light)' : 'var(--red-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    cursor: atLockedFloor ? 'not-allowed' : 'pointer',
+                  }}>−</button>
                 <span style={{ width: 34, textAlign: 'center', fontSize: 14, fontWeight: 700 }}>{item.quantity}</span>
                 <button onClick={() => increaseQuantity(key)} style={{
                   width: 34, height: 34, background: 'var(--bg)', fontSize: 16, fontWeight: 700,
@@ -361,9 +397,13 @@ export default function CartPage() {
               <div style={{ fontWeight: 700, color: 'var(--red-primary)', minWidth: 50, textAlign: 'right', fontFamily: "'Noto Serif SC', serif" }}>
                 €{((item.price + optExtra) * item.quantity).toFixed(2)}
               </div>
-              <button onClick={() => removeItem(key)} style={{
-                background: 'none', color: 'var(--text-light)', fontSize: 18, padding: 4,
-              }}>✕</button>
+              {lockedFloor == null ? (
+                <button type="button" onClick={() => removeItem(key)} style={{
+                  background: 'none', color: 'var(--text-light)', fontSize: 18, padding: 4,
+                }}>✕</button>
+              ) : (
+                <span style={{ width: 22 }} aria-hidden />
+              )}
             </div>
           );
         })}
@@ -391,6 +431,24 @@ export default function CartPage() {
           ) : (
             <span style={{ fontSize: 12, color: '#6D4C41' }}>{t('customer.deliveryNoPhoneConfigured')}</span>
           )}
+        </div>
+      )}
+      {showDineInGuestLabel && (
+        <div style={{ marginTop: 12 }}>
+          <label style={{ fontSize: 12, color: 'var(--text-light)', display: 'block', marginBottom: 6 }}>
+            {t('customer.dineInGuestLabel')}
+          </label>
+          <input
+            className="input"
+            value={dineInGuestLabel}
+            onChange={(e) => setDineInGuestLabel(e.target.value)}
+            placeholder={t('customer.dineInGuestLabelPlaceholder')}
+            maxLength={40}
+            style={{ width: '100%', fontSize: 14 }}
+          />
+          <div style={{ fontSize: 11, color: 'var(--text-light)', marginTop: 6, lineHeight: 1.45 }}>
+            {t('customer.dineInGuestLabelHint')}
+          </div>
         </div>
       )}
       {orderType === 'takeout' && (

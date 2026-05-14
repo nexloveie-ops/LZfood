@@ -8,7 +8,7 @@ import MemberWalletPayModal from '../../components/customer/MemberWalletPayModal
 import { apiFetch } from '../../api/client';
 import { resolveBackendAssetUrl } from '../../utils/backendPublicUrl';
 import { useRestaurantConfig } from '../../hooks/useRestaurantConfig';
-import { computeOrderPayableEuro } from '../../utils/orderPayableEuro';
+import { computeCustomerFacingPayableEuro } from '../../utils/orderPayableEuro';
 
 interface OrderItem {
   _id: string;
@@ -18,6 +18,10 @@ interface OrderItem {
   unitPrice: number;
   itemName: string;
   itemNameEn?: string;
+  settledQty?: number;
+  refunded?: boolean;
+  /** 与后端 DELETE 堂食取消规则、收银 dineInAllowCancelPending 一致 */
+  kitchenPrintedQty?: number;
   selectedOptions?: { groupName: string; groupNameEn?: string; choiceName: string; choiceNameEn?: string; extraPrice: number }[];
 }
 interface AppliedBundle { offerId?: string; name: string; nameEn?: string; discount: number; }
@@ -27,6 +31,9 @@ interface Order {
   appliedBundles?: AppliedBundle[];
   deliveryFeeEuro?: number;
   pickupSlotLabel?: string;
+  dineInExposedToStaff?: boolean;
+  dineInStaffLockedAt?: string;
+  dineInGuestLabel?: string;
 }
 
 interface PostOrderSlide {
@@ -45,6 +52,17 @@ interface PostOrderAdBanner {
 
 /** 下单后在本页即可展示广告（含待支付） */
 const POST_ORDER_AD_STATUSES = new Set(['pending', 'paid_online', 'checked_out', 'completed']);
+
+/** 堂食 pending：未出厨房、未部分结账时可整单取消（与 DELETE /api/orders/:id 一致） */
+function dineInPendingCustomerMayCancelWholeOrder(o: Order): boolean {
+  if (o.type !== 'dine_in' || o.status !== 'pending') return true;
+  for (const it of o.items || []) {
+    if (it.lineKind === 'delivery_fee' || it.refunded) continue;
+    if ((Number(it.kitchenPrintedQty) || 0) > 0) return false;
+    if ((Number(it.settledQty) || 0) > 0) return false;
+  }
+  return true;
+}
 
 function PostOrderAdCarousel({ slides, lang }: { slides: PostOrderSlide[]; lang: string }) {
   const [idx, setIdx] = useState(0);
@@ -209,6 +227,24 @@ export default function OrderStatusPage() {
   const handleModifyOrder = async () => {
     if (!order) return;
     try {
+      if (
+        order.type === 'dine_in' &&
+        config.dine_in_workflow_mode === 'pay_after' &&
+        order.status === 'pending' &&
+        !order.dineInStaffLockedAt
+      ) {
+        const w = await apiFetch(`/api/orders/${order._id}/dine-in-exposed`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ exposed: false }),
+          omitStaffToken: true,
+        });
+        if (!w.ok) {
+          const j = (await w.json().catch(() => null)) as { error?: { message?: string } } | null;
+          alert(j?.error?.message || (lang.startsWith('zh') ? '暂时无法进入改单，请稍后再试' : 'Could not start edit'));
+          return;
+        }
+      }
       // Fetch menu items to resolve groupId/choiceId from stored groupName/choiceName
       const menuRes = await apiFetch('/api/menu/items');
       const menuItems: {
@@ -220,6 +256,12 @@ export default function OrderStatusPage() {
         }[];
       }[] = menuRes.ok ? await menuRes.json() : [];
       const menuMap = new Map(menuItems.map(m => [m._id, m]));
+
+      const useLockedLineBaselines =
+        order.type === 'dine_in' &&
+        order.status === 'pending' &&
+        (!dineInPendingCustomerMayCancelWholeOrder(order) ||
+          (config.dine_in_workflow_mode === 'pay_after' && !!order.dineInStaffLockedAt));
 
       const cartItems: CartItem[] = order.items
         .filter(
@@ -258,13 +300,14 @@ export default function OrderStatusPage() {
           }
         }
 
-        return {
+        const row: CartItem = {
           menuItemId: item.menuItemId,
           names: { 'zh-CN': item.itemName, 'en-US': item.itemNameEn || item.itemName },
           price: item.unitPrice,
           quantity: item.quantity,
           options: options.length > 0 ? options : undefined,
         };
+        return useLockedLineBaselines ? { ...row, lockedBaselineQty: item.quantity } : row;
       });
 
       clearCart();
@@ -280,6 +323,12 @@ export default function OrderStatusPage() {
   if (!order) return <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-light)' }}>{t('customer.orderNotFound')}</div>;
 
   const isPending = order.status === 'pending';
+  const dineInMayCancel = dineInPendingCustomerMayCancelWholeOrder(order);
+  const showDineInPrimaryAsAddDishes =
+    order.type === 'dine_in' &&
+    isPending &&
+    (!dineInMayCancel ||
+      (config.dine_in_workflow_mode === 'pay_after' && !!order.dineInStaffLockedAt));
   const isPaidOnline = order.status === 'paid_online';
   /** 扫码送餐：Stripe 成功后订单为 checked_out 且已写 Checkout，顾客仍显示「已支付」 */
   const isDeliveryPaidCheckout = order.type === 'delivery' && order.status === 'checked_out';
@@ -311,6 +360,11 @@ export default function OrderStatusPage() {
           <div style={{ fontSize: 15, fontWeight: 700, fontFamily: "'Noto Serif SC', serif", lineHeight: 1.2 }}>
             {order.dailyOrderNumber ? `#${order.dailyOrderNumber}` : order._id.slice(-8).toUpperCase()}
           </div>
+          {order.type === 'dine_in' && order.dineInGuestLabel?.trim() ? (
+            <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>
+              {t('customer.dineInGuestLabelOnOrder')}：{order.dineInGuestLabel.trim()}
+            </div>
+          ) : null}
         </div>
         <span style={{
           display: 'inline-block', padding: '3px 10px', borderRadius: 14,
@@ -333,6 +387,25 @@ export default function OrderStatusPage() {
         </div>
       ) : null}
 
+      {isPending &&
+        order.type === 'dine_in' &&
+        config.dine_in_workflow_mode === 'pay_after' &&
+        order.dineInStaffLockedAt && (
+          <div
+            style={{
+              marginBottom: 12,
+              padding: '10px 12px',
+              borderRadius: 8,
+              background: '#FFF3E0',
+              border: '1px solid #FFB74D',
+              fontSize: 13,
+              color: '#E65100',
+              lineHeight: 1.5,
+            }}
+          >
+            {t('customer.dineInStaffLockedHint')}
+          </div>
+        )}
       {isPending && order.type === 'delivery' && (
         <div style={{
           marginBottom: 12,
@@ -396,7 +469,7 @@ export default function OrderStatusPage() {
         )}
         <div style={{ display: 'flex', justifyContent: 'space-between', padding: '14px 16px', fontWeight: 700, fontSize: 16 }}>
           <span>{t('customer.totalAmount')}</span>
-          <span style={{ color: 'var(--red-primary)', fontFamily: "'Noto Serif SC', serif" }}>€{computeOrderPayableEuro(order).toFixed(2)}</span>
+          <span style={{ color: 'var(--red-primary)', fontFamily: "'Noto Serif SC', serif" }}>€{computeCustomerFacingPayableEuro(order, config.dine_in_workflow_mode === 'pay_after').toFixed(2)}</span>
         </div>
       </div>
 
@@ -411,7 +484,7 @@ export default function OrderStatusPage() {
                 background: '#000', color: '#fff', border: 'none', borderRadius: 12,
                 display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
               }}>
-              <span style={{ fontSize: 20 }}>💳</span> {t('customer.payNow')} · €{computeOrderPayableEuro(order).toFixed(2)}
+              <span style={{ fontSize: 20 }}>💳</span> {t('customer.payNow')} · €{computeCustomerFacingPayableEuro(order, config.dine_in_workflow_mode === 'pay_after').toFixed(2)}
             </button>
             <button
               className="btn btn-outline"
@@ -431,16 +504,17 @@ export default function OrderStatusPage() {
                 gap: 8,
               }}
             >
-              <span style={{ fontSize: 20 }}>👛</span> {t('customer.memberWalletPay')} · €{computeOrderPayableEuro(order).toFixed(2)}
+              <span style={{ fontSize: 20 }}>👛</span> {t('customer.memberWalletPay')} · €{computeCustomerFacingPayableEuro(order, config.dine_in_workflow_mode === 'pay_after').toFixed(2)}
             </button>
             <div style={{ display: 'flex', gap: 10 }}>
               <button className="btn btn-primary" style={{ flex: 1 }} onClick={handleModifyOrder}>
-                {t('customer.modifyOrder')}
+                {showDineInPrimaryAsAddDishes ? t('customer.addDishes') : t('customer.modifyOrder')}
               </button>
               <button className="btn btn-outline" style={{ flex: 1 }} onClick={() => navigate(menuHref)}>
                 {t('customer.backToMenu')}
               </button>
             </div>
+            {dineInMayCancel && (
             <button
               onClick={async () => {
                 if (!confirm(t('customer.confirmCancel'))) return;
@@ -456,6 +530,7 @@ export default function OrderStatusPage() {
               }}>
               ✕ {t('customer.cancelOrder')}
             </button>
+            )}
           </>
         )}
         {(isPaidOnline || isDeliveryPaidCheckout) && (
@@ -530,7 +605,7 @@ export default function OrderStatusPage() {
       {showPayment && order && (
         <PaymentModal
           orderId={order._id}
-          amount={computeOrderPayableEuro(order)}
+          amount={computeCustomerFacingPayableEuro(order, config.dine_in_workflow_mode === 'pay_after')}
           onSuccess={() => {
             setShowPayment(false);
             fetchOrder(); // Refresh to show checked_out status
@@ -541,7 +616,7 @@ export default function OrderStatusPage() {
       {showMemberWallet && order && (
         <MemberWalletPayModal
           orderId={order._id}
-          amount={computeOrderPayableEuro(order)}
+          amount={computeCustomerFacingPayableEuro(order, config.dine_in_workflow_mode === 'pay_after')}
           onSuccess={() => {
             setShowMemberWallet(false);
             fetchOrder();
