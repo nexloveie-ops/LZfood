@@ -10,6 +10,7 @@ import CashierMemberCheckoutBlock, {
   canMemberFullWalletPay,
   type CashierMemberPreview,
 } from '../../components/cashier/CashierMemberCheckoutBlock';
+import OrderItemOptionGroupList from '../../components/cashier/OrderItemOptionGroupList';
 
 type OrderType = 'dine_in' | 'takeout' | 'phone' | 'delivery';
 type OrderStatus = 'pending' | 'paid_online' | 'checked_out' | 'completed' | 'refunded' | 'checked_out-hide' | 'completed-hide';
@@ -2420,9 +2421,27 @@ export default function UnifiedOrderCenter() {
             <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>{L.items}</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10, border: '1px solid #eee', borderRadius: 10, padding: 10 }}>
               {detailModalOrder.items.map((item) => (
-                <div key={item._id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, paddingBottom: 6, borderBottom: '1px dashed #f0f0f0' }}>
-                  <span style={{ color: '#333' }}>{item.itemName} x{item.quantity}</span>
-                  <span style={{ fontWeight: 600 }}>€{((item.unitPrice + (item.selectedOptions || []).reduce((s, o) => s + (o.extraPrice || 0), 0)) * item.quantity).toFixed(2)}</span>
+                <div
+                  key={item._id}
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'flex-start',
+                    gap: 10,
+                    fontSize: 13,
+                    paddingBottom: 8,
+                    borderBottom: '1px dashed #f0f0f0',
+                  }}
+                >
+                  <div style={{ flex: 1, minWidth: 0, color: '#333' }}>
+                    <div style={{ fontWeight: 600 }}>
+                      {item.itemName} ×{item.quantity}
+                    </div>
+                    <OrderItemOptionGroupList options={item.selectedOptions} isEn={isEn} compact />
+                  </div>
+                  <span style={{ fontWeight: 600, flexShrink: 0 }}>
+                    €{((item.unitPrice + (item.selectedOptions || []).reduce((s, o) => s + (o.extraPrice || 0), 0)) * item.quantity).toFixed(2)}
+                  </span>
                 </div>
               ))}
             </div>

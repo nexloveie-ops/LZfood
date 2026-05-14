@@ -10,8 +10,9 @@ import CashierMemberCheckoutBlock, {
   canMemberFullWalletPay,
   type CashierMemberPreview,
 } from '../../components/cashier/CashierMemberCheckoutBlock';
+import OrderItemOptionGroupList from '../../components/cashier/OrderItemOptionGroupList';
 
-interface OrderItem { _id: string; menuItemId: string; quantity: number; unitPrice: number; itemName: string; selectedOptions?: { groupName: string; choiceName: string; extraPrice: number }[]; }
+interface OrderItem { _id: string; menuItemId: string; quantity: number; unitPrice: number; itemName: string; selectedOptions?: { groupName: string; groupNameEn?: string; choiceName: string; choiceNameEn?: string; extraPrice: number }[]; }
 interface TakeoutOrder {
   _id: string; type: string; dailyOrderNumber?: number; status: string;
   items: OrderItem[]; createdAt: string;
@@ -22,7 +23,8 @@ interface TakeoutOrder {
 }
 
 export default function TakeoutOrderList() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const isEn = (i18n.language || '').toLowerCase().startsWith('en');
   const { token, user, hasFeature } = useAuth();
   const canMemberWallet = hasFeature('cashier.member.wallet');
   const [orders, setOrders] = useState<TakeoutOrder[]>([]);
@@ -260,13 +262,7 @@ export default function TakeoutOrderList() {
                   <span>{item.itemName} ×{item.quantity}</span>
                   <span style={{ fontWeight: 600, color: 'var(--red-primary)' }}>€{((item.unitPrice + (item.selectedOptions || []).reduce((a: number, o: { extraPrice?: number }) => a + (o.extraPrice || 0), 0)) * item.quantity).toFixed(2)}</span>
                 </div>
-                {item.selectedOptions && item.selectedOptions.length > 0 && (
-                  <div style={{ fontSize: 11, color: 'var(--text-light)', paddingLeft: 8, marginTop: 2 }}>
-                    {item.selectedOptions.map((opt, i) => (
-                      <span key={i}>{i > 0 && ' · '}{opt.groupName}: {opt.choiceName}{opt.extraPrice > 0 && ` +€${opt.extraPrice}`}</span>
-                    ))}
-                  </div>
-                )}
+                <OrderItemOptionGroupList options={item.selectedOptions} isEn={isEn} compact />
               </div>
             ))}
           </div>

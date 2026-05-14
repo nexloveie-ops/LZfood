@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next';
+import OrderItemOptionGroupList from './OrderItemOptionGroupList';
 
 export interface OrderItem {
   _id: string;
@@ -10,7 +11,13 @@ export interface OrderItem {
   lineKind?: string;
   refunded?: boolean;
   settledQty?: number;
-  selectedOptions?: { groupName: string; choiceName: string; extraPrice: number }[];
+  selectedOptions?: {
+    groupName: string;
+    groupNameEn?: string;
+    choiceName: string;
+    choiceNameEn?: string;
+    extraPrice: number;
+  }[];
 }
 
 export interface Order {
@@ -29,7 +36,8 @@ interface OrderDetailProps {
 }
 
 export default function OrderDetail({ orders }: OrderDetailProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const isEn = (i18n.language || '').toLowerCase().startsWith('en');
 
   if (orders.length === 0) return null;
 
@@ -66,17 +74,11 @@ export default function OrderDetail({ orders }: OrderDetailProps) {
                         </span>
                       </div>
                     </div>
-                    {item.selectedOptions && item.selectedOptions.length > 0 && (
-                      <div style={{ fontSize: 11, color: 'var(--text-light)', paddingLeft: 8, marginTop: 2 }}>
-                        {item.selectedOptions.map((opt, i) => (
-                          <span key={i}>
-                            {i > 0 && ' · '}
-                            {opt.groupName}: {opt.choiceName}
-                            {opt.extraPrice > 0 && ` +€${opt.extraPrice}`}
-                          </span>
-                        ))}
+                    {item.selectedOptions && item.selectedOptions.length > 0 ? (
+                      <div style={{ paddingLeft: 8 }}>
+                        <OrderItemOptionGroupList options={item.selectedOptions} isEn={isEn} compact />
                       </div>
-                    )}
+                    ) : null}
                   </div>
                 ))}
                 {order.appliedBundles && order.appliedBundles.length > 0 && (

@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { useAuth } from '../../context/AuthContext';
 import { type Order, type OrderItem } from '../../components/cashier/OrderDetail';
 import ReceiptPrint from '../../components/cashier/ReceiptPrint';
+import OrderItemOptionGroupList from '../../components/cashier/OrderItemOptionGroupList';
 import { apiFetch } from '../../api/client';
 import { computeCustomerFacingPayableEuro } from '../../utils/orderPayableEuro';
 import CashierMemberCheckoutBlock, {
@@ -79,7 +80,8 @@ function groupBySeat(orders: Order[], dineInPayAfter: boolean): SeatGroup[] {
 
 export default function CheckoutFlow() {
   const { tableNumber, orderId } = useParams();
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const isEn = (i18n.language || '').toLowerCase().startsWith('en');
   const { token, hasFeature } = useAuth();
   const canMemberWallet = hasFeature('cashier.member.wallet');
   const navigate = useNavigate();
@@ -424,13 +426,7 @@ export default function CheckoutFlow() {
                 <tr key={item.menuItemId} style={{ borderBottom: '1px solid #f0f0f0' }}>
                   <td style={{ padding: '8px 0', fontWeight: 500 }}>
                     {item.itemName}
-                    {item.selectedOptions && item.selectedOptions.length > 0 && (
-                      <div style={{ fontSize: 11, color: 'var(--text-light)', fontWeight: 400, marginTop: 1 }}>
-                        {item.selectedOptions.map((opt, i) => (
-                          <span key={i}>{i > 0 && ' · '}{opt.groupName}: {opt.choiceName}{opt.extraPrice > 0 && ` +€${opt.extraPrice}`}</span>
-                        ))}
-                      </div>
-                    )}
+                    <OrderItemOptionGroupList options={item.selectedOptions} isEn={isEn} compact />
                   </td>
                   <td style={{ padding: '8px 0', textAlign: 'center' }}>×{item.quantity}</td>
                   <td style={{ padding: '8px 0', textAlign: 'right' }}>
