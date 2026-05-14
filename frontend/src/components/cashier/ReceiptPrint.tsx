@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef, useCallback, type ReactElement } from 'react';
 import { apiFetch } from '../../api/client';
 
 interface ReceiptOrderItem {
@@ -588,7 +588,7 @@ export default function ReceiptPrint({ checkoutId, cashReceived, changeAmount, b
         </>
       ) : (
         receipt.orders.flatMap((order, oi) => {
-          const subRows: JSX.Element[] = [];
+          const subRows: ReactElement[] = [];
           if (receipt.wholeTableKitchenTicket && receipt.orders.length > 1 && order.type === 'dine_in') {
             const guest = order.dineInGuestLabel?.trim();
             const sub = order.dineInOrderNumber?.trim() || String(order._id || '').slice(-6);

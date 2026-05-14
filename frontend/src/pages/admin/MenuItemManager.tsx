@@ -58,7 +58,7 @@ export default function MenuItemManager() {
           _id: g._id != null ? String(g._id) : undefined,
           nameZh: g.translations.find(t2 => t2.locale === 'zh-CN')?.name || '',
           nameEn: g.translations.find(t2 => t2.locale === 'en-US')?.name || '',
-          required: g.required,
+          required: !!g.required,
           minSelect: Math.max(0, Math.floor(Number((g as { minSelect?: number }).minSelect) || 0)),
           maxSelect: Math.max(0, Math.floor(Number((g as { maxSelect?: number }).maxSelect) || 0)),
           choices: choiceRows.map(c => ({

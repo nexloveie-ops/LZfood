@@ -334,12 +334,6 @@ export default function CashierOrder() {
     return list;
   }, [menuItems, activeCat, search]);
 
-  const activeTableKeyNorm = useMemo(() => {
-    const raw = counterTableInput.trim();
-    const n = parseInt(raw, 10);
-    return raw !== '' && Number.isFinite(n) && n >= 1 ? String(n) : null;
-  }, [counterTableInput]);
-
   /** 将同桌某条待结订单的菜品追加到当前点单（显式点击列表行） */
   const appendActiveOrderToCart = useCallback(
     async (ord: ActiveDineInOrderRow) => {

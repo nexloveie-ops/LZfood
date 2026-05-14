@@ -20,11 +20,15 @@ export function getSocketIoServerUrl(): string | undefined {
 }
 
 /** 收银端店铺房间：与现有各页 `io({ query: { storeId } })` 行为一致，仅统一 URL 与传输策略 */
-export function connectStoreSocket(query: Record<string, string>): Socket {
+export function connectStoreSocket(query: Record<string, string | undefined>): Socket {
   const url = getSocketIoServerUrl();
+  const q = Object.fromEntries(
+    Object.entries(query).filter((e): e is [string, string] => e[1] !== undefined && e[1] !== ''),
+  );
+  const transports: string[] = ['polling', 'websocket'];
   const opts = {
-    transports: ['polling', 'websocket'] as const,
-    query,
+    transports,
+    query: q,
     path: '/socket.io',
   };
   return url ? io(url, opts) : io(opts);
