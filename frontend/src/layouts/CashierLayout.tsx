@@ -8,6 +8,7 @@ import { printViaIframe } from '../components/cashier/ReceiptPrint';
 import LanguageSwitcher from '../components/LanguageSwitcher';
 import { useRestaurantConfig } from '../hooks/useRestaurantConfig';
 import { apiFetch } from '../api/client';
+import './cashier-shell.css';
 
 export default function CashierLayout() {
   const { user, logout, token } = useAuth();
@@ -15,10 +16,10 @@ export default function CashierLayout() {
   const navigate = useNavigate();
   const { t } = useTranslation();
   const { displayName } = useRestaurantConfig();
-  // Show settle button only between 20:30 and 23:59
   const [showSettle, setShowSettle] = useState(false);
   const [settling, setSettling] = useState(false);
   const [toasts, setToasts] = useState<{ id: string; text: string }[]>([]);
+
   useEffect(() => {
     const check = () => {
       const now = new Date();
@@ -35,7 +36,10 @@ export default function CashierLayout() {
     const handler = () => unlockAudio();
     document.addEventListener('click', handler, { once: true });
     document.addEventListener('touchstart', handler, { once: true });
-    return () => { document.removeEventListener('click', handler); document.removeEventListener('touchstart', handler); };
+    return () => {
+      document.removeEventListener('click', handler);
+      document.removeEventListener('touchstart', handler);
+    };
   }, []);
 
   useEffect(() => {
@@ -49,7 +53,9 @@ export default function CashierLayout() {
       if (order?.type === 'takeout') playTakeoutSound();
       else playDineInSound();
     });
-    return () => { socket.disconnect(); };
+    return () => {
+      socket.disconnect();
+    };
   }, [user?.storeId]);
 
   const handleLogout = () => {
@@ -62,7 +68,9 @@ export default function CashierLayout() {
     try {
       const today = new Date().toISOString().slice(0, 10);
       const [statsRes, configRes] = await Promise.all([
-        apiFetch(`/api/reports/detailed?startDate=${today}&endDate=${today}`, { headers: { Authorization: `Bearer ${token}` } }),
+        apiFetch(`/api/reports/detailed?startDate=${today}&endDate=${today}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
         apiFetch('/api/admin/config'),
       ]);
       if (!statsRes.ok) {
@@ -85,11 +93,9 @@ export default function CashierLayout() {
         .divider { border-top:2px dashed #000; margin:10px 0; }
         .row { display:flex; justify-content:space-between; margin:4px 0; }
         .big { font-size:18px; margin:6px 0; }
-        .section { margin:4px 0; font-size:14px; text-decoration:underline; }
         @media print { body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } @page { margin:0; size:80mm auto; } }
       </style></head><body>`;
 
-      // Header
       html += `<div class="center">`;
       if (name) html += `<div style="font-size:18px;margin-bottom:4px">${name}</div>`;
       if (addr) html += `<div style="font-size:13px">${addr}</div>`;
@@ -97,16 +103,10 @@ export default function CashierLayout() {
       html += `<div style="font-size:13px">${dateStr} ${timeStr}</div>`;
       html += `</div><div class="divider"></div>`;
 
-      // Cash (net of refunds)
       html += `<div class="row" style="font-size:16px"><span>Cash</span><span>€${(stats.cashTotal ?? 0).toFixed(2)}</span></div>`;
-
-      // Card (net of refunds)
       html += `<div class="row" style="font-size:16px"><span>Card</span><span>€${(stats.cardTotal ?? 0).toFixed(2)}</span></div>`;
-
-      // Member wallet (stored value; net of refunds)
       html += `<div class="row" style="font-size:16px"><span>Member</span><span>€${(stats.memberTotal ?? 0).toFixed(2)}</span></div>`;
 
-      // Footer
       html += `<div class="divider"></div>`;
       html += `<div class="center" style="font-size:12px;margin-top:4px">Printed by ${user?.username || ''} at ${timeStr}</div>`;
       html += `</body></html>`;
@@ -119,73 +119,64 @@ export default function CashierLayout() {
     }
   }, [token, user, t]);
 
-  const tabStyle = (isActive: boolean): React.CSSProperties => ({
-    padding: '12px 24px', fontWeight: isActive ? 700 : 500, fontSize: 14,
-    color: isActive ? 'var(--red-primary)' : 'var(--text-secondary)',
-    borderBottom: isActive ? '3px solid var(--red-primary)' : '3px solid transparent',
-    background: 'none', cursor: 'pointer', whiteSpace: 'nowrap',
-    textDecoration: 'none', display: 'inline-block',
-  });
+  const tabClass = ({ isActive }: { isActive: boolean }) =>
+    `cashier-saas-tab${isActive ? ' is-active' : ''}`;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-      {/* Top Header */}
-      <div style={{
-        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-        padding: '10px 20px', background: 'var(--bg-white)',
-        borderBottom: '2px solid var(--border)', flexShrink: 0,
-      }}>
-        <h1 style={{ fontSize: 18, fontWeight: 700, color: 'var(--red-primary)', fontFamily: 'var(--font-heading)' }}>
-          {displayName} · {t('cashier.title')}
-        </h1>
-        <div style={{ display: 'flex', gap: 12, alignItems: 'center', fontSize: 13, color: 'var(--text-secondary)' }}>
+    <div className="cashier-saas">
+      <header className="cashier-saas-header">
+        <div className="cashier-saas-brand">
+          <strong>{displayName || storeSlug}</strong>
+          {storeSlug ? <span className="cashier-saas-slug">/{storeSlug}</span> : null}
+          <span className="cashier-saas-role">{t('cashier.title')}</span>
+        </div>
+        <div className="cashier-saas-actions">
           {showSettle && (
             <button
               type="button"
-              className="btn"
+              className="btn cashier-saas-settle"
               onClick={handleSettle}
               disabled={settling}
               title={t('cashier.dailySettlementHint')}
-              style={{ padding: '5px 14px', fontSize: 12, background: '#4CAF50', color: '#fff', border: 'none', borderRadius: 6, fontWeight: 600 }}
             >
               {settling ? '...' : `💰 ${t('cashier.dailySettlement')}`}
             </button>
           )}
           <LanguageSwitcher />
-          <span style={{ fontWeight: 600 }}>{user?.username}</span>
-          <button className="btn btn-outline" style={{ padding: '6px 14px', fontSize: 12 }} onClick={handleLogout}>
+          <span className="cashier-saas-user">{user?.username}</span>
+          <button
+            type="button"
+            className="btn btn-outline"
+            style={{ padding: '6px 14px', fontSize: 12, minHeight: 'auto' }}
+            onClick={handleLogout}
+          >
             {t('login.logout', '退出')}
           </button>
         </div>
-      </div>
+      </header>
 
-      {/* Tab Navigation */}
-      <div style={{
-        display: 'flex', gap: 0, background: 'var(--bg-white)',
-        borderBottom: '2px solid var(--border)', flexShrink: 0, paddingLeft: 16,
-      }}>
-        <NavLink to="." end style={({ isActive }) => tabStyle(isActive)}>订单中心</NavLink>
-        <NavLink to="order" style={({ isActive }) => tabStyle(isActive)}>{t('cashier.newOrder', '点单')}</NavLink>
-        <NavLink to="reprint" style={({ isActive }) => tabStyle(isActive)}>{t('cashier.reprint', '重印小票')}</NavLink>
-        <NavLink to="inventory" style={({ isActive }) => tabStyle(isActive)}>{t('admin.inventory', '库存')}</NavLink>
-      </div>
+      <nav className="cashier-saas-tabs" aria-label={t('cashier.title')}>
+        <NavLink to="." end className={tabClass}>
+          订单中心
+        </NavLink>
+        <NavLink to="order" className={tabClass}>
+          {t('cashier.newOrder', '点单')}
+        </NavLink>
+        <NavLink to="reprint" className={tabClass}>
+          {t('cashier.reprint', '重印小票')}
+        </NavLink>
+        <NavLink to="inventory" className={tabClass}>
+          {t('admin.inventory', '库存')}
+        </NavLink>
+      </nav>
 
-      {/* Content: minHeight 0 so nested flex pages (e.g. CashierOrder) get real height */}
-      <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', padding: 16, overflow: 'auto' }}>
+      <main className="cashier-saas-content">
         <Outlet />
-      </div>
-      <div style={{ position: 'fixed', right: 16, bottom: 16, display: 'flex', flexDirection: 'column', gap: 8, zIndex: 1500 }}>
+      </main>
+
+      <div className="cashier-saas-toasts" aria-live="polite">
         {toasts.map((toast) => (
-          <div key={toast.id} style={{
-            minWidth: 220,
-            maxWidth: 360,
-            background: '#1f2937',
-            color: '#fff',
-            borderRadius: 8,
-            padding: '10px 12px',
-            boxShadow: '0 8px 22px rgba(0,0,0,0.25)',
-            fontSize: 13,
-          }}>
+          <div key={toast.id} className="cashier-saas-toast">
             {toast.text}
           </div>
         ))}

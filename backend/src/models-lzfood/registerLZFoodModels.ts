@@ -19,6 +19,9 @@ import { MemberSchema } from '../models/Member';
 import { MemberWalletTxnSchema } from '../models/MemberWalletTxn';
 import { MemberTopUpCardSchema } from '../models/MemberTopUpCard';
 import { CustomerProfileSchema } from '../models/CustomerProfile';
+import { PortalOwnerEmailSchema } from './PortalOwnerEmail';
+import { PortalRegistrationOtpSchema } from './PortalRegistrationOtp';
+import { PortalPasswordResetOtpSchema } from './PortalPasswordResetOtp';
 
 const storeIdField = {
   storeId: {
@@ -76,6 +79,9 @@ export type LZFoodModels = {
   MemberWalletTxn: Model<unknown>;
   MemberTopUpCard: Model<unknown>;
   CustomerProfile: Model<unknown>;
+  PortalOwnerEmail: Model<unknown>;
+  PortalRegistrationOtp: Model<unknown>;
+  PortalPasswordResetOtp: Model<unknown>;
 };
 
 let cached: LZFoodModels | null = null;
@@ -118,6 +124,17 @@ export function registerLZFoodModels(conn: Connection): LZFoodModels {
   const MemberWalletTxn = m('MemberWalletTxn', withStoreId(MemberWalletTxnSchema), 'member_wallet_txns');
   const MemberTopUpCard = m('MemberTopUpCard', withStoreId(MemberTopUpCardSchema), 'member_topup_cards');
   const CustomerProfile = m('CustomerProfile', withStoreId(CustomerProfileSchema), 'customer_profiles');
+  const PortalOwnerEmail = m('PortalOwnerEmail', PortalOwnerEmailSchema, 'portal_owner_emails');
+  const PortalRegistrationOtp = m(
+    'PortalRegistrationOtp',
+    PortalRegistrationOtpSchema,
+    'portal_registration_otps',
+  );
+  const PortalPasswordResetOtp = m(
+    'PortalPasswordResetOtp',
+    PortalPasswordResetOtpSchema,
+    'portal_password_reset_otps',
+  );
 
   cached = {
     Store,
@@ -141,6 +158,9 @@ export function registerLZFoodModels(conn: Connection): LZFoodModels {
     MemberWalletTxn,
     MemberTopUpCard,
     CustomerProfile,
+    PortalOwnerEmail,
+    PortalRegistrationOtp,
+    PortalPasswordResetOtp,
   };
   return cached;
 }

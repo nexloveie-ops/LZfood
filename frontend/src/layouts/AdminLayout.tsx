@@ -4,6 +4,8 @@ import { useAuth } from '../context/AuthContext';
 import { useTranslation } from 'react-i18next';
 import LanguageSwitcher from '../components/LanguageSwitcher';
 import { useRestaurantConfig } from '../hooks/useRestaurantConfig';
+import { PORTAL_LOGO_URL } from '../constants/portalBrand';
+import './admin-shell.css';
 
 const sidebarItems = [
   { path: 'restaurant', icon: '🏪', key: 'admin.restaurantInfo' },
@@ -39,75 +41,89 @@ export default function AdminLayout() {
     navigate(`/${storeSlug}/login`);
   };
 
+  const brandInitial = (displayName || storeSlug || '?').charAt(0).toUpperCase();
+  const collapsedTitle = [displayName, storeSlug ? `/${storeSlug}` : ''].filter(Boolean).join(' · ');
+
   return (
-    <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
-      {/* Sidebar */}
-      <div style={{
-        width: collapsed ? 56 : 220, flexShrink: 0, background: 'var(--bg-white)',
-        borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column',
-        overflow: 'hidden', transition: 'width 0.2s ease',
-      }}>
-        <div style={{
-          padding: collapsed ? '16px 0' : '16px 20px', borderBottom: '1px solid var(--border)',
-          fontFamily: 'var(--font-heading)', fontWeight: 700, fontSize: 18,
-          color: 'var(--red-primary)', letterSpacing: 2, textAlign: collapsed ? 'center' : 'left',
-          whiteSpace: 'nowrap', overflow: 'hidden',
-        }}>
-          {collapsed ? (displayName ? displayName.charAt(0) : '🏪') : displayName}
-          {!collapsed && (
-            <div style={{ fontSize: 10, color: 'var(--text-light)', letterSpacing: 3, fontFamily: 'var(--font-body)', fontWeight: 400 }}>
-              {t('admin.title')}
-            </div>
+    <div className="admin-saas">
+      <aside className={`admin-saas-sidebar${collapsed ? ' is-collapsed' : ''}`}>
+        <div className="admin-saas-brand">
+          {collapsed ? (
+            <span className="admin-saas-brand-initial" title={collapsedTitle}>
+              {brandInitial}
+            </span>
+          ) : (
+            <>
+              <div className="admin-saas-brand-title">{displayName || storeSlug}</div>
+              {storeSlug ? <div className="admin-saas-brand-slug">/{storeSlug}</div> : null}
+              <div className="admin-saas-brand-sub">{t('admin.title')}</div>
+            </>
           )}
         </div>
-        <nav style={{ flex: 1, overflowY: 'auto', padding: '8px 0' }}>
-          {sidebarItems.filter(item => !item.featureKey || hasFeature(item.featureKey)).map(item => (
-            <NavLink key={item.path} to={item.path}
-              title={collapsed ? t(item.key) : undefined}
-              style={({ isActive }) => ({
-                display: 'flex', alignItems: 'center', gap: 10,
-                padding: collapsed ? '12px 0' : '12px 20px',
-                justifyContent: collapsed ? 'center' : 'flex-start',
-                fontSize: 13, fontWeight: isActive ? 600 : 400,
-                color: isActive ? 'var(--red-primary)' : 'var(--text-secondary)',
-                background: isActive ? 'var(--red-light)' : 'transparent',
-                borderLeft: isActive ? '4px solid var(--red-primary)' : '4px solid transparent',
-                textDecoration: 'none', transition: 'var(--transition)',
-                whiteSpace: 'nowrap', overflow: 'hidden',
-              })}
-            >
-              <span style={{ fontSize: 16, flexShrink: 0 }}>{item.icon}</span>
-              {!collapsed && t(item.key)}
-            </NavLink>
-          ))}
+
+        <nav className="admin-saas-nav" aria-label={t('admin.title')}>
+          {sidebarItems
+            .filter((item) => !item.featureKey || hasFeature(item.featureKey))
+            .map((item) => (
+              <NavLink
+                key={item.path}
+                to={item.path}
+                title={collapsed ? t(item.key) : undefined}
+                className={({ isActive }) =>
+                  `admin-saas-nav-link${isActive ? ' is-active' : ''}`
+                }
+              >
+                <span className="admin-saas-nav-icon" aria-hidden>
+                  {item.icon}
+                </span>
+                {!collapsed && t(item.key)}
+              </NavLink>
+            ))}
         </nav>
-        {/* Toggle button */}
-        <button onClick={() => setCollapsed(!collapsed)} style={{
-          padding: '10px 0', border: 'none', borderTop: '1px solid var(--border)',
-          background: 'var(--bg)', cursor: 'pointer', fontSize: 16, color: 'var(--text-light)',
-        }}>
+
+        {!collapsed ? (
+          <a href="/" className="admin-saas-portal-link" title={t('portal.brandName')}>
+            <img src={PORTAL_LOGO_URL} alt="" />
+            {t('storeLogin.backPortal')}
+          </a>
+        ) : (
+          <a href="/" className="admin-saas-portal-link" title={t('storeLogin.backPortal')}>
+            <img src={PORTAL_LOGO_URL} alt="" />
+          </a>
+        )}
+
+        <button
+          type="button"
+          className="admin-saas-collapse"
+          onClick={() => setCollapsed(!collapsed)}
+          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        >
           {collapsed ? '»' : '«'}
         </button>
-      </div>
+      </aside>
 
-      {/* Main */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        {/* Top bar */}
-        <div style={{
-          display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 12,
-          padding: '10px 20px', background: 'var(--bg-white)',
-          borderBottom: '1px solid var(--border)', flexShrink: 0, fontSize: 13,
-        }}>
-          <span style={{ fontWeight: 600 }}>{user?.username}</span>
-          <LanguageSwitcher />
-          <button className="btn btn-outline" style={{ padding: '6px 14px', fontSize: 12 }} onClick={handleLogout}>
-            {t('login.logout', '退出')}
-          </button>
-        </div>
-        {/* Content */}
-        <div style={{ flex: 1, overflow: 'auto', padding: 20 }}>
+      <div className="admin-saas-main">
+        <header className="admin-saas-topbar">
+          <div className="admin-saas-topbar-store">
+            <strong>{displayName || storeSlug}</strong>
+            {storeSlug ? <span className="admin-saas-slug">/{storeSlug}</span> : null}
+          </div>
+          <div className="admin-saas-topbar-actions">
+            <span className="admin-saas-user">{user?.username}</span>
+            <LanguageSwitcher />
+            <button
+              type="button"
+              className="btn btn-outline"
+              style={{ padding: '6px 14px', fontSize: 12, minHeight: 'auto' }}
+              onClick={handleLogout}
+            >
+              {t('login.logout', '退出')}
+            </button>
+          </div>
+        </header>
+        <main className="admin-saas-content">
           <Outlet />
-        </div>
+        </main>
       </div>
     </div>
   );

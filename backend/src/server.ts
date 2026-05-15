@@ -24,6 +24,7 @@ import { createPaymentsRouter } from './routes/payments';
 import couponsRouter from './routes/coupons';
 import platformRouter from './routes/platform';
 import publicAdsRouter from './routes/publicAds';
+import publicPortalRouter from './routes/publicPortal';
 import geoRouter, { guestEircodeMiddleware } from './routes/geo';
 import membersRouter, { membersScanOrderLookup } from './routes/members';
 import { requireFeature } from './middleware/featureAccess';
@@ -94,6 +95,7 @@ app.use('/api/platform', platformRouter);
 
 // 公开接口（不要求 X-Store-Slug）
 app.use('/api/public', publicAdsRouter);
+app.use('/api/public/portal', publicPortalRouter);
 
 // Menu categories routes
 app.use('/api/menu/categories', menuCategoriesRouter);

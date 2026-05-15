@@ -20,6 +20,25 @@
     "logout": "Logout",
     "failed": "Login failed"
   },
+  "storeLogin": {
+    "pageTitle": "Staff sign-in",
+    "subtitle": "Staff & owner sign-in · Cashier & admin",
+    "backPortal": "Portal home",
+    "viewStorefront": "View guest menu",
+    "wrongStore": "Wrong store? Find yours on the portal",
+    "poweredBy": "Powered by",
+    "forgotTab": "Forgot password",
+    "forgotSubtitle": "Store owner password reset",
+    "forgotHint": "Enter the email used for self-service registration. Owner accounts only — cashiers should ask the owner or support.",
+    "forgotCodeSentHint": "If the email matches this store, you will receive a code (resend after ~60s).",
+    "forgotNeedEmail": "Enter your email first",
+    "forgotNewPassword": "New password",
+    "forgotConfirmPassword": "Confirm new password",
+    "forgotPasswordMismatch": "Passwords do not match",
+    "forgotSubmit": "Reset password",
+    "forgotSuccess": "Password updated. Sign in with your new password.",
+    "forgotBackToSignIn": "Back to sign in"
+  },
   "customer": {
     "title": "Menu",
     "cart": "Cart",
@@ -531,69 +550,129 @@
     "dailyOrderNumber": "Pickup #"
   },
   "portal": {
-    "companyName": "L&Z Techserve Limited · F&B",
-    "tagline": "Restaurant & hospitality technology",
-    "badge": "QR ordering · One checkout",
-    "langEn": "English",
+    "brandName": "L&Z Techserve Ltd",
+    "tagline": "Scan-to-order & unified cashier for restaurants",
+    "pill": "Free to start · Web only · No app download",
+    "langEn": "EN",
     "langZh": "中文",
-    "hero": "Less friction at the table. Leaner service on the floor.",
-    "lead": "Let guests order and pay from their phones, line up phone and walk-in orders on the same rail, and keep one live menu that nudges add-ons—so you save labor, speed up turns, and grow average check without a bigger headcount.",
-    "lead2": "From dine-in QR and takeaway QR to a single payment and pickup flow: fewer order mistakes, less running between tables and the till, and clearer visibility into what is selling today.",
-    "modulesTitle": "Where guests meet your menu—and where you save time",
-    "modulesSubtitle": "Designed around busy shifts: faster ordering for diners, fewer repetitive tasks for staff, and menus that help lift ticket size.",
-    "moduleLabel": "Focus",
-    "footer": "L&Z Techserve Limited · F&B · End-to-end F&B digitization",
-    "contactLabel": "Contact",
-    "contactEmail": "info@lztechserve.com",
-    "cards": {
-      "dineIn": {
-        "title": "QR dine-in ordering",
-        "desc": "Guests scan once at the table, browse photos and modifiers at their own pace, and send orders straight to the kitchen—no waiting to flag someone down during peak hours. Fewer missed upsells from rushed verbal orders."
-      },
-      "takeaway": {
-        "title": "Takeaway & pickup QR",
-        "desc": "Same smooth flow for guests ordering ahead: scan from a poster or window code, choose pickup time, pay online, and pick up when ready—front-of-house spends less time retaking details on the phone."
-      },
-      "counter": {
-        "title": "Phone orders & counter in one flow",
-        "desc": "Walk-in, phone, and counter orders follow one ticket line with clear statuses—print or bump to the line, take integrated payment once, and reduce double entry between the handset and the POS."
-      },
-      "menu": {
-        "title": "Digital menu that lifts revenue",
-        "desc": "Replace printed sheets that go out of date: highlight combos, sides, and drinks where guests already look, surface allergens clearly, and rotate offers by daypart—many venues see higher attachment and average spend when choices are visible and easy to add."
+    "navAuth": "Sign in / Register",
+    "ctaStart": "Get started free",
+    "navBenefits": "Benefits",
+    "navFeatures": "Features",
+    "navPlans": "Plans",
+    "navContact": "Contact",
+    "hero": "Faster tables. Clearer menus. One cashier for every channel.",
+    "lead": "Guests order from their phones; dine-in, takeaway, phone, and delivery land in one live order center—with add-ons, bundles, and allergens shown upfront.",
+    "ctaContact": "Contact us",
+    "ctaDemo": "View demo store",
+    "ctaPro": "Ask about LZ Pro",
+    "previewLabel": "Live order center",
+    "previewRow1": "Table 12 · Seat 2",
+    "previewRow2": "Takeaway #47",
+    "previewRow3": "Delivery · Out",
+    "previewLive": "Live",
+    "statsAria": "Highlights",
+    "stats": {
+      "channels": { "value": "4", "label": "Order channels in one place" },
+      "web": { "value": "100%", "label": "Browser-based — no guest app" },
+      "free": { "value": "Free", "label": "LZ Free covers daily operations" },
+      "realtime": { "value": "Live", "label": "Orders sync to cashier instantly" }
+    },
+    "benefitsTitle": "What restaurants see in practice",
+    "benefitsSubtitle": "Built for busy shifts—not just a digital menu, but shorter waits and higher attachment.",
+    "benefits": {
+      "wait": { "icon": "⏱️", "title": "Shorter waits", "desc": "Guests self-serve ordering; staff spend less time taking verbal orders and running tickets." },
+      "addon": { "icon": "➕", "title": "Add-ons sell better", "desc": "Modifiers sit next to each dish on the phone—spice, sides, and upgrades are easier to pick." },
+      "clarity": { "icon": "📖", "title": "Guests understand the menu", "desc": "Photos, descriptions, and wait times help people decide faster with fewer questions." },
+      "allergen": { "icon": "⚠️", "title": "Fewer allergen mistakes", "desc": "Allergen info is visible before checkout—less back-and-forth at the table." },
+      "pricing": { "icon": "💶", "title": "No surprise surcharges", "desc": "Every extra is priced before submit—fewer disputes at the till." },
+      "bundle": { "icon": "🎁", "title": "Bundles move more volume", "desc": "Combo offers auto-price in the cart—staff don’t have to explain deals line by line." }
+    },
+    "featuresTitle": "Built for real restaurant operations",
+    "featuresSubtitle": "Everything you need to open the doors—on web, for guests and staff.",
+    "features": {
+      "channels": { "icon": "🔄", "title": "All channels, one rail", "desc": "Dine-in QR, takeaway, phone orders, and delivery in a single order center with real-time updates." },
+      "menu": { "icon": "🍽️", "title": "Menu that sells", "desc": "Categories, photos, i18n, sold-out control, option groups, bundles, and member wallet on LZ Free." },
+      "cashier": { "icon": "🧾", "title": "Cashier-ready checkout", "desc": "Pay by table or seat, cash/card/mixed, browser receipts, and Stripe when you need online pay." },
+      "saas": { "icon": "🏪", "title": "Multi-store SaaS", "desc": "Each venue gets its own URL and data; upgrade to LZ Pro for coupons, history, templates, and VAT export." }
+    },
+    "plansTitle": "Simple plans",
+    "plansSubtitle": "LZ Free runs the business. LZ Pro saves the owner time—nothing required just to take orders.",
+    "planFree": {
+      "badge": "Get started",
+      "name": "LZ Free",
+      "desc": "Full daily operations at no cost—ideal for opening or switching with low risk.",
+      "items": {
+        "f1": "Dine-in, takeaway, phone & delivery",
+        "f2": "Unified cashier & mixed payments",
+        "f3": "Menu, inventory & basic reports",
+        "f4": "Member wallet & stored value",
+        "f5": "Bundle / combo offers",
+        "f6": "QR codes & business hours",
+        "f7": "No coupons module (keeps training light)"
       }
     },
-    "chainSplit": {
-      "title": "Consistent experience across locations",
-      "body": "When you run more than one site, guests get the same simple scan-and-order habit everywhere; you roll out menu or price adjustments from one place instead of chasing paper at each branch.",
-      "b1": "Branding and items stay aligned per venue while guests always recognize the same ordering steps.",
-      "b2": "Promotions and seasonal sets can go live together—less confusion for staff training across stores.",
-      "b3": "Less time reprinting menus and reconciling mismatched versions between the floor and the kitchen."
+    "planPro": {
+      "badge": "Save time",
+      "name": "LZ Pro",
+      "desc": "Everything in Free, plus back-office tools that reduce admin work.",
+      "items": {
+        "p1": "Coupons & fixed-amount discounts",
+        "p2": "Order history workspace",
+        "p3": "Option-group templates",
+        "p4": "VAT report export",
+        "p5": "Bulk inventory time tools"
+      }
     },
-    "flowSplit": {
-      "title": "One journey: choose, pay, collect",
-      "body": "Whether someone is at the table or picking up, they see what they ordered, pay in one place, and know when to collect—customers wait less at the counter and staff answer fewer “where is my order?” questions.",
-      "b1": "Kitchen and service see the same queue so handoff stays calm during rushes.",
-      "b2": "Integrated payment means fewer cash-handling steps and fewer wrong totals from manual re-keying."
+    "stepsTitle": "Up and running in three steps",
+    "stepsSubtitle": "Most venues complete setup in under an hour.",
+    "steps": {
+      "s1": { "title": "Create your store", "desc": "Set name, hours, and staff logins—each venue has its own web address." },
+      "s2": { "title": "Publish your menu", "desc": "Add categories, dishes, option groups, and any bundle offers you want to push." },
+      "s3": { "title": "Print QR & go live", "desc": "Place table and takeaway codes, run one test order, and start taking real tickets." }
     },
-    "opsSplit": {
-      "title": "Day-to-day control without spreadsheet chaos",
-      "body": "Owner-managers update dishes, prices, and tags in one console; staff see today’s truth on phones and printers—less back-and-forth and fewer disputes over outdated chalkboards or PDF menus.",
-      "b1": "Shift-friendly screens so the team spends minutes—not hours—on order exceptions.",
-      "b2": "Clear sales views help you trim slow movers and double down on what actually drives margin."
-    },
-    "illus": {
-      "chainHub": "Head office",
-      "storeA": "Branch A",
-      "storeB": "Branch B",
-      "storeC": "Branch C",
-      "flowPick": "Pick items",
-      "flowCart": "Cart",
-      "flowPay": "Pay",
-      "flowPickup": "Pickup",
-      "dashMenu": "Menu",
-      "dashOrders": "Orders",
-      "dashReports": "Sales"
+    "contactTitle": "Contact us",
+    "contactDesc": "Questions about free onboarding, LZ Pro, or a live demo? Email us and we will get back to you soon.",
+    "contactPoint1": "Get started on LZ Free for daily operations",
+    "contactPoint2": "Learn about LZ Pro time-saving tools",
+    "contactPoint3": "Book a demo or technical support",
+    "contactEmailLabel": "Business & partnerships",
+    "contactSend": "Send email",
+    "contactHint": "Opens your default mail app with our address filled in",
+    "footer": "L&Z Techserve Limited · Restaurant technology",
+    "contactLabel": "Email",
+    "auth": {
+      "title": "Sign in or register",
+      "subtitle": "Already have a store? Enter your store slug to sign in. New stores can self-register on LZ Free after email verification.",
+      "point1": "Sign in: enter your store slug to open staff login",
+      "point2": "Register: LZ Free is activated automatically — no manual approval",
+      "point3": "One email can register one self-service store",
+      "tabLogin": "Sign in",
+      "tabRegister": "Register",
+      "loginSlugLabel": "Store slug",
+      "loginSlugPlaceholder": "e.g. demo or my-restaurant",
+      "loginSlugHint": "The path segment in your store URL, e.g. demo in /demo/login",
+      "loginSubmit": "Continue to sign in",
+      "storeName": "Store name",
+      "slug": "Store URL (slug)",
+      "slugPlaceholder": "my-restaurant",
+      "slugChecking": "Checking availability…",
+      "slugAvailable": "This slug is available",
+      "slugUnavailable": "Invalid format or already taken",
+      "email": "Email",
+      "sendCode": "Send code",
+      "resendCode": "Resend",
+      "sendingCode": "Sending…",
+      "code": "Verification code",
+      "username": "Admin username",
+      "password": "Password",
+      "registerHint": "At least 6 characters. After registration you will sign in at your store login page.",
+      "registerSubmit": "Create store",
+      "loading": "Please wait…",
+      "errorGeneric": "Something went wrong. Please try again.",
+      "successTitle": "Registration complete",
+      "successDesc": "Store {{slug}} is ready. Sign in with the username and password you set.",
+      "goLogin": "Go to sign in"
     }
   }
 }

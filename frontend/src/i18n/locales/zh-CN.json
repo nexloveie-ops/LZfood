@@ -20,6 +20,25 @@
     "logout": "退出",
     "failed": "登录失败"
   },
+  "storeLogin": {
+    "pageTitle": "员工登录",
+    "subtitle": "员工 / 店主登录 · 收银与后台",
+    "backPortal": "门户首页",
+    "viewStorefront": "查看顾客点餐页",
+    "wrongStore": "不是这家店？返回门户查找店铺",
+    "poweredBy": "技术支持",
+    "forgotTab": "忘记密码",
+    "forgotSubtitle": "店铺管理员（店主）找回密码",
+    "forgotHint": "请输入自助注册时使用的邮箱。仅支持店主账号；收银账号请联系店主或平台。",
+    "forgotCodeSentHint": "若邮箱与本店匹配，将收到验证码（约 60 秒后可重发）。",
+    "forgotNeedEmail": "请先填写邮箱",
+    "forgotNewPassword": "新密码",
+    "forgotConfirmPassword": "确认新密码",
+    "forgotPasswordMismatch": "两次输入的密码不一致",
+    "forgotSubmit": "重置密码",
+    "forgotSuccess": "密码已重置，请使用新密码登录。",
+    "forgotBackToSignIn": "返回登录"
+  },
   "customer": {
     "title": "菜单",
     "cart": "购物车",
@@ -531,69 +550,129 @@
     "dailyOrderNumber": "取餐号"
   },
   "portal": {
-    "companyName": "L&Z Techserve Limited · F&B",
-    "tagline": "餐饮与酒店科技",
-    "badge": "扫码点餐 · 一体收银",
-    "langEn": "English",
+    "brandName": "L&Z Techserve Ltd",
+    "tagline": "餐馆扫码点餐与一体收银",
+    "pill": "免费入驻 · 纯网页 · 顾客无需下载 App",
+    "langEn": "EN",
     "langZh": "中文",
-    "hero": "让客人少等待，让楼面更省力",
-    "lead": "用手机完成扫码点餐与支付，把电话单、到店单纳入同一套出品节奏；电子菜单随时更新搭配与加价项——在不大幅增人的前提下，缩短翻台、减少跑堂往返，并有机会拉高客单价。",
-    "lead2": "堂食扫码、外卖自提扫码到一体结账与取餐指引：少一单口头复述就少一单差错，少一次柜台往返就少一分人力消耗，今天的畅销与滞销也一目了然。",
-    "modulesTitle": "客人点菜的地方，也是您省时间的地方",
-    "modulesSubtitle": "面向高峰时段：客人自助下单更快，员工重复劳动更少，菜单展示更能带动加购。",
-    "moduleLabel": "重点",
-    "footer": "L&Z Techserve Limited · F&B · 餐饮全链路数字化",
-    "contactLabel": "联系邮箱",
-    "contactEmail": "info@lztechserve.com",
-    "cards": {
-      "dineIn": {
-        "title": "堂食扫码点餐",
-        "desc": "客人入座扫码即可看图选菜、勾选项与备注，订单直达厨房；高峰时不必反复举手叫服务员，也减少忙乱中漏推荐加菜的情况。"
-      },
-      "takeaway": {
-        "title": "外卖与自提扫码",
-        "desc": "橱窗或海报码同一套流程：提前下单、在线支付、按提醒取餐——楼面少接重复电话复述地址与时间，高峰接待更从容。"
-      },
-      "counter": {
-        "title": "电话订单与柜台一体流程",
-        "desc": "到店、电话与柜台订单进入同一条出品线，状态清晰可跟进；一次完成收款与对账，减少听筒里记一笔、收银机再录一笔的重复劳动。"
-      },
-      "menu": {
-        "title": "电子菜单带动营收",
-        "desc": "告别频繁重印的纸质单：套餐、小食、饮品在浏览路径上自然露出，过敏原与辣度写清楚，可按时段换推介——不少门店在可视化搭配后，加购与客单价更有空间。"
+    "navAuth": "登录 / 注册",
+    "ctaStart": "免费开通",
+    "navBenefits": "商户价值",
+    "navFeatures": "产品能力",
+    "navPlans": "套餐",
+    "navContact": "联系我们",
+    "hero": "翻台更快，菜单更清，四个渠道一个收银台",
+    "lead": "客人手机扫码点菜；堂食、外卖、电话、送餐订单实时进统一订单中心——加料、套餐、过敏原下单前就看得到。",
+    "ctaContact": "联系我们",
+    "ctaDemo": "查看演示门店",
+    "ctaPro": "了解 LZ Pro",
+    "previewLabel": "订单中心预览",
+    "previewRow1": "12 号桌 · 座位 2",
+    "previewRow2": "外卖 #47",
+    "previewRow3": "送餐 · 配送中",
+    "previewLive": "实时",
+    "statsAria": "产品亮点",
+    "stats": {
+      "channels": { "value": "4", "label": "渠道统一接单" },
+      "web": { "value": "100%", "label": "全网页端，顾客免安装" },
+      "free": { "value": "免费", "label": "Free 版覆盖日常经营" },
+      "realtime": { "value": "实时", "label": "订单即时同步收银" }
+    },
+    "benefitsTitle": "商户真实能感受到的变化",
+    "benefitsSubtitle": "不只是电子菜单——而是更短等待、更高加购、更少前台纠纷。",
+    "benefits": {
+      "wait": { "icon": "⏱️", "title": "等待时间更短", "desc": "客人自助点菜，前台少复述、少跑腿，高峰节奏更稳。" },
+      "addon": { "icon": "➕", "title": "加料卖得更好", "desc": "选项组与主菜同屏展示，辣度、加料、升级一目了然。" },
+      "clarity": { "icon": "📖", "title": "客人更懂菜品", "desc": "图片、说明与等待时间帮助快速决策，少问服务员。" },
+      "allergen": { "icon": "⚠️", "title": "过敏原少误判", "desc": "下单前即可查看过敏原信息，减少点错与口头确认。" },
+      "pricing": { "icon": "💶", "title": "价格透明", "desc": "加价下单前可见，减少「隐形附加费」类结账纠纷。" },
+      "bundle": { "icon": "🎁", "title": "套餐更好卖", "desc": "组合优惠自动计价，前台不必逐条解释套餐规则。" }
+    },
+    "featuresTitle": "为餐馆日常而设计",
+    "featuresSubtitle": "开张所需的核心能力——网页端覆盖顾客与员工。",
+    "features": {
+      "channels": { "icon": "🔄", "title": "四渠道一条线", "desc": "堂食扫码、外卖自取、电话单、送餐进入同一订单中心，实时刷新。" },
+      "menu": { "icon": "🍽️", "title": "会卖的电子菜单", "desc": "分类、图片、多语言、售罄、选项组、套餐与会员储值——Free 即含。" },
+      "cashier": { "icon": "🧾", "title": "收银就绪", "desc": "按桌/按座结账，现金/卡/混合支付，浏览器小票，可按需配置 Stripe。" },
+      "saas": { "icon": "🏪", "title": "多店 SaaS", "desc": "每店独立网址与数据；升级 Pro 获得优惠券、历史单、模板库与 VAT 导出。" }
+    },
+    "plansTitle": "套餐清晰",
+    "plansSubtitle": "Free 负责正常营业；Pro 帮老板省时间——不付费也能完整接单。",
+    "planFree": {
+      "badge": "立即开始",
+      "name": "LZ Free",
+      "desc": "零成本覆盖日常经营，适合新店上线或低成本替换旧系统。",
+      "items": {
+        "f1": "堂食、外卖、电话、送餐",
+        "f2": "统一收银与混合支付",
+        "f3": "菜单、库存与基础报表",
+        "f4": "会员储值与钱包结账",
+        "f5": "套餐 / 组合优惠（Bundle）",
+        "f6": "二维码与营业时间",
+        "f7": "不含优惠券模块（降低培训负担）"
       }
     },
-    "chainSplit": {
-      "title": "多店一致的好体验",
-      "body": "连锁经营时，客人在各分店感受同一套「扫码—点餐—支付」习惯；菜品与价位可在总部视角统一调整，不必逐店追纸张版本。",
-      "b1": "各店保留自己的招牌呈现，但客人的操作步骤保持一致，培训更简单。",
-      "b2": "活动与季节菜单可同步上线，减少分店执行不一致带来的客诉。",
-      "b3": "少印少贴、少对版本，楼面与后厨沟通成本更低。"
+    "planPro": {
+      "badge": "省时增效",
+      "name": "LZ Pro",
+      "desc": "包含 Free 全部能力，并增加后台效率工具。",
+      "items": {
+        "p1": "优惠券 / 满减券",
+        "p2": "订单历史专页",
+        "p3": "选项组模板库",
+        "p4": "VAT 报表导出",
+        "p5": "库存恢复时间等批量工具"
+      }
     },
-    "flowSplit": {
-      "title": "一条动线：选餐、付款、取餐",
-      "body": "无论堂食还是自提，客人清楚自己点了什么、何时付款、何处取餐——柜台少排队追问，员工少回答「我的餐好了吗」。",
-      "b1": "出品与服务看同一张单子，忙时交接更稳。",
-      "b2": "一体收款减少现金找零与手工重录金额，降低差错与纠纷。"
+    "stepsTitle": "三步即可营业",
+    "stepsSubtitle": "多数门店一小时内可完成基础配置。",
+    "steps": {
+      "s1": { "title": "创建门店", "desc": "填写店名、营业时间、员工账号——每店独立网址。" },
+      "s2": { "title": "上架菜单", "desc": "录入分类、菜品、选项组与需要主推的套餐。" },
+      "s3": { "title": "张贴二维码", "desc": "打印桌码与外卖码，跑通一笔测试单即可正式接单。" }
     },
-    "opsSplit": {
-      "title": "日常经营少靠表格扯皮",
-      "body": "店主在后台改菜价、标签与推介，前厅手机与打印立刻对齐今日版本；少靠黑板、PDF 或口头同步，减少「菜单上明明没有」的争议。",
-      "b1": "楼面处理例外单更省时，团队把时间留给接待而不是对账。",
-      "b2": "销售结构一目了然，便于砍掉滞销、加码高毛利组合。"
-    },
-    "illus": {
-      "chainHub": "总部",
-      "storeA": "分店 A",
-      "storeB": "分店 B",
-      "storeC": "分店 C",
-      "flowPick": "选餐",
-      "flowCart": "购物车",
-      "flowPay": "支付",
-      "flowPickup": "取餐",
-      "dashMenu": "菜单",
-      "dashOrders": "订单",
-      "dashReports": "营业"
+    "contactTitle": "联系我们",
+    "contactDesc": "欢迎咨询免费入驻、套餐升级或演示安排。请发送邮件，我们会尽快回复。",
+    "contactPoint1": "新店免费开通 LZ Free，快速上线扫码点餐",
+    "contactPoint2": "了解 LZ Pro 后台省时功能",
+    "contactPoint3": "预约演示或技术问题支持",
+    "contactEmailLabel": "商务与合作邮箱",
+    "contactSend": "发送邮件",
+    "contactHint": "点击后将打开您的默认邮件客户端",
+    "footer": "L&Z Techserve Limited · 餐饮数字化",
+    "contactLabel": "联系邮箱",
+    "auth": {
+      "title": "登录或免费开通",
+      "subtitle": "已有门店？输入店铺网址进入登录。新店可自助注册 LZ Free，邮箱验证后即刻营业。",
+      "point1": "登录：输入店铺 slug，进入该店员工登录页",
+      "point2": "注册：自动开通 LZ Free，无需人工审核",
+      "point3": "每个邮箱仅可自助开通一家门店",
+      "tabLogin": "登录",
+      "tabRegister": "注册",
+      "loginSlugLabel": "店铺 slug",
+      "loginSlugPlaceholder": "例如 demo 或 my-restaurant",
+      "loginSlugHint": "即您门店网址中的标识，如 /demo/login 中的 demo",
+      "loginSubmit": "前往登录",
+      "storeName": "店铺名称",
+      "slug": "店铺网址 (slug)",
+      "slugPlaceholder": "my-restaurant",
+      "slugChecking": "正在检查可用性…",
+      "slugAvailable": "该 slug 可用",
+      "slugUnavailable": "格式无效或已被占用",
+      "email": "邮箱",
+      "sendCode": "发送验证码",
+      "resendCode": "重新发送",
+      "sendingCode": "发送中…",
+      "code": "邮箱验证码",
+      "username": "管理员用户名",
+      "password": "登录密码",
+      "registerHint": "密码至少 6 位。注册成功后将跳转到该店登录页。",
+      "registerSubmit": "完成注册",
+      "loading": "处理中…",
+      "errorGeneric": "操作失败，请稍后重试",
+      "successTitle": "注册成功",
+      "successDesc": "门店 {{slug}} 已创建，请使用您设置的用户名与密码登录。",
+      "goLogin": "前往登录"
     }
   }
 }

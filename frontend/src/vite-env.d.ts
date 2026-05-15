@@ -6,6 +6,8 @@ interface ImportMetaEnv {
   readonly VITE_API_ORIGIN?: string;
   /** Google Maps Embed API（maps/embed/v1/place），门店页地图 iframe；不设则用无密钥嵌入链接（部分地区可能受限） */
   readonly VITE_GOOGLE_MAPS_EMBED_KEY?: string;
+  /** 门户顶栏 Logo URL（默认 GCS lzlogo.png） */
+  readonly VITE_PORTAL_LOGO_URL?: string;
 }
 
 /* Type declarations for @google/model-viewer web component */

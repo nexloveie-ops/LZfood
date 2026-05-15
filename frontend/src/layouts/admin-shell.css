@@ -1,0 +1,303 @@
+/* 店铺后台 — 与门户 portal-light 一致的 SaaS 视觉 */
+.admin-saas {
+  --portal-bg: #f8fafc;
+  --portal-surface: #ffffff;
+  --portal-text: #0f172a;
+  --portal-muted: #64748b;
+  --portal-border: #e2e8f0;
+  --portal-accent: #0369a1;
+  --portal-accent-hover: #075985;
+  --portal-accent-soft: #e0f2fe;
+  --portal-shadow: 0 1px 3px rgba(15, 23, 42, 0.06), 0 8px 24px rgba(15, 23, 42, 0.06);
+  --portal-radius: 12px;
+
+  /* 映射全局变量，子页面无需逐个改色 */
+  --red-primary: var(--portal-accent);
+  --red-dark: var(--portal-accent-hover);
+  --red-light: var(--portal-accent-soft);
+  --bg: var(--portal-bg);
+  --bg-white: var(--portal-surface);
+  --border: var(--portal-border);
+  --text-primary: var(--portal-text);
+  --text-secondary: var(--portal-muted);
+  --text-light: #94a3b8;
+  --shadow-sm: var(--portal-shadow);
+  --radius: 10px;
+  --radius-lg: var(--portal-radius);
+  --font-heading: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+
+  display: flex;
+  height: 100%;
+  overflow: hidden;
+  background: var(--portal-bg);
+  color: var(--portal-text);
+  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+.admin-saas a {
+  color: var(--portal-accent);
+}
+
+.admin-saas .btn-primary {
+  background: linear-gradient(135deg, #0369a1 0%, #0891b2 100%);
+  box-shadow: 0 2px 8px rgba(3, 105, 161, 0.28);
+}
+
+.admin-saas .btn-primary:hover {
+  background: var(--portal-accent-hover);
+}
+
+.admin-saas .input:focus {
+  border-color: var(--portal-accent);
+  box-shadow: 0 0 0 3px var(--portal-accent-soft);
+}
+
+.admin-saas .card {
+  border-radius: var(--portal-radius);
+  box-shadow: var(--portal-shadow);
+}
+
+/* —— 侧栏 —— */
+.admin-saas-sidebar {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  background: var(--portal-surface);
+  border-right: 1px solid var(--portal-border);
+  overflow: hidden;
+  transition: width 0.2s ease;
+}
+
+.admin-saas-sidebar.is-collapsed {
+  width: 56px;
+}
+
+.admin-saas-sidebar:not(.is-collapsed) {
+  width: 220px;
+}
+
+.admin-saas-brand {
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--portal-border);
+  min-height: 60px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.admin-saas-sidebar.is-collapsed .admin-saas-brand {
+  padding: 16px 0;
+  align-items: center;
+  text-align: center;
+}
+
+.admin-saas-brand-title {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--portal-text);
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.admin-saas-brand-initial {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--portal-accent-soft);
+  color: var(--portal-accent);
+  font-size: 16px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto;
+}
+
+.admin-saas-brand-slug {
+  margin-top: 6px;
+  display: inline-block;
+  font-size: 12px;
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-weight: 500;
+  color: var(--portal-muted);
+  padding: 3px 8px;
+  background: #f1f5f9;
+  border: 1px solid var(--portal-border);
+  border-radius: 6px;
+  line-height: 1.3;
+}
+
+.admin-saas-brand-sub {
+  margin-top: 8px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--portal-muted);
+  letter-spacing: 0.02em;
+}
+
+.admin-saas-nav {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 10px;
+}
+
+.admin-saas-nav-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  margin-bottom: 2px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--portal-muted);
+  text-decoration: none;
+  transition: background 0.15s, color 0.15s;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.admin-saas-sidebar.is-collapsed .admin-saas-nav-link {
+  justify-content: center;
+  padding: 12px 0;
+}
+
+.admin-saas-nav-link:hover {
+  background: #f1f5f9;
+  color: var(--portal-text);
+}
+
+.admin-saas-nav-link.is-active {
+  background: var(--portal-accent-soft);
+  color: var(--portal-accent);
+  font-weight: 600;
+}
+
+.admin-saas-nav-icon {
+  font-size: 16px;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.admin-saas-collapse {
+  padding: 10px 0;
+  border: none;
+  border-top: 1px solid var(--portal-border);
+  background: #f8fafc;
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--portal-muted);
+  transition: background 0.15s, color 0.15s;
+}
+
+.admin-saas-collapse:hover {
+  background: #f1f5f9;
+  color: var(--portal-text);
+}
+
+/* —— 主区域 —— */
+.admin-saas-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.admin-saas-topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 20px;
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--portal-border);
+  flex-shrink: 0;
+  font-size: 13px;
+}
+
+.admin-saas-topbar-store {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex-shrink: 1;
+}
+
+.admin-saas-topbar-store strong {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--portal-text);
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.admin-saas-topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.admin-saas-user {
+  font-weight: 600;
+  color: var(--portal-text);
+}
+
+.admin-saas-slug {
+  font-size: 12px;
+  color: var(--portal-muted);
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  padding: 4px 8px;
+  background: #f1f5f9;
+  border-radius: 6px;
+}
+
+.admin-saas-content {
+  flex: 1;
+  overflow: auto;
+  padding: 24px;
+}
+
+.admin-saas-content > h1,
+.admin-saas-content > h2:first-child {
+  font-family: inherit;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.admin-saas-portal-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 12px 4px;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--portal-muted);
+  text-decoration: none;
+  border-radius: 8px;
+  transition: background 0.15s, color 0.15s;
+}
+
+.admin-saas-portal-link:hover {
+  background: #f1f5f9;
+  color: var(--portal-accent);
+}
+
+.admin-saas-sidebar.is-collapsed .admin-saas-portal-link {
+  justify-content: center;
+  padding: 8px 0;
+}
+
+.admin-saas-portal-link img {
+  height: 18px;
+  width: auto;
+  opacity: 0.85;
+}

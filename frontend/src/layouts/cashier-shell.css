@@ -1,0 +1,218 @@
+/* 收银台 — 与门户 / 管理后台一致的 SaaS 视觉 */
+.cashier-saas {
+  --portal-bg: #f8fafc;
+  --portal-surface: #ffffff;
+  --portal-text: #0f172a;
+  --portal-muted: #64748b;
+  --portal-border: #e2e8f0;
+  --portal-accent: #0369a1;
+  --portal-accent-hover: #075985;
+  --portal-accent-soft: #e0f2fe;
+  --portal-shadow: 0 1px 3px rgba(15, 23, 42, 0.06), 0 8px 24px rgba(15, 23, 42, 0.06);
+  --portal-radius: 12px;
+
+  --red-primary: var(--portal-accent);
+  --red-dark: var(--portal-accent-hover);
+  --red-light: var(--portal-accent-soft);
+  --bg: var(--portal-bg);
+  --bg-white: var(--portal-surface);
+  --border: var(--portal-border);
+  --text-primary: var(--portal-text);
+  --text-secondary: var(--portal-muted);
+  --text-light: #94a3b8;
+  --shadow-sm: var(--portal-shadow);
+  --radius: 10px;
+  --radius-lg: var(--portal-radius);
+  --font-heading: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  background: var(--portal-bg);
+  color: var(--portal-text);
+  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+.cashier-saas .btn-primary {
+  background: linear-gradient(135deg, #0369a1 0%, #0891b2 100%);
+  box-shadow: 0 2px 8px rgba(3, 105, 161, 0.28);
+}
+
+.cashier-saas .btn-primary:hover {
+  background: var(--portal-accent-hover);
+}
+
+.cashier-saas .input:focus {
+  border-color: var(--portal-accent);
+  box-shadow: 0 0 0 3px var(--portal-accent-soft);
+}
+
+.cashier-saas .card {
+  border-radius: var(--portal-radius);
+  box-shadow: var(--portal-shadow);
+}
+
+.cashier-saas-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 20px;
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--portal-border);
+  flex-shrink: 0;
+}
+
+.cashier-saas-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.cashier-saas-brand strong {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--portal-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cashier-saas-slug {
+  font-size: 12px;
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  color: var(--portal-muted);
+  padding: 4px 8px;
+  background: #f1f5f9;
+  border: 1px solid var(--portal-border);
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+
+.cashier-saas-role {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--portal-accent);
+  padding: 4px 10px;
+  background: var(--portal-accent-soft);
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+.cashier-saas-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+  font-size: 13px;
+  color: var(--portal-muted);
+}
+
+.cashier-saas-user {
+  font-weight: 600;
+  color: var(--portal-text);
+}
+
+.cashier-saas-settle {
+  padding: 6px 14px !important;
+  font-size: 12px !important;
+  min-height: auto !important;
+  background: #059669 !important;
+  color: #fff !important;
+  border: none !important;
+  border-radius: 8px !important;
+  font-weight: 600 !important;
+  box-shadow: 0 2px 6px rgba(5, 150, 105, 0.25);
+}
+
+.cashier-saas-settle:hover:not(:disabled) {
+  background: #047857 !important;
+}
+
+.cashier-saas-settle:disabled {
+  opacity: 0.65;
+}
+
+.cashier-saas-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 16px;
+  background: var(--portal-surface);
+  border-bottom: 1px solid var(--portal-border);
+  flex-shrink: 0;
+  overflow-x: auto;
+}
+
+.cashier-saas-tab {
+  padding: 12px 18px;
+  font-weight: 500;
+  font-size: 14px;
+  color: var(--portal-muted);
+  border-bottom: 3px solid transparent;
+  background: none;
+  cursor: pointer;
+  white-space: nowrap;
+  text-decoration: none;
+  display: inline-block;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+  margin-bottom: -1px;
+}
+
+.cashier-saas-tab:hover {
+  color: var(--portal-text);
+  background: #f8fafc;
+}
+
+.cashier-saas-tab.is-active {
+  font-weight: 600;
+  color: var(--portal-accent);
+  border-bottom-color: var(--portal-accent);
+}
+
+.cashier-saas-content {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 20px;
+  overflow: auto;
+}
+
+.cashier-saas-toasts {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 1500;
+}
+
+.cashier-saas-toast {
+  min-width: 220px;
+  max-width: 360px;
+  background: var(--portal-text);
+  color: #fff;
+  border-radius: 10px;
+  padding: 10px 14px;
+  box-shadow: var(--portal-shadow);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+@media (max-width: 720px) {
+  .cashier-saas-header {
+    flex-wrap: wrap;
+    padding: 10px 14px;
+  }
+
+  .cashier-saas-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+}
