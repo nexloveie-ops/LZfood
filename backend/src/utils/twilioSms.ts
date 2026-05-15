@@ -95,3 +95,42 @@ export async function sendMemberWalletSpendSms(params: {
 
   await twilioSendSms(to, body);
 }
+
+/** 会员自助短信（找回 PIN 等）前调用；未配置则勿改库 */
+export function assertTwilioSmsReadyForOutbound(): void {
+  const sid = process.env.TWILIO_ACCOUNT_SID?.trim();
+  const token = process.env.TWILIO_AUTH_TOKEN?.trim();
+  const from = process.env.TWILIO_FROM?.trim();
+  const messagingServiceSid = process.env.TWILIO_MESSAGING_SERVICE_SID?.trim();
+  if (!sid || !token) {
+    throw new Error('TWILIO_NOT_CONFIGURED');
+  }
+  if (!from && !messagingServiceSid) {
+    throw new Error('TWILIO_FROM_MISSING');
+  }
+}
+
+/** 会员 PIN 重置短信（中英双语一行） */
+export async function sendMemberPinResetSms(params: {
+  storeId: mongoose.Types.ObjectId;
+  memberPhoneLocal: string;
+  newPin: string;
+}): Promise<void> {
+  const to = memberPhoneToSmsE164(params.memberPhoneLocal);
+  if (!to) {
+    throw new Error('PHONE_SMS_UNSUPPORTED');
+  }
+  let head = '';
+  try {
+    const { Store } = getModels();
+    const store = (await Store.findById(params.storeId).select('displayName').lean()) as {
+      displayName?: string;
+    } | null;
+    const dn = store?.displayName?.trim();
+    if (dn) head = `${dn}: `;
+  } catch {
+    /* ignore store name */
+  }
+  const body = `${head}您的新会员 PIN 为 ${params.newPin}，请在会员页登录。如非本人操作请致电门店。 Your new wallet PIN is ${params.newPin}. Sign in on the member page.`;
+  await twilioSendSms(to, body);
+}

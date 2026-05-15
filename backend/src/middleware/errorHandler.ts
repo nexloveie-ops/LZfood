@@ -23,6 +23,7 @@ const STATUS_CODE_MAP: Record<string, number> = {
   INVALID_FILE_FORMAT: 400,
   INTERNAL_ERROR: 500,
   SERVICE_UNAVAILABLE: 503,
+  RATE_LIMIT: 429,
 };
 
 export function createAppError(

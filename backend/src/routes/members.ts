@@ -28,9 +28,23 @@ import {
 import { createStripeClient } from '../utils/stripeConfig';
 import { requireFeature } from '../middleware/featureAccess';
 import { FeatureKeys } from '../utils/featureCatalog';
+import { randomInt } from 'node:crypto';
+import { assertTwilioSmsReadyForOutbound, sendMemberPinResetSms } from '../utils/twilioSms';
 
 const MEMBER_TOPUP_MIN_EUR = 1;
 const MEMBER_TOPUP_MAX_EUR = 500;
+
+/** 同一店同一手机号：PIN 短信重置最小间隔（毫秒） */
+const MEMBER_PIN_RESET_COOLDOWN_MS = 60_000;
+const memberPinResetLastAt = new Map<string, number>();
+
+function memberPinResetCooldownKey(storeId: string, phone: string): string {
+  return `${storeId}:${phone}`;
+}
+
+function randomFourDigitPin(): string {
+  return String(randomInt(0, 10000)).padStart(4, '0');
+}
 
 function parseMemberTopUpEuro(raw: unknown): number {
   const n = typeof raw === 'number' ? raw : typeof raw === 'string' ? Number.parseFloat(String(raw).trim()) : Number.NaN;
@@ -347,6 +361,87 @@ router.post('/login', async (req: Request, res: Response, next: NextFunction) =>
     next(err);
   }
 });
+
+// POST /api/members/request-pin-reset — 顾客门户：随机 4 位 PIN 覆盖旧 PIN 并通过 Twilio 发短信
+router.post(
+  '/request-pin-reset',
+  requireFeature(FeatureKeys.CashierMemberWallet),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const phone = normalizeMemberPhone(String(req.body.phone || ''));
+      if (!phone) {
+        throw createAppError('VALIDATION_ERROR', '请填写手机号');
+      }
+      if (!IRISH_MEMBER_MOBILE_RE.test(phone)) {
+        throw createAppError(
+          'VALIDATION_ERROR',
+          '手机号须为爱尔兰手机：08 开头的 10 位数（可与注册时相同格式）',
+        );
+      }
+      if (!req.storeId) {
+        throw createAppError('FORBIDDEN', '缺少店铺上下文');
+      }
+      const ck = memberPinResetCooldownKey(req.storeId.toString(), phone);
+      const now = Date.now();
+      const last = memberPinResetLastAt.get(ck) ?? 0;
+      if (now - last < MEMBER_PIN_RESET_COOLDOWN_MS) {
+        throw createAppError('RATE_LIMIT', '操作过于频繁，请稍后再试');
+      }
+
+      try {
+        assertTwilioSmsReadyForOutbound();
+      } catch (twilioCheckErr) {
+        const key = twilioCheckErr instanceof Error ? twilioCheckErr.message : '';
+        console.warn('[members/request-pin-reset] Twilio not ready:', key || twilioCheckErr);
+        const msg =
+          key === 'TWILIO_FROM_MISSING'
+            ? '短信服务未完整配置（缺少发信号码或 Messaging Service），无法自助找回 PIN，请联系店员。'
+            : key === 'TWILIO_NOT_CONFIGURED'
+              ? '短信服务未完整配置（缺少 Twilio Auth Token 或 Account SID），无法自助找回 PIN；店员请在服务器环境变量中补全后重试。'
+              : '本店未配置短信服务，无法自助找回 PIN，请联系店员。';
+        throw createAppError('SERVICE_UNAVAILABLE', msg);
+      }
+
+      const { Member } = mModels();
+      const memberDoc = await Member.findOne({ storeId: req.storeId, phone, status: 'active' });
+      const genericOk = {
+        ok: true as const,
+        message:
+          '若该手机号已在本店注册且短信发送成功，您将收到新的 4 位 PIN；请查收短信后使用新 PIN 登录。',
+      };
+
+      if (!memberDoc) {
+        memberPinResetLastAt.set(ck, now);
+        res.json(genericOk);
+        return;
+      }
+
+      const newPin = randomFourDigitPin();
+      const newHash = await hashMemberPin(newPin);
+      const oldHash = String((memberDoc as { pinHash?: string }).pinHash || '');
+
+      await Member.updateOne(
+        { _id: memberDoc._id },
+        { $set: { pinHash: newHash, pinFailedAttempts: 0, lockedUntil: null } },
+      );
+
+      try {
+        await sendMemberPinResetSms({ storeId: req.storeId, memberPhoneLocal: phone, newPin });
+      } catch (e) {
+        await Member.updateOne({ _id: memberDoc._id }, { $set: { pinHash: oldHash } });
+        throw createAppError(
+          'SERVICE_UNAVAILABLE',
+          e instanceof Error ? `短信发送失败，PIN 未变更：${e.message}` : '短信发送失败，PIN 未变更',
+        );
+      }
+
+      memberPinResetLastAt.set(ck, now);
+      res.json(genericOk);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 /** 扫码点单：仅校验手机号对应有效会员（不返回余额，避免未验证 PIN 泄露信息） */
 export async function membersScanOrderLookup(req: Request, res: Response, next: NextFunction): Promise<void> {

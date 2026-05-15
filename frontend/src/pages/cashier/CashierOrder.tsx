@@ -107,6 +107,13 @@ function nextLineId() { return `line-${++lineIdCounter}-${Date.now()}`; }
 const FREQUENT_LOOKBACK_DAYS = 60;
 const FREQUENT_ITEMS_LIMIT = 8;
 
+/** 多档案下「手填新地址」：POST 不传 customerProfileId，由后端按地址键匹配或新建 */
+const DELIVERY_PROFILE_NEW_MANUAL = '__new_delivery_address__';
+
+function isMongoObjectId(s: string): boolean {
+  return /^[a-f0-9]{24}$/i.test(s.trim());
+}
+
 interface FrequentItemRow {
   menuItemId: string;
   itemName: string;
@@ -151,7 +158,6 @@ export default function CashierOrder() {
   const frequentFetchGenRef = useRef(0);
   const [frequentItems, setFrequentItems] = useState<FrequentItemRow[]>([]);
   const [frequentItemsLoading, setFrequentItemsLoading] = useState(false);
-  const [frequentItemsExpanded, setFrequentItemsExpanded] = useState(false);
   const [error, setError] = useState('');
   const [optionModal, setOptionModal] = useState<MenuItem | null>(null);
 
@@ -257,11 +263,21 @@ export default function CashierOrder() {
       })
         .then((r) => (r.ok ? r.json() : []))
         .then((list: unknown) => {
-          setDeliveryProfiles(
-            Array.isArray(list)
-              ? (list as { _id: string; customerName: string; deliveryAddress: string; postalCode: string }[])
-              : [],
-          );
+          const arr = Array.isArray(list)
+            ? (list as { _id: string; customerName: string; deliveryAddress: string; postalCode: string }[])
+            : [];
+          setDeliveryProfiles(arr);
+          if (arr.length === 1) {
+            const p = arr[0];
+            setDeliveryCustomerProfileId(p._id);
+            if (p.customerName?.trim()) setDeliveryCustomerName(p.customerName.trim());
+            if (p.deliveryAddress?.trim()) setDeliveryAddress(p.deliveryAddress.trim());
+            if (p.postalCode?.trim()) setDeliveryPostalCode(p.postalCode.trim());
+            setDeliveryCustomerCollapsed(true);
+          } else if (arr.length > 1) {
+            setDeliveryCustomerProfileId('');
+            setDeliveryCustomerCollapsed(false);
+          }
         })
         .catch(() => setDeliveryProfiles([]));
     }, 400);
@@ -377,22 +393,14 @@ export default function CashierOrder() {
     if (orderType !== 'delivery') {
       setDeliveryCustomerCollapsed(false);
       setFrequentItems([]);
-      setFrequentItemsExpanded(false);
     }
   }, [orderType]);
 
+  /** 常点：不依赖 canDelivery（避免 features 尚未从 /api/admin/features 返回时跳过首刷）；与送餐模式一致即可 */
   useEffect(() => {
-    if (orderType !== 'delivery' || !token || !canDelivery) {
+    if (orderType !== 'delivery' || !token) {
       setFrequentItems([]);
       setFrequentItemsLoading(false);
-      return;
-    }
-    if (!deliveryCustomerCollapsed) {
-      setFrequentItems([]);
-      setFrequentItemsLoading(false);
-      return;
-    }
-    if (!frequentItemsExpanded) {
       return;
     }
     const digits = deliveryCustomerPhone.replace(/\D/g, '');
@@ -402,26 +410,30 @@ export default function CashierOrder() {
       return;
     }
     const gen = ++frequentFetchGenRef.current;
-    setFrequentItemsLoading(true);
-    const phoneQ = encodeURIComponent(deliveryCustomerPhone.trim());
-    void apiFetch(
-      `/api/orders/customer-frequent-items?phone=${phoneQ}&days=${FREQUENT_LOOKBACK_DAYS}&limit=${FREQUENT_ITEMS_LIMIT}`,
-      { headers: { Authorization: `Bearer ${token}` } },
-    )
-      .then((r) => (r.ok ? r.json() : []))
-      .then((list: unknown) => {
-        if (gen !== frequentFetchGenRef.current) return;
-        setFrequentItems(Array.isArray(list) ? (list as FrequentItemRow[]) : []);
-      })
-      .catch(() => {
-        if (gen !== frequentFetchGenRef.current) return;
-        setFrequentItems([]);
-      })
-      .finally(() => {
-        if (gen !== frequentFetchGenRef.current) return;
-        setFrequentItemsLoading(false);
-      });
-  }, [orderType, deliveryCustomerCollapsed, deliveryCustomerPhone, frequentItemsExpanded, token, canDelivery]);
+    const phoneSnapshot = deliveryCustomerPhone.trim();
+    const tid = window.setTimeout(() => {
+      setFrequentItemsLoading(true);
+      const phoneQ = encodeURIComponent(phoneSnapshot);
+      void apiFetch(
+        `/api/orders/customer-frequent-items?phone=${phoneQ}&days=${FREQUENT_LOOKBACK_DAYS}&limit=${FREQUENT_ITEMS_LIMIT}`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      )
+        .then((r) => (r.ok ? r.json() : []))
+        .then((list: unknown) => {
+          if (gen !== frequentFetchGenRef.current) return;
+          setFrequentItems(Array.isArray(list) ? (list as FrequentItemRow[]) : []);
+        })
+        .catch(() => {
+          if (gen !== frequentFetchGenRef.current) return;
+          setFrequentItems([]);
+        })
+        .finally(() => {
+          if (gen !== frequentFetchGenRef.current) return;
+          setFrequentItemsLoading(false);
+        });
+    }, 350);
+    return () => window.clearTimeout(tid);
+  }, [orderType, deliveryCustomerPhone, token]);
 
   useEffect(() => {
     if (orderType !== 'delivery' || !canDelivery) {
@@ -714,6 +726,43 @@ export default function CashierOrder() {
     </>
   );
 
+  const renderDeliveryFrequentSection = () => {
+    const digitLen = deliveryCustomerPhone.replace(/\D/g, '').length;
+    return (
+      <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border)' }}>
+        <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 4 }}>
+          {t('cashier.frequentItemsTitle', { days: FREQUENT_LOOKBACK_DAYS })}
+        </div>
+        <div style={{ fontSize: 10, color: 'var(--text-light)', marginBottom: 6, lineHeight: 1.35 }}>
+          {t('cashier.frequentItemsHint')}
+        </div>
+        {digitLen < 8 ? (
+          <div style={{ fontSize: 11, color: 'var(--text-light)' }}>
+            {t('cashier.frequentItemsPhoneHint', { days: FREQUENT_LOOKBACK_DAYS })}
+          </div>
+        ) : frequentItemsLoading ? (
+          <div style={{ fontSize: 11, color: 'var(--text-light)' }}>{t('cashier.frequentItemsLoading')}</div>
+        ) : frequentItems.length === 0 ? (
+          <div style={{ fontSize: 11, color: 'var(--text-light)' }}>{t('cashier.frequentItemsEmpty')}</div>
+        ) : (
+          <ol style={{ margin: 0, paddingLeft: 18, fontSize: 11, lineHeight: 1.45 }}>
+            {frequentItems.map((row) => {
+              const label = lang.startsWith('zh') || !row.itemNameEn?.trim() ? row.itemName : row.itemNameEn;
+              return (
+                <li key={row.menuItemId} style={{ marginBottom: 3 }}>
+                  <span style={{ fontWeight: 600 }}>{label}</span>
+                  <span style={{ color: 'var(--text-light)', marginLeft: 4 }}>
+                    {t('cashier.frequentItemsCount', { count: row.orderCount })}
+                  </span>
+                </li>
+              );
+            })}
+          </ol>
+        )}
+      </div>
+    );
+  };
+
   const switchOrderType = (next: 'dine_in' | 'takeout' | 'phone' | 'delivery') => {
     setOrderType(next);
     setError('');
@@ -737,7 +786,6 @@ export default function CashierOrder() {
       setDeliveryCustomerCollapsed(false);
       setDeliveryProfiles([]);
       setFrequentItems([]);
-      setFrequentItemsExpanded(false);
     }
   };
 
@@ -811,6 +859,17 @@ export default function CashierOrder() {
       setError(t('cashier.deliveryFeeRulesNeedDistance'));
       return;
     }
+    if (deliveryProfiles.length > 1) {
+      const pid = deliveryCustomerProfileId.trim();
+      if (!pid) {
+        setError(t('cashier.deliveryPickProfileRequired'));
+        return;
+      }
+      if (pid !== DELIVERY_PROFILE_NEW_MANUAL && !isMongoObjectId(pid)) {
+        setError(t('cashier.deliveryPickProfileRequired'));
+        return;
+      }
+    }
     setPaying(true);
     setError('');
     try {
@@ -834,8 +893,9 @@ export default function CashierOrder() {
       if (deliveryDistanceKm != null) {
         orderBody.deliveryDistanceKm = deliveryDistanceKm;
       }
-      if (deliveryCustomerProfileId.trim()) {
-        orderBody.customerProfileId = deliveryCustomerProfileId.trim();
+      const profileIdRaw = deliveryCustomerProfileId.trim();
+      if (profileIdRaw && profileIdRaw !== DELIVERY_PROFILE_NEW_MANUAL && isMongoObjectId(profileIdRaw)) {
+        orderBody.customerProfileId = profileIdRaw;
       }
       const orderRes = await apiFetch('/api/orders', {
         method: 'POST',
@@ -922,7 +982,6 @@ export default function CashierOrder() {
       setDeliveryProfiles([]);
       setDeliveryCustomerCollapsed(false);
       setFrequentItems([]);
-      setFrequentItemsExpanded(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed');
     } finally {
@@ -1451,59 +1510,7 @@ export default function CashierOrder() {
                 </span>
               </div>
             </div>
-            <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border)' }}>
-              <button
-                type="button"
-                className="btn btn-ghost"
-                onClick={() => setFrequentItemsExpanded((v) => !v)}
-                style={{
-                  width: '100%',
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  fontSize: 11,
-                  fontWeight: 600,
-                  padding: '4px 0',
-                  textAlign: 'left',
-                  border: 'none',
-                  background: 'transparent',
-                  cursor: 'pointer',
-                  color: 'var(--text-secondary)',
-                }}
-              >
-                <span>{t('cashier.frequentItemsTitle', { days: FREQUENT_LOOKBACK_DAYS })}</span>
-                <span style={{ fontSize: 10, opacity: 0.7 }} aria-hidden>
-                  {frequentItemsExpanded ? '▲' : '▼'}
-                </span>
-              </button>
-              {frequentItemsExpanded ? (
-                <div style={{ marginTop: 4 }}>
-                  <div style={{ fontSize: 10, color: 'var(--text-light)', marginBottom: 6, lineHeight: 1.35 }}>
-                    {t('cashier.frequentItemsHint')}
-                  </div>
-                  {frequentItemsLoading ? (
-                    <div style={{ fontSize: 11, color: 'var(--text-light)' }}>{t('cashier.frequentItemsLoading')}</div>
-                  ) : frequentItems.length === 0 ? (
-                    <div style={{ fontSize: 11, color: 'var(--text-light)' }}>{t('cashier.frequentItemsEmpty')}</div>
-                  ) : (
-                    <ol style={{ margin: 0, paddingLeft: 18, fontSize: 11, lineHeight: 1.45 }}>
-                      {frequentItems.map((row) => {
-                        const label =
-                          lang.startsWith('zh') || !row.itemNameEn?.trim() ? row.itemName : row.itemNameEn;
-                        return (
-                          <li key={row.menuItemId} style={{ marginBottom: 3 }}>
-                            <span style={{ fontWeight: 600 }}>{label}</span>
-                            <span style={{ color: 'var(--text-light)', marginLeft: 4 }}>
-                              {t('cashier.frequentItemsCount', { count: row.orderCount })}
-                            </span>
-                          </li>
-                        );
-                      })}
-                    </ol>
-                  )}
-                </div>
-              ) : null}
-            </div>
+            {renderDeliveryFrequentSection()}
             <div style={{ marginTop: 10, paddingTop: 8, borderTop: '1px solid var(--border)' }}>
               <div style={{ fontSize: 11, color: 'var(--text-light)', marginBottom: 6, fontWeight: 600 }}>
                 {t('cashier.deliveryMapInfoTitle')}
@@ -1543,10 +1550,10 @@ export default function CashierOrder() {
               value={deliveryCustomerName}
               onChange={(e) => setDeliveryCustomerName(e.target.value)}
             />
-            {deliveryProfiles.length > 0 ? (
+            {deliveryProfiles.length > 1 ? (
               <div>
                 <label style={{ fontSize: 11, color: 'var(--text-light)', display: 'block', marginBottom: 4 }}>
-                  {t('cashier.deliveryProfileLabel')}
+                  {t('cashier.deliveryProfileLabelMulti')}
                 </label>
                 <select
                   className="input"
@@ -1555,17 +1562,21 @@ export default function CashierOrder() {
                   onChange={(e) => {
                     const v = e.target.value;
                     setDeliveryCustomerProfileId(v);
-                    if (v) {
+                    if (v && v !== DELIVERY_PROFILE_NEW_MANUAL && isMongoObjectId(v)) {
                       const p = deliveryProfiles.find((x) => x._id === v);
                       if (p) {
                         if (p.customerName) setDeliveryCustomerName(p.customerName);
                         if (p.deliveryAddress) setDeliveryAddress(p.deliveryAddress);
                         if (p.postalCode) setDeliveryPostalCode(p.postalCode);
                       }
+                      setDeliveryCustomerCollapsed(true);
+                    } else {
+                      setDeliveryCustomerCollapsed(false);
                     }
                   }}
                 >
-                  <option value="">{t('cashier.deliveryProfileAutoOption')}</option>
+                  <option value="">{t('cashier.deliveryProfilePickPlaceholder')}</option>
+                  <option value={DELIVERY_PROFILE_NEW_MANUAL}>{t('cashier.deliveryProfileNewManualOption')}</option>
                   {deliveryProfiles.map((p) => (
                     <option key={p._id} value={p._id}>
                       {p.deliveryAddress || t('cashier.profileAddressDash')} ·{' '}
@@ -1589,6 +1600,7 @@ export default function CashierOrder() {
               onChange={(e) => setDeliveryAddress(e.target.value)}
             />
             {renderDeliveryGeoSection()}
+            {renderDeliveryFrequentSection()}
           </div>
         ) : null}
 

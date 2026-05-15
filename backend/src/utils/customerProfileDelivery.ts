@@ -14,6 +14,10 @@ export function normalizeDeliveryAddressKey(address: string, postalCode: string)
   return `${a}|${p}`;
 }
 
+/**
+ * 仅在「送餐订单」写入数据库时调用（见 orders POST type=delivery）。
+ * 不在未下单场景建档；无单独建档 API。
+ */
 export async function attachCustomerProfileToDeliveryOrder(opts: {
   CustomerProfile: mongoose.Model<unknown>;
   storeId: mongoose.Types.ObjectId;

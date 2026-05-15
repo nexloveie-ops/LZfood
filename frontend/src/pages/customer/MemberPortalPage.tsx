@@ -323,6 +323,8 @@ export default function MemberPortalPage() {
   const [txnLoadError, setTxnLoadError] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [pinResetLoading, setPinResetLoading] = useState(false);
+  const [pinResetNotice, setPinResetNotice] = useState('');
   const [editName, setEditName] = useState('');
   const [editPostalCode, setEditPostalCode] = useState('');
   const [editDeliveryAddress, setEditDeliveryAddress] = useState('');
@@ -526,6 +528,7 @@ export default function MemberPortalPage() {
   const handleLogin = async () => {
     setLoading(true);
     setError('');
+    setPinResetNotice('');
     try {
       const r = await memberApiFetch(storeSlug, null, '/api/members/login', {
         method: 'POST',
@@ -551,6 +554,38 @@ export default function MemberPortalPage() {
     }
   };
 
+  const handleRequestPinReset = async () => {
+    setError('');
+    setPinResetNotice('');
+    if (!phone.trim()) {
+      setError(t('member.forgotPinNeedPhone', '请先输入手机号'));
+      return;
+    }
+    if (!storeSlug) return;
+    setPinResetLoading(true);
+    try {
+      const r = await memberApiFetch(storeSlug, null, '/api/members/request-pin-reset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone, storeSlug }),
+      });
+      const d = (await r.json().catch(() => ({}))) as {
+        ok?: boolean;
+        message?: string;
+        error?: { code?: string; message?: string };
+      };
+      if (!r.ok) throw new Error(formatMemberApiError(r.status, d, storeSlug, r.statusText));
+      setPinResetNotice(
+        typeof d?.message === 'string' && d.message.trim() ? d.message.trim() : t('member.forgotPinSuccess'),
+      );
+      setPin('');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Error');
+    } finally {
+      setPinResetLoading(false);
+    }
+  };
+
   const handleRegister = async () => {
     if (pin !== pin2) {
       setError(t('member.pinMismatch', '两次 PIN 不一致'));
@@ -558,6 +593,7 @@ export default function MemberPortalPage() {
     }
     setLoading(true);
     setError('');
+    setPinResetNotice('');
     try {
       const r = await memberApiFetch(storeSlug, null, '/api/members/register', {
         method: 'POST',
@@ -596,6 +632,8 @@ export default function MemberPortalPage() {
     postalEditedByUserRef.current = false;
     setAddressGeoError('');
     setAddressGeoLoading(false);
+    setPinResetNotice('');
+    setPinResetLoading(false);
     eircodeReqRef.current++;
   };
 
@@ -998,22 +1036,37 @@ export default function MemberPortalPage() {
         </div>
       ) : null}
       <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-        <button type="button" className="btn" style={{ flex: 1, background: view === 'login' ? 'var(--red-primary)' : 'var(--bg)', color: view === 'login' ? '#fff' : 'inherit' }} onClick={() => { setView('login'); setError(''); }}>
+        <button type="button" className="btn" style={{ flex: 1, background: view === 'login' ? 'var(--red-primary)' : 'var(--bg)', color: view === 'login' ? '#fff' : 'inherit' }} onClick={() => { setView('login'); setError(''); setPinResetNotice(''); }}>
           {t('member.loginTab', '登录')}
         </button>
-        <button type="button" className="btn" style={{ flex: 1, background: view === 'register' ? 'var(--red-primary)' : 'var(--bg)', color: view === 'register' ? '#fff' : 'inherit' }} onClick={() => { setView('register'); setError(''); }}>
+        <button type="button" className="btn" style={{ flex: 1, background: view === 'register' ? 'var(--red-primary)' : 'var(--bg)', color: view === 'register' ? '#fff' : 'inherit' }} onClick={() => { setView('register'); setError(''); setPinResetNotice(''); }}>
           {t('member.registerTab', '注册')}
         </button>
       </div>
 
       {error ? <div style={{ color: 'var(--red-primary)', marginBottom: 12, fontSize: 13, whiteSpace: 'pre-line' }}>{error}</div> : null}
+      {pinResetNotice ? (
+        <div style={{ color: 'var(--green, #2e7d32)', marginBottom: 12, fontSize: 13, whiteSpace: 'pre-line' }}>{pinResetNotice}</div>
+      ) : null}
 
       {view === 'login' ? (
         <>
           <input className="input" placeholder={t('member.phone', '手机号')} value={phone} onChange={(e) => setPhone(e.target.value)} style={{ width: '100%', marginBottom: 10 }} />
           <input className="input" type="password" inputMode="numeric" placeholder="PIN" value={pin} onChange={(e) => setPin(e.target.value)} style={{ width: '100%', marginBottom: 16 }} />
-          <button type="button" className="btn btn-primary" style={{ width: '100%' }} disabled={loading || !storeSlug} onClick={handleLogin}>
+          <button type="button" className="btn btn-primary" style={{ width: '100%' }} disabled={loading || !storeSlug} onClick={() => void handleLogin()}>
             {loading ? '…' : t('member.login', '登录')}
+          </button>
+          <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 12, marginBottom: 8, lineHeight: 1.45 }}>
+            {t('member.forgotPinHint', '忘记 PIN？输入手机号后点击下方按钮，我们会将新 PIN 发到您的手机。')}
+          </p>
+          <button
+            type="button"
+            className="btn"
+            style={{ width: '100%' }}
+            disabled={pinResetLoading || loading || !storeSlug}
+            onClick={() => void handleRequestPinReset()}
+          >
+            {pinResetLoading ? '…' : t('member.forgotPinSubmit', '找回 PIN')}
           </button>
         </>
       ) : (

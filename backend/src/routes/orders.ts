@@ -368,6 +368,7 @@ export function createOrdersRouter(io: SocketIOServer): Router {
         orderData.deliveryFeeEuro = fee;
         appendDeliveryFeeLineToOrderItems(orderItems as Record<string, unknown>[], type, fee);
 
+        /** 关联/创建 CustomerProfile：仅在订单落库时执行，不在未下单时建档 */
         const reqProf =
           typeof rawCustomerProfileId === 'string' && mongoose.Types.ObjectId.isValid(rawCustomerProfileId)
             ? rawCustomerProfileId
