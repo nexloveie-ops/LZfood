@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import PortalAuthSection from '../components/portal/PortalAuthSection';
-import { PORTAL_LOGO_URL } from '../constants/portalBrand';
+import { portalLogoSrc } from '../constants/portalBrand';
 import './portal-home.css';
 
 const DEMO_SLUG = import.meta.env.VITE_DEFAULT_STORE_SLUG || 'demo';
@@ -35,7 +35,7 @@ export default function PortalHome() {
       <header className="portal-light-header">
         <a href="/" className="portal-light-brand">
           <span className="portal-light-logo-wrap">
-            <img src={PORTAL_LOGO_URL} alt="L&Z Techserve Limited" className="portal-light-logo-img" />
+            <img src={portalLogoSrc()} alt="L&Z Techserve Limited" className="portal-light-logo-img" />
           </span>
           <div className="portal-light-brand-text">
             <strong>{t('portal.brandName')}</strong>

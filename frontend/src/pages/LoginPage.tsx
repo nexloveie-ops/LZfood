@@ -8,7 +8,7 @@ import {
   completeOwnerPasswordReset,
   sendOwnerPasswordResetCode,
 } from '../api/portal';
-import { PORTAL_LOGO_URL } from '../constants/portalBrand';
+import { portalLogoSrc } from '../constants/portalBrand';
 import './portal-home.css';
 import './store-login.css';
 
@@ -124,7 +124,7 @@ export default function LoginPage() {
       <header className="portal-light-header">
         <a href="/" className="portal-light-brand">
           <span className="portal-light-logo-wrap">
-            <img src={PORTAL_LOGO_URL} alt="" className="portal-light-logo-img" />
+            <img src={portalLogoSrc()} alt="" className="portal-light-logo-img" />
           </span>
           <div className="portal-light-brand-text">
             <strong>{t('portal.brandName')}</strong>

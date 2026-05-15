@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { useTranslation } from 'react-i18next';
 import LanguageSwitcher from '../components/LanguageSwitcher';
 import { useRestaurantConfig } from '../hooks/useRestaurantConfig';
-import { PORTAL_LOGO_URL } from '../constants/portalBrand';
+import { portalLogoSrc } from '../constants/portalBrand';
 import './admin-shell.css';
 
 const sidebarItems = [
@@ -83,12 +83,12 @@ export default function AdminLayout() {
 
         {!collapsed ? (
           <a href="/" className="admin-saas-portal-link" title={t('portal.brandName')}>
-            <img src={PORTAL_LOGO_URL} alt="" />
+            <img src={portalLogoSrc()} alt="" />
             {t('storeLogin.backPortal')}
           </a>
         ) : (
           <a href="/" className="admin-saas-portal-link" title={t('storeLogin.backPortal')}>
-            <img src={PORTAL_LOGO_URL} alt="" />
+            <img src={portalLogoSrc()} alt="" />
           </a>
         )}
 
