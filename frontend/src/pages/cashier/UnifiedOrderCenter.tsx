@@ -67,6 +67,8 @@ interface OrderRow {
   dineInGuestLabel?: string;
   dineInExposedToStaff?: boolean;
   dineInStaffLockedAt?: string;
+  /** 收银创建时客人已通过「电话刷卡」付款；与 paid_online 同流程，结账记为 card */
+  phoneCardPaidAtPlacement?: boolean;
 }
 
 interface RestaurantConfig {
@@ -253,6 +255,8 @@ export default function UnifiedOrderCenter() {
   const [memberPreview, setMemberPreview] = useState<CashierMemberPreview | null>(null);
   /** 外卖自提 paid_online：先厨房小票再完结。checked_out 且 takeoutPlacementSource=cashier 则视同厨房小票已在点单结账时完成 */
   const [takeoutKitchenTicketPrintedIds, setTakeoutKitchenTicketPrintedIds] = useState<Record<string, true>>({});
+  /** 电话单「电话刷卡」已付：先厨房小票再调 complete-placement（与外卖 paid_online 两步类似） */
+  const [placementCardKitchenPrintedIds, setPlacementCardKitchenPrintedIds] = useState<Record<string, true>>({});
 
   useEffect(() => {
     if (!canMemberWallet && checkoutMethod === 'member') {
@@ -656,6 +660,29 @@ export default function UnifiedOrderCenter() {
     }
   }, [fetchAll, token]);
 
+  const completePhonePlacementCardPaid = useCallback(
+    async (order: OrderRow) => {
+      setBusyId(order._id);
+      try {
+        const res = await apiFetch(`/api/orders/phone/${order._id}/complete-placement-card-paid`, {
+          method: 'PUT',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) {
+          const errBody = (await res.json().catch(() => ({}))) as { error?: { message?: string }; message?: string };
+          throw new Error(errBody?.error?.message || errBody?.message || `HTTP ${res.status}`);
+        }
+        await fetchAll();
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        alert(isEn ? `Could not complete phone order: ${msg}` : `未能完结电话单：${msg}`);
+      } finally {
+        setBusyId(null);
+      }
+    },
+    [fetchAll, isEn, token],
+  );
+
   const setDeliveryStage = useCallback(async (orderId: string, stage: DeliveryStage) => {
     setBusyId(orderId);
     try {
@@ -710,6 +737,9 @@ export default function UnifiedOrderCenter() {
       const receiptOrderType = src.type;
       const isPayAfterDineIn = dineInPayAfterEligibleForKitchenMark(src, config.dine_in_workflow_mode === 'pay_after');
 
+      const isPhoneCardPlacement =
+        !!(src as OrderRow).phoneCardPaidAtPlacement && (src.type === 'phone' || src.type === 'delivery');
+
       const mapItemToReceipt = (item: OrderRow['items'][0], qtyOverride: number) => ({
         _id: item._id,
         ...(item.lineKind === 'delivery_fee' ? {} : { menuItemId: item._id }),
@@ -725,12 +755,14 @@ export default function UnifiedOrderCenter() {
         })),
       });
 
-      const pm: 'cash' | 'online' | 'member' =
+      const pm: 'cash' | 'online' | 'member' | 'card' =
         src.status !== 'paid_online'
           ? 'cash'
           : !String(src.stripePaymentIntentId || '').trim() && (Number(src.memberCreditUsed) || 0) > 0.001
             ? 'member'
-            : 'online';
+            : isPhoneCardPlacement
+              ? 'card'
+              : 'online';
 
       const useDelta =
         kitchenTicket === 'auto' &&
@@ -1297,8 +1329,10 @@ export default function UnifiedOrderCenter() {
     paidAmount: isEn ? 'Amount paid by customer' : '客人支付金额',
     paidOnlineBadge: isEn ? 'Paid online' : '线上已付',
     memberPaidBadge: isEn ? 'Paid (member wallet)' : '会员已付',
+    phoneCardPaidBadge: isEn ? 'Paid (phone card)' : '电话刷卡已付',
     memberPaidBanner: isEn ? 'MEMBER PAID · PRIORITY ORDER' : '会员已付 · 优先出单',
     stripePaidBanner: isEn ? 'ONLINE PAID · PRIORITY ORDER' : '线上已付 · 优先出单',
+    phoneCardPaidBanner: isEn ? 'PHONE CARD PAID · PRINT KITCHEN THEN COMPLETE' : '电话刷卡已付 · 打印厨房后点完成',
     paymentMethodLabel: isEn ? 'Payment' : '支付方式',
     change: isEn ? 'Change' : '找零',
     confirmCheckout: isEn ? 'Confirm Checkout' : '确认结账',
@@ -1702,16 +1736,25 @@ export default function UnifiedOrderCenter() {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 10 }}>
               {grouped[type].map((o) => {
                 const statusLower = String(o.status || '').toLowerCase();
+                const isPhoneCardPlacementPrepaid = !!(
+                  o.phoneCardPaidAtPlacement &&
+                  (o.type === 'phone' || o.type === 'delivery')
+                );
                 const isOnlinePaidFlow =
-                  statusLower.includes('paid') ||
-                  (o.type === 'delivery' &&
-                    (o.customerOnlinePaymentAt ||
-                      (o.deliverySource === 'qr' &&
-                        (statusLower.includes('paid') || o.status === 'checked_out'))));
+                  !isPhoneCardPlacementPrepaid &&
+                  (statusLower.includes('paid') ||
+                    (o.type === 'delivery' &&
+                      (o.customerOnlinePaymentAt ||
+                        (o.deliverySource === 'qr' &&
+                          (statusLower.includes('paid') || o.status === 'checked_out')))));
                 const memberWalletPaidUi =
                   isCustomerMemberWalletPrepaid(o) &&
                   (o.status === 'paid_online' || o.status === 'checked_out');
-                const emphasizePaidOnline = !!(isOnlinePaidFlow || memberWalletPaidUi);
+                const emphasizePaidOnline = !!(
+                  isOnlinePaidFlow ||
+                  memberWalletPaidUi ||
+                  (isPhoneCardPlacementPrepaid && o.status === 'paid_online')
+                );
                 const memberPayTitle = [
                   o.memberPhoneSnapshot?.trim() || '',
                   o.memberCreditUsed != null
@@ -1806,6 +1849,21 @@ export default function UnifiedOrderCenter() {
                       >
                         {L.memberPaidBadge}
                       </span>
+                    ) : isPhoneCardPlacementPrepaid && o.status === 'paid_online' ? (
+                      <span
+                        style={{
+                          fontSize: 10,
+                          fontWeight: 700,
+                          padding: '2px 6px',
+                          borderRadius: 8,
+                          background: '#E3F2FD',
+                          color: '#0D47A1',
+                          border: '1px solid #90CAF9',
+                        }}
+                        title={isEn ? 'Card payment taken by phone when order was placed' : '下单时已通过电话收取刷卡款'}
+                      >
+                        {L.phoneCardPaidBadge}
+                      </span>
                     ) : isOnlinePaidFlow ? (
                       <span
                         style={{
@@ -1837,6 +1895,22 @@ export default function UnifiedOrderCenter() {
                       }}
                     >
                       {L.memberPaidBanner}
+                    </div>
+                  ) : isPhoneCardPlacementPrepaid && o.status === 'paid_online' ? (
+                    <div
+                      style={{
+                        marginBottom: 6,
+                        fontSize: 12,
+                        fontWeight: 700,
+                        color: '#fff',
+                        background: 'linear-gradient(90deg, #1565C0 0%, #1976D2 100%)',
+                        border: '1px solid #0D47A1',
+                        borderRadius: 8,
+                        padding: '5px 10px',
+                        letterSpacing: 0.2,
+                      }}
+                    >
+                      {L.phoneCardPaidBanner}
                     </div>
                   ) : isOnlinePaidFlow ? (
                     <div
@@ -1974,6 +2048,32 @@ export default function UnifiedOrderCenter() {
                             <>
                               <button className="btn btn-primary" style={{ fontSize: 12, minWidth: o.type === 'takeout' ? 96 : undefined }} disabled={busyId === o._id} onClick={() => openCheckoutModal(o)}>{L.checkout}</button>
                               <button className="btn btn-ghost" style={{ fontSize: 12, color: 'var(--red-primary)', minWidth: o.type === 'takeout' ? 96 : undefined }} disabled={busyId === o._id} onClick={() => void cancelPending(o._id)}>{L.cancel}</button>
+                            </>
+                          ) : null}
+                          {o.type === 'phone' && o.status === 'paid_online' && o.phoneCardPaidAtPlacement ? (
+                            <>
+                              {!placementCardKitchenPrintedIds[o._id] ? (
+                                <button
+                                  className="btn btn-outline"
+                                  style={{ fontSize: 12, minWidth: 198 }}
+                                  disabled={busyId === o._id}
+                                  onClick={() => {
+                                    void printOrderTicket(o);
+                                    setPlacementCardKitchenPrintedIds((prev) => ({ ...prev, [o._id]: true }));
+                                  }}
+                                >
+                                  {L.printAndKitchenDone}
+                                </button>
+                              ) : (
+                                <button
+                                  className="btn btn-primary"
+                                  style={{ fontSize: 12, minWidth: 198 }}
+                                  disabled={busyId === o._id}
+                                  onClick={() => void completePhonePlacementCardPaid(o)}
+                                >
+                                  {busyId === o._id ? L.processing : L.markComplete}
+                                </button>
+                              )}
                             </>
                           ) : null}
                           {o.type === 'takeout' && o.status === 'checked_out' ? (

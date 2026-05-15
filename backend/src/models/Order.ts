@@ -52,6 +52,11 @@ const OrderSchema = new mongoose.Schema({
   deliveryPaidByDriver: { type: Boolean, default: false },
   /** 顾客端 Stripe 支付成功时间（送餐扫码付等）；完结后仍保留，便于区分线上已付 */
   customerOnlinePaymentAt: { type: Date },
+  /**
+   * 收银创建电话单 / 电话来源送餐时：客人已通过「电话刷卡」(phone pay) 付款。
+   * 订单 status 为 paid_online 与线上一致流程；结账记录使用 paymentMethod=card（非 online）。
+   */
+  phoneCardPaidAtPlacement: { type: Boolean, default: false },
   stripePaymentIntentId: { type: String },
   /** 顾客自取「大致时段」展示文案（不做容量校验） */
   pickupSlotLabel: { type: String, default: '' },

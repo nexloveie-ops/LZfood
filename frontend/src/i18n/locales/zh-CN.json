@@ -216,6 +216,7 @@
     "createPhoneOrder": "创建电话订单",
     "phoneOrderCreated": "电话订单已创建",
     "phoneOrderPayLater": "客人来取时在「电话」页面完成支付",
+    "phoneCardPaidAtPlacementHint": "客人已在电话中刷卡付款（phone pay）。订单为已在线付状态，报表记为刷卡结账。",
     "continueOrder": "继续点单",
     "printReceiptBtn": "🖨️ 打印小票",
     "orderSoldOutBadge": "售罄",

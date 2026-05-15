@@ -420,7 +420,43 @@ export function createOrdersRouter(io: SocketIOServer): Router {
         }
       }
 
+      const rawPhoneCard = (req.body as { phoneCardPaidAtPlacement?: unknown }).phoneCardPaidAtPlacement;
+      const wantsPhoneCard = rawPhoneCard === true || rawPhoneCard === 'true';
+      if (wantsPhoneCard) {
+        if (!isStaffCashierOrOwner(req)) {
+          throw createAppError('FORBIDDEN', 'phoneCardPaidAtPlacement requires cashier or owner session');
+        }
+        const ds = String((orderData as { deliverySource?: string }).deliverySource || '');
+        const isPhonePlacement = type === 'phone' || (type === 'delivery' && ds === 'phone');
+        if (!isPhonePlacement) {
+          throw createAppError(
+            'VALIDATION_ERROR',
+            'phoneCardPaidAtPlacement is only allowed for phone orders or delivery with deliverySource=phone',
+          );
+        }
+        orderData.status = 'paid_online';
+        orderData.phoneCardPaidAtPlacement = true;
+      }
+
       const order = await Order.create(orderData);
+
+      if ((order as { phoneCardPaidAtPlacement?: boolean }).phoneCardPaidAtPlacement) {
+        try {
+          const { Checkout } = getModels() as { Checkout: mongoose.Model<any> };
+          const totalAmount = computeOrderPayableTotalEuro(order);
+          await Checkout.create({
+            storeId: req.storeId,
+            type: 'seat',
+            totalAmount,
+            paymentMethod: 'card',
+            cardAmount: totalAmount,
+            orderIds: [order._id],
+          });
+        } catch (checkoutErr) {
+          await Order.findOneAndDelete({ _id: order._id, storeId: req.storeId });
+          throw checkoutErr;
+        }
+      }
 
       io.to(storeIoRoom(req.storeId!)).emit('order:new', order);
 
@@ -487,7 +523,11 @@ export function createOrdersRouter(io: SocketIOServer): Router {
   router.get('/phone', async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { Order } = orderModels();
-      const orders = await Order.find({ storeId: req.storeId, type: 'phone', status: 'pending' }).sort({ dailyOrderNumber: 1 });
+      const orders = await Order.find({
+        storeId: req.storeId,
+        type: 'phone',
+        $or: [{ status: 'pending' }, { status: 'paid_online', phoneCardPaidAtPlacement: true }],
+      }).sort({ dailyOrderNumber: 1 });
       res.json(orders);
     } catch (err) {
       next(err);
@@ -519,7 +559,7 @@ export function createOrdersRouter(io: SocketIOServer): Router {
           // Phone orders should disappear after checkout.
           {
             type: 'phone',
-            status: 'pending',
+            $or: [{ status: 'pending' }, { status: 'paid_online', phoneCardPaidAtPlacement: true }],
           },
           // 电话送餐：司机回店结账后应为 completed；队列中只保留待处理/待收款阶段（勿含 checked_out，否则旧数据会永远占位）
           {
@@ -766,6 +806,55 @@ export function createOrdersRouter(io: SocketIOServer): Router {
           },
           { $set: { checkoutId: checkout._id } },
         );
+      }
+
+      const updated = await Order.findOneAndUpdate(
+        { _id: id, storeId: req.storeId },
+        { $set: { status: 'completed', completedAt: new Date() } },
+        { new: true },
+      );
+
+      io.to(storeIoRoom(req.storeId!)).emit('order:updated', updated);
+      res.json(updated);
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // PUT /api/orders/phone/:id/complete-placement-card-paid
+  // Placement-time phone card pay: Checkout already created at POST; this only marks the order completed after kitchen flow.
+  router.put('/phone/:id/complete-placement-card-paid', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { Order, Checkout } = getModels() as {
+        Order: mongoose.Model<any>;
+        Checkout: mongoose.Model<any>;
+      };
+      const id = req.params.id as string;
+      if (!mongoose.Types.ObjectId.isValid(id)) {
+        throw createAppError('VALIDATION_ERROR', 'Invalid order ID');
+      }
+
+      const order = await Order.findOne({ _id: id, storeId: req.storeId });
+      if (!order) {
+        throw createAppError('NOT_FOUND', 'Order not found');
+      }
+      if (order.type !== 'phone') {
+        throw createAppError('VALIDATION_ERROR', 'Only phone orders can use this action');
+      }
+      if (!order.phoneCardPaidAtPlacement) {
+        throw createAppError('VALIDATION_ERROR', 'Order was not created with phone card prepayment', {
+          currentStatus: order.status,
+        });
+      }
+      if (order.status !== 'paid_online') {
+        throw createAppError('VALIDATION_ERROR', 'Only paid_online phone orders can be finished here', {
+          currentStatus: order.status,
+        });
+      }
+
+      const checkout = await Checkout.findOne({ storeId: req.storeId, orderIds: order._id }).sort({ checkedOutAt: 1 });
+      if (!checkout) {
+        throw createAppError('VALIDATION_ERROR', 'Missing checkout record for this placement card payment');
       }
 
       const updated = await Order.findOneAndUpdate(

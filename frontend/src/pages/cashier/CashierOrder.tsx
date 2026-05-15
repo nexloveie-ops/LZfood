@@ -137,6 +137,8 @@ export default function CashierOrder() {
   /** 电话单：后端要求 `customerPhone`（见 POST /api/orders type=phone） */
   const [phoneGuestPhone, setPhoneGuestPhone] = useState('');
   const [phoneGuestName, setPhoneGuestName] = useState('');
+  /** 电话单 / 电话来源送餐：下单时已通过电话收取刷卡款（Checkout 记为 card） */
+  const [phoneCardPaidAtPlacement, setPhoneCardPaidAtPlacement] = useState(false);
   /** 收银送餐（phone 来源）：与历史版本一致，下单后为 pending，顾客可再线上支付 */
   const [deliveryCustomerName, setDeliveryCustomerName] = useState('');
   const [deliveryCustomerPhone, setDeliveryCustomerPhone] = useState('');
@@ -771,6 +773,7 @@ export default function CashierOrder() {
       setPhoneGuestPhone('');
       setPhoneGuestName('');
     }
+    setPhoneCardPaidAtPlacement(false);
     if (next !== 'dine_in') {
       setCounterTableInput('');
       setCounterGuestLabel('');
@@ -807,6 +810,9 @@ export default function CashierOrder() {
       if (matchedBundles.length > 0) {
         orderBody.appliedBundles = matchedBundles.map(b => ({ offerId: b.offer._id, name: b.offer.name, nameEn: b.offer.nameEn, discount: b.savings }));
       }
+      if (phoneCardPaidAtPlacement) {
+        orderBody.phoneCardPaidAtPlacement = true;
+      }
       const orderRes = await apiFetch('/api/orders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -823,13 +829,13 @@ export default function CashierOrder() {
           checkoutId: orderData._id,
           type: 'seat' as const,
           totalAmount: finalTotal,
-          paymentMethod: 'cash' as const,
+          paymentMethod: ((orderData as { phoneCardPaidAtPlacement?: boolean }).phoneCardPaidAtPlacement ? 'card' : 'cash') as 'cash' | 'card',
           checkedOutAt: new Date().toISOString(),
           orders: [{
             _id: orderData._id,
             type: 'phone' as const,
             dailyOrderNumber: orderData.dailyOrderNumber,
-            status: 'pending',
+            status: (orderData.status as string) || 'pending',
             items: orderData.items,
           }],
         };
@@ -843,6 +849,7 @@ export default function CashierOrder() {
       setOrder([]);
       setPhoneGuestPhone('');
       setPhoneGuestName('');
+      setPhoneCardPaidAtPlacement(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed');
     } finally {
@@ -897,6 +904,9 @@ export default function CashierOrder() {
       if (profileIdRaw && profileIdRaw !== DELIVERY_PROFILE_NEW_MANUAL && isMongoObjectId(profileIdRaw)) {
         orderBody.customerProfileId = profileIdRaw;
       }
+      if (phoneCardPaidAtPlacement) {
+        orderBody.phoneCardPaidAtPlacement = true;
+      }
       const orderRes = await apiFetch('/api/orders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -931,14 +941,14 @@ export default function CashierOrder() {
           checkoutId: orderData._id,
           type: 'seat' as const,
           totalAmount: itemGross - disc,
-          paymentMethod: 'cash' as const,
+          paymentMethod: ((orderData as { phoneCardPaidAtPlacement?: boolean }).phoneCardPaidAtPlacement ? 'card' : 'cash') as 'cash' | 'card',
           checkedOutAt: new Date().toISOString(),
           orders: [
             {
               _id: orderData._id,
               type: 'delivery' as const,
               dailyOrderNumber: orderData.dailyOrderNumber,
-              status: 'pending',
+              status: (orderData.status as string) || 'pending',
               items: orderData.items,
               customerName:
                 typeof orderData.customerName === 'string' && orderData.customerName.trim()
@@ -982,6 +992,7 @@ export default function CashierOrder() {
       setDeliveryProfiles([]);
       setDeliveryCustomerCollapsed(false);
       setFrequentItems([]);
+      setPhoneCardPaidAtPlacement(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed');
     } finally {
@@ -1819,6 +1830,28 @@ export default function CashierOrder() {
               <span style={{ fontSize: 22, fontWeight: 700, color: 'var(--red-primary)', fontFamily: "'Noto Serif SC', serif" }}>€{displayTotal.toFixed(2)}</span>
             </div>
           </div>
+          {(orderType === 'phone' || orderType === 'delivery') && (
+            <label
+              style={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: 8,
+                fontSize: 12,
+                color: '#333',
+                marginBottom: 10,
+                cursor: 'pointer',
+                lineHeight: 1.45,
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={phoneCardPaidAtPlacement}
+                onChange={(e) => setPhoneCardPaidAtPlacement(e.target.checked)}
+                style={{ marginTop: 2, flexShrink: 0 }}
+              />
+              <span>{t('cashier.phoneCardPaidAtPlacementHint')}</span>
+            </label>
+          )}
           <button
             className="btn btn-primary"
             onClick={() => void handlePrimaryAction()}

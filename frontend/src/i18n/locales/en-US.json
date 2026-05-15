@@ -216,6 +216,7 @@
     "createPhoneOrder": "Create phone order",
     "phoneOrderCreated": "Phone order created",
     "phoneOrderPayLater": "Collect payment on the Phone queue when the guest picks up.",
+    "phoneCardPaidAtPlacementHint": "Guest already paid by card over the phone (phone pay). Order will be paid_online; checkout is recorded as card.",
     "continueOrder": "Continue ordering",
     "printReceiptBtn": "🖨️ Print receipt",
     "orderSoldOutBadge": "Sold out",
