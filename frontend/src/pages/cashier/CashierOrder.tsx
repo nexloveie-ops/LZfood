@@ -12,6 +12,12 @@ import type { CartItemOption } from '../../context/CartContext';
 import ReceiptPrint from '../../components/cashier/ReceiptPrint';
 import { buildReceiptHTML, printViaIframe } from '../../components/cashier/ReceiptPrint';
 import { matchBundles, calcBundleTotal, type OfferData, type MatchedBundle } from '../../utils/bundleMatcher';
+import {
+  DELIVERY_FEE_RULES_CONFIG_KEY,
+  deliveryFeeForDistance,
+  parseDeliveryFeeRulesJson,
+  type DeliveryFeeTier,
+} from '../../utils/deliveryFeeRules';
 
 interface Translation { locale: string; name: string; description?: string; }
 interface Category { _id: string; sortOrder: number; translations: Translation[]; }
@@ -98,9 +104,20 @@ function buildLinesFromActiveDineInOrders(orders: ActiveDineInOrderRow[], lang: 
 let lineIdCounter = 0;
 function nextLineId() { return `line-${++lineIdCounter}-${Date.now()}`; }
 
+const FREQUENT_LOOKBACK_DAYS = 60;
+const FREQUENT_ITEMS_LIMIT = 8;
+
+interface FrequentItemRow {
+  menuItemId: string;
+  itemName: string;
+  itemNameEn: string;
+  orderCount: number;
+}
+
 export default function CashierOrder() {
   const { t, i18n } = useTranslation();
   const { token, hasFeature } = useAuth();
+  const canDelivery = hasFeature('cashier.delivery.page');
   const canMemberWallet = hasFeature('cashier.member.wallet');
   const lang = i18n.language;
 
@@ -109,10 +126,32 @@ export default function CashierOrder() {
   const [activeCat, setActiveCat] = useState('');
   const [search, setSearch] = useState('');
   const [order, setOrder] = useState<OrderLine[]>([]);
-  const [orderType, setOrderType] = useState<'dine_in' | 'takeout' | 'phone'>('dine_in');
+  const [orderType, setOrderType] = useState<'dine_in' | 'takeout' | 'phone' | 'delivery'>('dine_in');
   /** 电话单：后端要求 `customerPhone`（见 POST /api/orders type=phone） */
   const [phoneGuestPhone, setPhoneGuestPhone] = useState('');
   const [phoneGuestName, setPhoneGuestName] = useState('');
+  /** 收银送餐（phone 来源）：与历史版本一致，下单后为 pending，顾客可再线上支付 */
+  const [deliveryCustomerName, setDeliveryCustomerName] = useState('');
+  const [deliveryCustomerPhone, setDeliveryCustomerPhone] = useState('');
+  const [deliveryAddress, setDeliveryAddress] = useState('');
+  const [deliveryPostalCode, setDeliveryPostalCode] = useState('');
+  const [deliveryFeeRules, setDeliveryFeeRules] = useState<DeliveryFeeTier[]>([]);
+  const [deliveryGeoLoading, setDeliveryGeoLoading] = useState(false);
+  const [deliveryDistanceKm, setDeliveryDistanceKm] = useState<number | null>(null);
+  const [deliveryGeoError, setDeliveryGeoError] = useState('');
+  const [deliveryCustomerProfileId, setDeliveryCustomerProfileId] = useState('');
+  const [deliveryProfiles, setDeliveryProfiles] = useState<
+    { _id: string; customerName: string; deliveryAddress: string; postalCode: string }[]
+  >([]);
+  const eircodeReqRef = useRef(0);
+  const skipNextGeoAddressFillRef = useRef(false);
+  const memberDeliveryLookupReqRef = useRef(0);
+  const deliveryPhoneRef = useRef('');
+  const [deliveryCustomerCollapsed, setDeliveryCustomerCollapsed] = useState(false);
+  const frequentFetchGenRef = useRef(0);
+  const [frequentItems, setFrequentItems] = useState<FrequentItemRow[]>([]);
+  const [frequentItemsLoading, setFrequentItemsLoading] = useState(false);
+  const [frequentItemsExpanded, setFrequentItemsExpanded] = useState(false);
   const [error, setError] = useState('');
   const [optionModal, setOptionModal] = useState<MenuItem | null>(null);
 
@@ -201,6 +240,201 @@ export default function CashierOrder() {
       setMemberPreview(null);
     }
   }, [canMemberWallet]);
+
+  useEffect(() => {
+    if (orderType !== 'delivery' || !token) {
+      setDeliveryProfiles([]);
+      return;
+    }
+    const phone = deliveryCustomerPhone.trim();
+    if (phone.length < 5) {
+      setDeliveryProfiles([]);
+      return;
+    }
+    const tmr = window.setTimeout(() => {
+      void apiFetch(`/api/orders/customer-profiles?phone=${encodeURIComponent(phone)}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+        .then((r) => (r.ok ? r.json() : []))
+        .then((list: unknown) => {
+          setDeliveryProfiles(
+            Array.isArray(list)
+              ? (list as { _id: string; customerName: string; deliveryAddress: string; postalCode: string }[])
+              : [],
+          );
+        })
+        .catch(() => setDeliveryProfiles([]));
+    }, 400);
+    return () => window.clearTimeout(tmr);
+  }, [orderType, deliveryCustomerPhone, token]);
+
+  useEffect(() => {
+    deliveryPhoneRef.current = deliveryCustomerPhone;
+  }, [deliveryCustomerPhone]);
+
+  useEffect(() => {
+    if (!token || !canDelivery) {
+      setDeliveryFeeRules([]);
+      return;
+    }
+    let cancelled = false;
+    void apiFetch('/api/admin/config', { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => (r.ok ? r.json() : {}))
+      .then((d: Record<string, unknown>) => {
+        if (cancelled) return;
+        const raw = d[DELIVERY_FEE_RULES_CONFIG_KEY];
+        setDeliveryFeeRules(typeof raw === 'string' ? parseDeliveryFeeRulesJson(raw) : []);
+      })
+      .catch(() => {
+        if (!cancelled) setDeliveryFeeRules([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token, canDelivery]);
+
+  const lookupEircode = useCallback(async (raw: string) => {
+    const norm = raw.toUpperCase().replace(/[\s-]/g, '');
+    if (norm.length !== 7 || !/^[A-Z][0-9][0-9W][0-9A-Z]{4}$/.test(norm)) {
+      skipNextGeoAddressFillRef.current = false;
+      setDeliveryDistanceKm(null);
+      setDeliveryGeoError('');
+      setDeliveryGeoLoading(false);
+      return;
+    }
+    const preserveAddress = skipNextGeoAddressFillRef.current;
+    if (preserveAddress) skipNextGeoAddressFillRef.current = false;
+    const id = ++eircodeReqRef.current;
+    setDeliveryGeoLoading(true);
+    setDeliveryGeoError('');
+    try {
+      const codeParam = `${norm.slice(0, 3)} ${norm.slice(3)}`;
+      const res = await apiFetch(`/api/geo/eircode?code=${encodeURIComponent(codeParam)}`);
+      const data = (await res.json().catch(() => null)) as {
+        formattedAddress?: string;
+        distanceKm?: number;
+        error?: { message?: string };
+      } | null;
+      if (id !== eircodeReqRef.current) return;
+      if (!res.ok) {
+        const msg = data?.error?.message || `HTTP ${res.status}`;
+        throw new Error(msg);
+      }
+      if (!preserveAddress) {
+        setDeliveryAddress(data?.formattedAddress || '');
+      }
+      setDeliveryDistanceKm(typeof data?.distanceKm === 'number' ? data.distanceKm : null);
+    } catch (e) {
+      if (id !== eircodeReqRef.current) return;
+      setDeliveryDistanceKm(null);
+      setDeliveryGeoError(e instanceof Error ? e.message : t('cashier.geoLookupErrorFallback'));
+    } finally {
+      if (id === eircodeReqRef.current) setDeliveryGeoLoading(false);
+    }
+  }, [t]);
+
+  const runMemberDeliveryLookup = useCallback(
+    async (phoneRaw?: string) => {
+      if (orderType !== 'delivery' || !token) return;
+      const raw = phoneRaw ?? deliveryPhoneRef.current;
+      const digits = raw.replace(/\D/g, '');
+      if (digits.length < 8) return;
+      const id = ++memberDeliveryLookupReqRef.current;
+      try {
+        const res = await apiFetch(`/api/members/delivery-lookup?phone=${encodeURIComponent(raw.trim() || digits)}`);
+        const data = (res.ok ? await res.json().catch(() => null) : null) as {
+          _id?: string;
+          displayName?: string;
+          deliveryAddress?: string;
+          postalCode?: string;
+        } | null;
+        if (id !== memberDeliveryLookupReqRef.current) return;
+        if (deliveryPhoneRef.current.replace(/\D/g, '') !== digits) return;
+        if (!data?._id) return;
+        skipNextGeoAddressFillRef.current = true;
+        setDeliveryCustomerName(String(data.displayName || '').trim());
+        setDeliveryPostalCode(String(data.postalCode || '').trim());
+        setDeliveryAddress(String(data.deliveryAddress || '').trim());
+        setDeliveryCustomerCollapsed(true);
+      } catch {
+        /* ignore */
+      }
+    },
+    [orderType, token],
+  );
+
+  useEffect(() => {
+    if (orderType !== 'delivery' || !token) return;
+    const digits = deliveryCustomerPhone.replace(/\D/g, '');
+    if (digits.length < 10) return;
+    const timerId = window.setTimeout(() => {
+      void runMemberDeliveryLookup(deliveryPhoneRef.current);
+    }, 450);
+    return () => window.clearTimeout(timerId);
+  }, [orderType, token, deliveryCustomerPhone, runMemberDeliveryLookup]);
+
+  useEffect(() => {
+    if (orderType !== 'delivery') {
+      setDeliveryCustomerCollapsed(false);
+      setFrequentItems([]);
+      setFrequentItemsExpanded(false);
+    }
+  }, [orderType]);
+
+  useEffect(() => {
+    if (orderType !== 'delivery' || !token || !canDelivery) {
+      setFrequentItems([]);
+      setFrequentItemsLoading(false);
+      return;
+    }
+    if (!deliveryCustomerCollapsed) {
+      setFrequentItems([]);
+      setFrequentItemsLoading(false);
+      return;
+    }
+    if (!frequentItemsExpanded) {
+      return;
+    }
+    const digits = deliveryCustomerPhone.replace(/\D/g, '');
+    if (digits.length < 8) {
+      setFrequentItems([]);
+      setFrequentItemsLoading(false);
+      return;
+    }
+    const gen = ++frequentFetchGenRef.current;
+    setFrequentItemsLoading(true);
+    const phoneQ = encodeURIComponent(deliveryCustomerPhone.trim());
+    void apiFetch(
+      `/api/orders/customer-frequent-items?phone=${phoneQ}&days=${FREQUENT_LOOKBACK_DAYS}&limit=${FREQUENT_ITEMS_LIMIT}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    )
+      .then((r) => (r.ok ? r.json() : []))
+      .then((list: unknown) => {
+        if (gen !== frequentFetchGenRef.current) return;
+        setFrequentItems(Array.isArray(list) ? (list as FrequentItemRow[]) : []);
+      })
+      .catch(() => {
+        if (gen !== frequentFetchGenRef.current) return;
+        setFrequentItems([]);
+      })
+      .finally(() => {
+        if (gen !== frequentFetchGenRef.current) return;
+        setFrequentItemsLoading(false);
+      });
+  }, [orderType, deliveryCustomerCollapsed, deliveryCustomerPhone, frequentItemsExpanded, token, canDelivery]);
+
+  useEffect(() => {
+    if (orderType !== 'delivery' || !canDelivery) {
+      setDeliveryDistanceKm(null);
+      setDeliveryGeoError('');
+      setDeliveryGeoLoading(false);
+      return;
+    }
+    const timerId = window.setTimeout(() => {
+      void lookupEircode(deliveryPostalCode);
+    }, 500);
+    return () => window.clearTimeout(timerId);
+  }, [deliveryPostalCode, orderType, canDelivery, lookupEircode]);
 
   /** 只拉分类；当前分类菜品由 fetchItemsForCategory + activeCat effect 拉取（后端按 category 缩小 merge 范围） */
   const fetchMenu = useCallback(async () => {
@@ -436,9 +670,54 @@ export default function CashierOrder() {
 
   const finalTotal = bundleTotals.finalTotal;
 
-  const switchOrderType = (next: 'dine_in' | 'takeout' | 'phone') => {
+  const deliveryFeeAmount = useMemo(() => {
+    if (orderType !== 'delivery' || deliveryDistanceKm == null) return 0;
+    return deliveryFeeForDistance(deliveryFeeRules, deliveryDistanceKm);
+  }, [orderType, deliveryDistanceKm, deliveryFeeRules]);
+
+  const grandTotal = finalTotal + (orderType === 'delivery' ? deliveryFeeAmount : 0);
+  const displayTotal = orderType === 'delivery' ? grandTotal : finalTotal;
+
+  const renderDeliveryGeoSection = () => (
+    <>
+      {deliveryGeoLoading ? (
+        <div style={{ fontSize: 11, color: 'var(--text-light)' }}>{t('cashier.deliveryParsingPostcode')}</div>
+      ) : null}
+      {deliveryGeoError ? (
+        <div style={{ fontSize: 11, color: 'var(--red-primary)' }}>{deliveryGeoError}</div>
+      ) : null}
+      {deliveryDistanceKm != null && !deliveryGeoLoading ? (
+        <div style={{ fontSize: 12, color: '#1565c0' }}>{t('cashier.deliveryDistanceKm', { km: deliveryDistanceKm })}</div>
+      ) : null}
+      {deliveryAddress.trim() || deliveryPostalCode.trim() ? (
+        <a
+          href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(deliveryAddress.trim() || deliveryPostalCode.trim())}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{ fontSize: 11, color: '#1565c0', textDecoration: 'underline', display: 'inline-block', marginTop: 2 }}
+        >
+          {t('cashier.openInGoogleMaps')} ↗
+        </a>
+      ) : null}
+      {deliveryFeeRules.length > 0 && deliveryDistanceKm != null ? (
+        <div style={{ fontSize: 12, color: '#1565c0', marginTop: 4 }}>
+          {t('cashier.deliveryFee')}: <strong>€{deliveryFeeAmount.toFixed(2)}</strong>
+        </div>
+      ) : null}
+      {deliveryFeeRules.length > 0 &&
+      !deliveryGeoLoading &&
+      deliveryPostalCode.trim().length >= 5 &&
+      deliveryDistanceKm == null &&
+      !deliveryGeoError ? (
+        <div style={{ fontSize: 11, color: 'var(--text-light)', marginTop: 4 }}>{t('cashier.deliveryFeeRulesNeedDistance')}</div>
+      ) : null}
+    </>
+  );
+
+  const switchOrderType = (next: 'dine_in' | 'takeout' | 'phone' | 'delivery') => {
     setOrderType(next);
     setError('');
+    setDeliveryCustomerProfileId('');
     if (next !== 'phone') {
       setPhoneGuestPhone('');
       setPhoneGuestName('');
@@ -446,6 +725,19 @@ export default function CashierOrder() {
     if (next !== 'dine_in') {
       setCounterTableInput('');
       setCounterGuestLabel('');
+    }
+    if (next !== 'delivery') {
+      setDeliveryCustomerName('');
+      setDeliveryCustomerPhone('');
+      setDeliveryAddress('');
+      setDeliveryPostalCode('');
+      setDeliveryDistanceKm(null);
+      setDeliveryGeoError('');
+      setDeliveryGeoLoading(false);
+      setDeliveryCustomerCollapsed(false);
+      setDeliveryProfiles([]);
+      setFrequentItems([]);
+      setFrequentItemsExpanded(false);
     }
   };
 
@@ -503,6 +795,134 @@ export default function CashierOrder() {
       setOrder([]);
       setPhoneGuestPhone('');
       setPhoneGuestName('');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed');
+    } finally {
+      setPaying(false);
+    }
+  };
+
+  const handleDeliveryPhoneOrder = async () => {
+    if (!deliveryCustomerName.trim() || !deliveryCustomerPhone.trim() || !deliveryAddress.trim() || !deliveryPostalCode.trim()) {
+      setError(t('cashier.errDeliveryNeedFields'));
+      return;
+    }
+    if (deliveryFeeRules.length > 0 && deliveryDistanceKm == null) {
+      setError(t('cashier.deliveryFeeRulesNeedDistance'));
+      return;
+    }
+    setPaying(true);
+    setError('');
+    try {
+      const orderBody: Record<string, unknown> = {
+        type: 'delivery',
+        deliverySource: 'phone',
+        customerName: deliveryCustomerName.trim(),
+        customerPhone: deliveryCustomerPhone.trim(),
+        deliveryAddress: deliveryAddress.trim(),
+        postalCode: deliveryPostalCode.trim(),
+        items: buildGroupedItems(),
+      };
+      if (matchedBundles.length > 0) {
+        orderBody.appliedBundles = matchedBundles.map((b) => ({
+          offerId: b.offer._id,
+          name: b.offer.name,
+          nameEn: b.offer.nameEn,
+          discount: b.savings,
+        }));
+      }
+      if (deliveryDistanceKm != null) {
+        orderBody.deliveryDistanceKm = deliveryDistanceKm;
+      }
+      if (deliveryCustomerProfileId.trim()) {
+        orderBody.customerProfileId = deliveryCustomerProfileId.trim();
+      }
+      const orderRes = await apiFetch('/api/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(orderBody),
+      });
+      if (!orderRes.ok) {
+        const d = (await orderRes.json().catch(() => null)) as {
+          error?: { message?: string; details?: { customerProfiles?: typeof deliveryProfiles } };
+        } | null;
+        if (orderRes.status === 409 && d?.error?.details?.customerProfiles?.length) {
+          setDeliveryProfiles(d.error.details.customerProfiles);
+        }
+        throw new Error(d?.error?.message || 'Failed');
+      }
+      const orderData = await orderRes.json();
+      try {
+        const configRes = await apiFetch('/api/admin/config');
+        const cfg = configRes.ok ? await configRes.json() : {};
+        const rawItems = orderData.items as Array<{
+          unitPrice: number;
+          quantity: number;
+          selectedOptions?: { extraPrice?: number }[];
+        }>;
+        const itemGross = rawItems.reduce((s, i) => {
+          const ox = (i.selectedOptions || []).reduce((a, o) => a + (o.extraPrice || 0), 0);
+          return s + (i.unitPrice + ox) * i.quantity;
+        }, 0);
+        const disc =
+          (orderData.appliedBundles as Array<{ discount: number }> | undefined)?.reduce((a, b) => a + b.discount, 0) ??
+          0;
+        const receiptData = {
+          checkoutId: orderData._id,
+          type: 'seat' as const,
+          totalAmount: itemGross - disc,
+          paymentMethod: 'cash' as const,
+          checkedOutAt: new Date().toISOString(),
+          orders: [
+            {
+              _id: orderData._id,
+              type: 'delivery' as const,
+              dailyOrderNumber: orderData.dailyOrderNumber,
+              status: 'pending',
+              items: orderData.items,
+              customerName:
+                typeof orderData.customerName === 'string' && orderData.customerName.trim()
+                  ? orderData.customerName.trim()
+                  : deliveryCustomerName.trim(),
+              customerPhone:
+                typeof orderData.customerPhone === 'string' && orderData.customerPhone.trim()
+                  ? orderData.customerPhone.trim()
+                  : deliveryCustomerPhone.trim(),
+              deliveryAddress:
+                typeof orderData.deliveryAddress === 'string' && orderData.deliveryAddress.trim()
+                  ? orderData.deliveryAddress.trim()
+                  : deliveryAddress.trim(),
+              postalCode:
+                typeof orderData.postalCode === 'string' && orderData.postalCode.trim()
+                  ? orderData.postalCode.trim()
+                  : deliveryPostalCode.trim(),
+            },
+          ],
+        };
+        const html = buildReceiptHTML(
+          receiptData,
+          cfg,
+          undefined,
+          undefined,
+          matchedBundles.length > 0
+            ? matchedBundles.map((b) => ({ name: b.offer.name, nameEn: b.offer.nameEn, discount: b.savings }))
+            : undefined,
+        );
+        printViaIframe(html, 1);
+      } catch {
+        /* print error ignored */
+      }
+      setPhoneOrderId(orderData._id);
+      setOrder([]);
+      setDeliveryCustomerName('');
+      setDeliveryCustomerPhone('');
+      setDeliveryAddress('');
+      setDeliveryPostalCode('');
+      setDeliveryCustomerProfileId('');
+      setDeliveryProfiles([]);
+      setDeliveryCustomerCollapsed(false);
+      setFrequentItems([]);
+      setFrequentItemsExpanded(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed');
     } finally {
@@ -696,6 +1116,7 @@ export default function CashierOrder() {
 
   const handleOpenPayment = () => {
     if (order.length === 0) return;
+    if (orderType === 'delivery') return;
     setPayingTotal(finalTotal);
     setCashReceived('');
     setPaymentMethod('cash');
@@ -710,6 +1131,14 @@ export default function CashierOrder() {
     if (order.length === 0) return;
     if (orderType === 'phone') {
       await handlePhoneOrder();
+      return;
+    }
+    if (orderType === 'delivery') {
+      if (!canDelivery) {
+        setError(t('cashier.deliveryNotEnabledPlan'));
+        return;
+      }
+      await handleDeliveryPhoneOrder();
       return;
     }
     if (orderType === 'dine_in') {
@@ -729,6 +1158,10 @@ export default function CashierOrder() {
   const changeAmount = paymentMethod === 'cash' ? Math.max(0, cashReceivedNum - amountAfterCoupon) : 0;
 
   const handlePay = async () => {
+    if (orderType === 'delivery') {
+      setShowPayment(false);
+      return;
+    }
     setPaying(true);
     setError('');
     try {
@@ -909,12 +1342,255 @@ export default function CashierOrder() {
           <button className="btn btn-ghost" style={{ fontSize: 12 }} onClick={clearOrder}>清空</button>
         </div>
         <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)' }}>
-          <div style={{ display: 'flex', gap: 6 }}>
-            <button className="btn" onClick={() => switchOrderType('dine_in')} style={{ flex: 1, fontSize: 12, padding: '6px 0', background: orderType === 'dine_in' ? 'var(--red-primary)' : 'var(--bg)', color: orderType === 'dine_in' ? '#fff' : 'var(--text-secondary)', border: '1px solid var(--border)' }}>堂食</button>
-            <button className="btn" onClick={() => switchOrderType('takeout')} style={{ flex: 1, fontSize: 12, padding: '6px 0', background: orderType === 'takeout' ? 'var(--red-primary)' : 'var(--bg)', color: orderType === 'takeout' ? '#fff' : 'var(--text-secondary)', border: '1px solid var(--border)' }}>外卖</button>
-            <button className="btn" onClick={() => switchOrderType('phone')} style={{ flex: 1, fontSize: 12, padding: '6px 0', background: orderType === 'phone' ? 'var(--red-primary)' : 'var(--bg)', color: orderType === 'phone' ? '#fff' : 'var(--text-secondary)', border: '1px solid var(--border)' }}>📞 电话</button>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => switchOrderType('dine_in')}
+              style={{
+                flex: '1 1 30%',
+                minWidth: 72,
+                fontSize: 12,
+                padding: '6px 0',
+                background: orderType === 'dine_in' ? 'var(--red-primary)' : 'var(--bg)',
+                color: orderType === 'dine_in' ? '#fff' : 'var(--text-secondary)',
+                border: '1px solid var(--border)',
+              }}
+            >
+              堂食
+            </button>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => switchOrderType('takeout')}
+              style={{
+                flex: '1 1 30%',
+                minWidth: 72,
+                fontSize: 12,
+                padding: '6px 0',
+                background: orderType === 'takeout' ? 'var(--red-primary)' : 'var(--bg)',
+                color: orderType === 'takeout' ? '#fff' : 'var(--text-secondary)',
+                border: '1px solid var(--border)',
+              }}
+            >
+              外卖
+            </button>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => switchOrderType('phone')}
+              style={{
+                flex: '1 1 30%',
+                minWidth: 72,
+                fontSize: 12,
+                padding: '6px 0',
+                background: orderType === 'phone' ? 'var(--red-primary)' : 'var(--bg)',
+                color: orderType === 'phone' ? '#fff' : 'var(--text-secondary)',
+                border: '1px solid var(--border)',
+              }}
+            >
+              📞 电话
+            </button>
+            {canDelivery ? (
+              <button
+                type="button"
+                className="btn"
+                onClick={() => switchOrderType('delivery')}
+                style={{
+                  flex: '1 1 30%',
+                  minWidth: 72,
+                  fontSize: 12,
+                  padding: '6px 0',
+                  background: orderType === 'delivery' ? 'var(--red-primary)' : 'var(--bg)',
+                  color: orderType === 'delivery' ? '#fff' : 'var(--text-secondary)',
+                  border: '1px solid var(--border)',
+                }}
+              >
+                {t('cashier.orderTypeDelivery')}
+              </button>
+            ) : null}
           </div>
         </div>
+
+        {orderType === 'delivery' && deliveryCustomerCollapsed ? (
+          <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)', background: 'var(--bg)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+              <span style={{ fontSize: 12, fontWeight: 700 }}>{t('cashier.deliverySummaryTitle')}</span>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                style={{ fontSize: 11, padding: '2px 8px' }}
+                onClick={() => setDeliveryCustomerCollapsed(false)}
+              >
+                {t('cashier.deliveryEditCustomer')}
+              </button>
+            </div>
+            <div style={{ display: 'grid', gap: 4, fontSize: 12 }}>
+              <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', lineHeight: 1.35 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{ color: 'var(--text-light)', fontSize: 11 }}>{t('cashier.deliverySummaryName')}</span>{' '}
+                  <span style={{ fontWeight: 600, wordBreak: 'break-word' }}>
+                    {deliveryCustomerName.trim() || t('cashier.profileAddressDash')}
+                  </span>
+                </div>
+                <div
+                  style={{ width: 1, alignSelf: 'stretch', minHeight: 28, background: 'var(--border)', flexShrink: 0 }}
+                  aria-hidden
+                />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{ color: 'var(--text-light)', fontSize: 11 }}>{t('cashier.deliverySummaryPhone')}</span>{' '}
+                  <span style={{ fontWeight: 600, wordBreak: 'break-all' }}>
+                    {deliveryCustomerPhone.trim() || t('cashier.profileAddressDash')}
+                  </span>
+                </div>
+              </div>
+              <div style={{ lineHeight: 1.35 }}>
+                <span style={{ color: 'var(--text-light)', fontSize: 11 }}>{t('cashier.deliverySummaryAddress')}</span>{' '}
+                <span style={{ fontWeight: 600, wordBreak: 'break-word' }}>
+                  {deliveryAddress.trim() || t('cashier.profileAddressDash')}
+                </span>
+              </div>
+            </div>
+            <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border)' }}>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => setFrequentItemsExpanded((v) => !v)}
+                style={{
+                  width: '100%',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  fontSize: 11,
+                  fontWeight: 600,
+                  padding: '4px 0',
+                  textAlign: 'left',
+                  border: 'none',
+                  background: 'transparent',
+                  cursor: 'pointer',
+                  color: 'var(--text-secondary)',
+                }}
+              >
+                <span>{t('cashier.frequentItemsTitle', { days: FREQUENT_LOOKBACK_DAYS })}</span>
+                <span style={{ fontSize: 10, opacity: 0.7 }} aria-hidden>
+                  {frequentItemsExpanded ? '▲' : '▼'}
+                </span>
+              </button>
+              {frequentItemsExpanded ? (
+                <div style={{ marginTop: 4 }}>
+                  <div style={{ fontSize: 10, color: 'var(--text-light)', marginBottom: 6, lineHeight: 1.35 }}>
+                    {t('cashier.frequentItemsHint')}
+                  </div>
+                  {frequentItemsLoading ? (
+                    <div style={{ fontSize: 11, color: 'var(--text-light)' }}>{t('cashier.frequentItemsLoading')}</div>
+                  ) : frequentItems.length === 0 ? (
+                    <div style={{ fontSize: 11, color: 'var(--text-light)' }}>{t('cashier.frequentItemsEmpty')}</div>
+                  ) : (
+                    <ol style={{ margin: 0, paddingLeft: 18, fontSize: 11, lineHeight: 1.45 }}>
+                      {frequentItems.map((row) => {
+                        const label =
+                          lang.startsWith('zh') || !row.itemNameEn?.trim() ? row.itemName : row.itemNameEn;
+                        return (
+                          <li key={row.menuItemId} style={{ marginBottom: 3 }}>
+                            <span style={{ fontWeight: 600 }}>{label}</span>
+                            <span style={{ color: 'var(--text-light)', marginLeft: 4 }}>
+                              {t('cashier.frequentItemsCount', { count: row.orderCount })}
+                            </span>
+                          </li>
+                        );
+                      })}
+                    </ol>
+                  )}
+                </div>
+              ) : null}
+            </div>
+            <div style={{ marginTop: 10, paddingTop: 8, borderTop: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 11, color: 'var(--text-light)', marginBottom: 6, fontWeight: 600 }}>
+                {t('cashier.deliveryMapInfoTitle')}
+              </div>
+              <div style={{ fontSize: 12, marginBottom: 6 }}>
+                <span style={{ color: 'var(--text-light)', fontSize: 11 }}>{t('cashier.deliverySummaryEircode')}</span>{' '}
+                <span style={{ fontWeight: 600 }}>{deliveryPostalCode.trim() || t('cashier.profileAddressDash')}</span>
+              </div>
+              {renderDeliveryGeoSection()}
+            </div>
+          </div>
+        ) : null}
+        {orderType === 'delivery' && !deliveryCustomerCollapsed ? (
+          <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)', display: 'grid', gap: 6 }}>
+            <input
+              className="input"
+              placeholder={t('cashier.deliveryPhonePlaceholder')}
+              value={deliveryCustomerPhone}
+              onChange={(e) => {
+                deliveryPhoneRef.current = e.target.value;
+                setDeliveryCustomerPhone(e.target.value);
+                setDeliveryCustomerProfileId('');
+                setDeliveryCustomerCollapsed(false);
+              }}
+              onBlur={(e) => void runMemberDeliveryLookup(e.currentTarget.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  const el = e.target as HTMLInputElement;
+                  void runMemberDeliveryLookup(el.value);
+                  el.blur();
+                }
+              }}
+            />
+            <input
+              className="input"
+              placeholder={t('cashier.deliveryCustomerNamePlaceholder')}
+              value={deliveryCustomerName}
+              onChange={(e) => setDeliveryCustomerName(e.target.value)}
+            />
+            {deliveryProfiles.length > 0 ? (
+              <div>
+                <label style={{ fontSize: 11, color: 'var(--text-light)', display: 'block', marginBottom: 4 }}>
+                  {t('cashier.deliveryProfileLabel')}
+                </label>
+                <select
+                  className="input"
+                  style={{ width: '100%', fontSize: 13 }}
+                  value={deliveryCustomerProfileId}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setDeliveryCustomerProfileId(v);
+                    if (v) {
+                      const p = deliveryProfiles.find((x) => x._id === v);
+                      if (p) {
+                        if (p.customerName) setDeliveryCustomerName(p.customerName);
+                        if (p.deliveryAddress) setDeliveryAddress(p.deliveryAddress);
+                        if (p.postalCode) setDeliveryPostalCode(p.postalCode);
+                      }
+                    }
+                  }}
+                >
+                  <option value="">{t('cashier.deliveryProfileAutoOption')}</option>
+                  {deliveryProfiles.map((p) => (
+                    <option key={p._id} value={p._id}>
+                      {p.deliveryAddress || t('cashier.profileAddressDash')} ·{' '}
+                      {p.postalCode || t('cashier.profileAddressDash')}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
+            <input
+              className="input"
+              placeholder={t('cashier.deliveryEircodePlaceholder')}
+              value={deliveryPostalCode}
+              onChange={(e) => setDeliveryPostalCode(e.target.value)}
+              autoCapitalize="characters"
+            />
+            <input
+              className="input"
+              placeholder={t('cashier.deliveryAddressPlaceholder')}
+              value={deliveryAddress}
+              onChange={(e) => setDeliveryAddress(e.target.value)}
+            />
+            {renderDeliveryGeoSection()}
+          </div>
+        ) : null}
 
         {orderType === 'dine_in' && dineInWorkflowMode === 'pay_after' && (
           <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -1128,7 +1804,7 @@ export default function CashierOrder() {
               {bundleTotals.bundleDiscount > 0 && (
                 <div style={{ fontSize: 12, color: 'var(--text-light)', textDecoration: 'line-through' }}>€{totalAmount.toFixed(2)}</div>
               )}
-              <span style={{ fontSize: 22, fontWeight: 700, color: 'var(--red-primary)', fontFamily: "'Noto Serif SC', serif" }}>€{finalTotal.toFixed(2)}</span>
+              <span style={{ fontSize: 22, fontWeight: 700, color: 'var(--red-primary)', fontFamily: "'Noto Serif SC', serif" }}>€{displayTotal.toFixed(2)}</span>
             </div>
           </div>
           <button
@@ -1139,9 +1815,11 @@ export default function CashierOrder() {
           >
             {orderType === 'phone'
               ? t('cashier.createPhoneOrder')
-              : orderType === 'dine_in' && dineInWorkflowMode === 'pay_after'
-                ? t('cashier.submitDineInPayAfter')
-                : t('cashier.placeOrderCheckout')}
+              : orderType === 'delivery'
+                ? t('cashier.placeOrderCheckout')
+                : orderType === 'dine_in' && dineInWorkflowMode === 'pay_after'
+                  ? t('cashier.submitDineInPayAfter')
+                  : t('cashier.placeOrderCheckout')}
           </button>
         </div>
       </div>

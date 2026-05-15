@@ -30,7 +30,8 @@ import { requireFeature } from './middleware/featureAccess';
 import { FeatureKeys } from './utils/featureCatalog';
 import { storeIoRoom } from './socketRooms';
 
-dotenv.config();
+/** 始终从 backend/.env 加载，避免从仓库根目录或其它 cwd 启动时读不到 GoogleGeo 等变量 */
+dotenv.config({ path: path.resolve(__dirname, '..', '.env') });
 
 const app = express();
 const server = http.createServer(app);
