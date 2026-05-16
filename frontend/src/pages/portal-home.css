@@ -248,7 +248,8 @@
 .portal-light-main {
   max-width: 1100px;
   margin: 0 auto;
-  padding: 48px 24px 80px;
+  padding: 48px max(24px, env(safe-area-inset-left, 0px)) calc(80px + env(safe-area-inset-bottom, 0px))
+    max(24px, env(safe-area-inset-right, 0px));
 }
 
 .portal-light-hero {
@@ -720,6 +721,212 @@
   font-size: 12px;
   color: var(--portal-muted);
   line-height: 1.5;
+}
+
+/* ── 手机 / 小号竖屏（≤639px）：顶栏单列、横向导航、主按钮满宽 ── */
+@media (max-width: 639px) {
+  .portal-light-main {
+    padding: 28px max(16px, env(safe-area-inset-left, 0px)) calc(56px + env(safe-area-inset-bottom, 0px))
+      max(16px, env(safe-area-inset-right, 0px));
+  }
+
+  .portal-light-header {
+    padding: max(8px, env(safe-area-inset-top, 0px)) max(12px, env(safe-area-inset-right, 0px)) 8px
+      max(12px, env(safe-area-inset-left, 0px));
+    gap: 8px;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .portal-light-brand {
+    width: 100%;
+    justify-content: flex-start;
+    min-height: auto;
+    height: auto;
+    padding-right: 0;
+  }
+
+  .portal-light-logo-wrap {
+    height: 44px;
+  }
+
+  .portal-light-logo-img {
+    height: 40px !important;
+    max-width: min(200px, 52vw);
+    width: auto;
+  }
+
+  .portal-light-brand-text strong {
+    font-size: 14px;
+  }
+
+  /* 横滑导航，不换行扎堆 */
+  .portal-light-nav {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    flex-wrap: nowrap;
+    gap: 2px;
+    padding-bottom: 2px;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    box-sizing: border-box;
+  }
+
+  .portal-light-nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .portal-light-nav a {
+    flex: 0 0 auto;
+    padding: 8px 8px;
+    font-size: 12px;
+  }
+
+  .portal-light-lang {
+    flex: 0 0 auto;
+  }
+
+  .portal-light-lang button {
+    padding: 6px 10px;
+  }
+
+  .portal-light-h1 {
+    font-size: clamp(1.375rem, 6.5vw, 2rem);
+    line-height: 1.18;
+    margin-bottom: 12px;
+  }
+
+  .portal-light-pill {
+    font-size: 11px;
+    padding: 5px 10px;
+    line-height: 1.35;
+    max-width: 100%;
+    white-space: normal;
+    hyphens: auto;
+  }
+
+  .portal-light-lead {
+    font-size: 15px;
+    max-width: none;
+    margin-bottom: 18px;
+  }
+
+  .portal-light-hero {
+    gap: 24px;
+    margin-bottom: 40px;
+  }
+
+  .portal-light-hero-cta {
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .portal-light-hero-cta .portal-light-btn {
+    width: 100%;
+    min-height: 48px;
+    box-sizing: border-box;
+    justify-content: center;
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .portal-light-preview {
+    padding: 16px;
+  }
+
+  .portal-light-preview-row {
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding: 10px;
+    font-size: 12px;
+  }
+
+  .portal-light-preview-row strong {
+    flex: 1 1 auto;
+    min-width: 0;
+    line-height: 1.35;
+  }
+
+  .portal-light-preview-tag {
+    flex-shrink: 0;
+    margin-left: auto;
+  }
+
+  /* 统计两行两列但更紧凑 */
+  .portal-light-stat {
+    padding: 14px 10px;
+  }
+
+  .portal-light-stat strong {
+    font-size: 18px;
+  }
+
+  .portal-light-stat span {
+    font-size: 12px;
+  }
+
+  .portal-light-stats {
+    gap: 10px;
+    margin-bottom: 40px;
+  }
+
+  .portal-light-benefits,
+  .portal-light-features,
+  .portal-light-plans,
+  .portal-light-steps {
+    margin-bottom: 48px;
+  }
+
+  .portal-light-section-head {
+    margin-bottom: 24px;
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  .portal-light-section-head p {
+    font-size: 15px;
+  }
+
+  .portal-light-plan .portal-light-btn {
+    width: 100%;
+    justify-content: center;
+    min-height: 48px;
+  }
+
+  .portal-light-contact-inner {
+    padding: 20px 16px;
+  }
+
+  .portal-light-auth-inner {
+    padding: 18px 14px;
+  }
+
+  .portal-light-email-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .portal-light-email-row .portal-light-btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  /* 注册 Tabs 小号屏略缩小字号避免挤版 */
+  .portal-light-auth-tabs button {
+    font-size: 13px;
+    padding: 10px 8px;
+  }
+}
+
+@media (max-width: 360px) {
+  .portal-light-nav a {
+    font-size: 11px;
+    padding: 8px 6px;
+  }
 }
 
 .portal-light-footer {
