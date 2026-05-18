@@ -32,12 +32,13 @@ function round2Euro(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+/** 单笔/整桌 seat 结账后订单终态：先付堂食全额结清 → completed；其余 → checked_out */
 async function finalizeSeatOrderCheckedOut(
   Order: mongoose.Model<any>,
   storeId: mongoose.Types.ObjectId,
   orderId: string,
   patch: { memberId?: mongoose.Types.ObjectId; memberPhoneSnapshot?: string; memberCreditUsed?: number },
-): Promise<void> {
+): Promise<'checked_out' | 'completed'> {
   const doc = await Order.findOne({ _id: orderId, storeId });
   if (!doc) {
     throw createAppError('NOT_FOUND', 'Order not found');
@@ -55,13 +56,43 @@ async function finalizeSeatOrderCheckedOut(
       }
     }
   }
-  doc.status = 'checked_out';
+  const dineInWf = await getDineInWorkflowModeForStore(storeId);
+  const payFirstDineInFullyClosed =
+    doc.type === 'dine_in' &&
+    dineInWf === 'pay_first' &&
+    computeDineInUnsettledPayableEuro(doc) <= 0.02 &&
+    !dineInHasUnsettledFoodLineQty(doc);
+
+  if (payFirstDineInFullyClosed) {
+    doc.status = 'completed';
+    doc.completedAt = new Date();
+  } else {
+    doc.status = 'checked_out';
+  }
   if (patch.memberId) {
     doc.memberId = patch.memberId;
     doc.memberPhoneSnapshot = patch.memberPhoneSnapshot ?? '';
     doc.memberCreditUsed = patch.memberCreditUsed ?? 0;
   }
   await doc.save();
+  return payFirstDineInFullyClosed ? 'completed' : 'checked_out';
+}
+
+function emitOrderAfterSeatFinalize(
+  io: SocketIOServer,
+  storeId: mongoose.Types.ObjectId,
+  order: { _id: mongoose.Types.ObjectId; tableNumber?: number },
+  terminalStatus: 'checked_out' | 'completed',
+  updatedLean?: unknown,
+): void {
+  if (terminalStatus === 'completed') {
+    io.to(storeIoRoom(storeId)).emit('order:updated', updatedLean ?? { orderId: order._id.toString(), status: 'completed' });
+    return;
+  }
+  io.to(storeIoRoom(storeId)).emit('order:checked-out', {
+    orderId: order._id.toString(),
+    tableNumber: order.tableNumber,
+  });
 }
 
 /** 重印小票 / 搜索：不展示 status 含 hide 的订单（与营业报表一致） */
@@ -207,7 +238,9 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
             }
           : {};
         for (const o of orders) {
-          await finalizeSeatOrderCheckedOut(Order, req.storeId!, o._id.toString(), memberPatch);
+          const terminalStatus = await finalizeSeatOrderCheckedOut(Order, req.storeId!, o._id.toString(), memberPatch);
+          const updatedLean = await Order.findOne({ _id: o._id, storeId: req.storeId }).lean();
+          emitOrderAfterSeatFinalize(io, req.storeId!, o, terminalStatus, updatedLean);
         }
       } catch (e) {
         if (mp.memberCreditUsed > 0 && mp.memberId) {
@@ -224,10 +257,6 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
         }
         await Checkout.deleteOne({ _id: checkout._id });
         throw e;
-      }
-
-      for (const order of orders) {
-        io.to(storeIoRoom(req.storeId!)).emit('order:checked-out', { orderId: order._id.toString(), tableNumber });
       }
 
       res.status(201).json(checkout);
@@ -407,8 +436,9 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
       }
 
       /** 与 Stripe 在线支付一致：QR 送餐预付款记为 checked_out，便于顾客端显示「已支付」与配送流程 */
+      let terminalStatus: 'checked_out' | 'completed' = 'checked_out';
       try {
-        await finalizeSeatOrderCheckedOut(
+        terminalStatus = await finalizeSeatOrderCheckedOut(
           Order,
           req.storeId!,
           orderId,
@@ -438,7 +468,8 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
         throw e;
       }
 
-      io.to(storeIoRoom(req.storeId!)).emit('order:checked-out', { orderId: order._id.toString(), tableNumber: order.tableNumber });
+      const updatedLean = await Order.findOne({ _id: orderId, storeId: req.storeId }).lean();
+      emitOrderAfterSeatFinalize(io, req.storeId!, order, terminalStatus, updatedLean);
 
       res.status(201).json(checkout);
     } catch (err) {

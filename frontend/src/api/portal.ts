@@ -1,5 +1,13 @@
 type ApiErrorBody = { error?: { message?: string; code?: string } };
 
+/** 门户注册/邮件链接用：当前页面站点根 URL */
+function portalPublicOrigin(): string | undefined {
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    return window.location.origin;
+  }
+  return undefined;
+}
+
 async function parsePortalResponse<T>(res: Response): Promise<T> {
   const text = await res.text();
   let body: unknown = null;
@@ -53,7 +61,7 @@ export async function completePortalRegistration(payload: {
   const res = await fetch('/api/public/portal/register/complete', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ ...payload, publicOrigin: portalPublicOrigin() }),
   });
   return parsePortalResponse<PortalRegisterResult>(res);
 }
@@ -77,7 +85,7 @@ export async function sendOwnerPasswordResetCode(slug: string, email: string): P
   const res = await fetch('/api/public/portal/password-reset/send-code', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ slug, email }),
+    body: JSON.stringify({ slug, email, publicOrigin: portalPublicOrigin() }),
   });
   await parsePortalResponse<{ ok: boolean }>(res);
 }
@@ -98,7 +106,7 @@ export async function completeOwnerPasswordReset(payload: {
   const res = await fetch('/api/public/portal/password-reset/complete', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ ...payload, publicOrigin: portalPublicOrigin() }),
   });
   return parsePortalResponse<OwnerPasswordResetResult>(res);
 }

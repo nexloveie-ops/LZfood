@@ -106,7 +106,7 @@ describe('POST /api/checkout/table/:tableNumber', () => {
     expect(res.body.orderIds).toHaveLength(2);
   });
 
-  it('should update all orders to checked_out', async () => {
+  it('should update all dine-in pay_first orders to completed after table checkout', async () => {
     const item = await createMenuItem({ price: 10 });
     const o1 = await createDineInOrder(3, 1, [{ id: item._id.toString(), qty: 1 }]);
     const o2 = await createDineInOrder(3, 2, [{ id: item._id.toString(), qty: 1 }]);
@@ -117,8 +117,9 @@ describe('POST /api/checkout/table/:tableNumber', () => {
 
     const updated1 = await Order.findById(o1._id);
     const updated2 = await Order.findById(o2._id);
-    expect(updated1!.status).toBe('checked_out');
-    expect(updated2!.status).toBe('checked_out');
+    expect(updated1!.status).toBe('completed');
+    expect(updated2!.status).toBe('completed');
+    expect(updated1!.completedAt).toBeDefined();
   });
 
   it('should support mixed payment with correct amounts', async () => {
@@ -205,7 +206,7 @@ describe('POST /api/checkout/seat/:orderId', () => {
     expect(res.body.orderIds).toHaveLength(1);
   });
 
-  it('should update order to checked_out', async () => {
+  it('should update pay_first dine-in order to completed after seat checkout', async () => {
     const item = await createMenuItem({ price: 15 });
     const order = await createDineInOrder(2, 1, [{ id: item._id.toString(), qty: 1 }]);
 
@@ -214,7 +215,8 @@ describe('POST /api/checkout/seat/:orderId', () => {
       .send({ paymentMethod: 'card' });
 
     const updated = await Order.findById(order._id);
-    expect(updated!.status).toBe('checked_out');
+    expect(updated!.status).toBe('completed');
+    expect(updated!.completedAt).toBeDefined();
   });
 
   it('should support mixed payment', async () => {

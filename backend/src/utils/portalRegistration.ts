@@ -4,6 +4,7 @@ import mongoose from 'mongoose';
 import { getModels } from '../getModels';
 import { sendMail } from './smtpMail';
 import { createAppError } from '../middleware/errorHandler';
+import { type PortalPublicOriginInput, resolvePortalPublicOrigin } from './portalPublicOrigin';
 
 export const PORTAL_SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
@@ -50,14 +51,6 @@ export type RegistrationSuccessDetails = {
   storeId: string;
   planLabel: string;
 };
-
-function portalPublicOrigin(): string {
-  const raw =
-    process.env.PORTAL_PUBLIC_ORIGIN?.trim() ||
-    process.env.QR_BASE_URL?.trim() ||
-    'http://localhost:5173';
-  return raw.replace(/\/$/, '');
-}
 
 function registrationNotifyEmail(): string {
   return (process.env.PORTAL_REGISTRATION_NOTIFY_EMAIL || DEFAULT_REGISTRATION_NOTIFY_EMAIL).trim();
@@ -116,8 +109,11 @@ export function buildRegistrationSuccessEmail(
   return { subject, text: textLines.join('\n'), html };
 }
 
-export async function sendRegistrationSuccessEmail(details: RegistrationSuccessDetails): Promise<void> {
-  const mail = buildRegistrationSuccessEmail(details, portalPublicOrigin());
+export async function sendRegistrationSuccessEmail(
+  details: RegistrationSuccessDetails,
+  originInput: PortalPublicOriginInput = {},
+): Promise<void> {
+  const mail = buildRegistrationSuccessEmail(details, resolvePortalPublicOrigin(originInput));
   const notify = registrationNotifyEmail();
   await sendMail({
     to: details.email,
@@ -232,6 +228,7 @@ export async function completePortalRegistration(input: {
   code: string;
   username: string;
   password: string;
+  portalOrigin?: PortalPublicOriginInput;
 }): Promise<{ slug: string; storeId: string }> {
   const email = await verifyRegistrationOtp(input.email, input.code);
   const slug = await assertSlugAvailable(input.slug);
@@ -286,14 +283,17 @@ export async function completePortalRegistration(input: {
 
     const result = { slug, storeId: storeDoc._id.toString() };
     try {
-      await sendRegistrationSuccessEmail({
-        displayName,
-        slug,
-        email,
-        username,
-        storeId: result.storeId,
-        planLabel: 'LZ Free (free-base)',
-      });
+      await sendRegistrationSuccessEmail(
+        {
+          displayName,
+          slug,
+          email,
+          username,
+          storeId: result.storeId,
+          planLabel: 'LZ Free (free-base)',
+        },
+        input.portalOrigin ?? {},
+      );
     } catch (mailErr) {
       console.error('Registration success email failed:', mailErr);
     }

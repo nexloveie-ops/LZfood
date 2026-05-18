@@ -4,6 +4,7 @@ import { getModels } from '../getModels';
 import { sendMail } from './smtpMail';
 import { createAppError } from '../middleware/errorHandler';
 import { generateOtpCode, normalizeEmail, normalizeSlug } from './portalRegistration';
+import { type PortalPublicOriginInput, resolvePortalPublicOrigin } from './portalPublicOrigin';
 
 const OTP_TTL_MS = 15 * 60 * 1000;
 const RESEND_COOLDOWN_MS = 60 * 1000;
@@ -13,22 +14,15 @@ function registrationNotifyEmail(): string {
   return (process.env.PORTAL_REGISTRATION_NOTIFY_EMAIL || DEFAULT_NOTIFY_EMAIL).trim();
 }
 
-function portalPublicOrigin(): string {
-  const raw =
-    process.env.PORTAL_PUBLIC_ORIGIN?.trim() ||
-    process.env.QR_BASE_URL?.trim() ||
-    'http://localhost:5173';
-  return raw.replace(/\/$/, '');
-}
-
 export function buildPasswordResetOtpEmail(input: {
   code: string;
   slug: string;
   displayName: string;
   email: string;
   username: string;
+  portalOrigin?: PortalPublicOriginInput;
 }): { subject: string; text: string; html: string } {
-  const loginPath = `${portalPublicOrigin()}/${input.slug}/login`;
+  const loginPath = `${resolvePortalPublicOrigin(input.portalOrigin ?? {})}/${input.slug}/login`;
   const subject = 'LZFood Password Reset Code / LZFood 重置密码验证码';
   const accountBlock =
     `Store name / 店铺名称: ${input.displayName}\n` +
@@ -78,8 +72,9 @@ export function buildPasswordResetSuccessEmail(input: {
   slug: string;
   email: string;
   username: string;
+  portalOrigin?: PortalPublicOriginInput;
 }): { subject: string; text: string; html: string } {
-  const loginPath = `${portalPublicOrigin()}/${input.slug}/login`;
+  const loginPath = `${resolvePortalPublicOrigin(input.portalOrigin ?? {})}/${input.slug}/login`;
   const subject = 'LZFood Password Updated / LZFood 密码已重置';
   const text =
     'Your store owner password has been updated. / 您的店铺管理员密码已重置。\n\n' +
@@ -160,7 +155,11 @@ async function resolveOwnerResetContext(
 }
 
 /** 发送重置验证码；无匹配店主时静默成功（防枚举） */
-export async function sendOwnerPasswordResetCode(slugRaw: string, emailRaw: string): Promise<void> {
+export async function sendOwnerPasswordResetCode(
+  slugRaw: string,
+  emailRaw: string,
+  portalOrigin: PortalPublicOriginInput = {},
+): Promise<void> {
   const ctx = await resolveOwnerResetContext(slugRaw, emailRaw);
   if (!ctx) {
     return;
@@ -200,6 +199,7 @@ export async function sendOwnerPasswordResetCode(slugRaw: string, emailRaw: stri
     displayName: ctx.displayName,
     email: ctx.email,
     username: ctx.ownerUsername,
+    portalOrigin,
   });
   await sendMail({
     to: ctx.email,
@@ -233,6 +233,7 @@ export async function completeOwnerPasswordReset(input: {
   email: string;
   code: string;
   newPassword: string;
+  portalOrigin?: PortalPublicOriginInput;
 }): Promise<{ slug: string; username: string }> {
   const ctx = await resolveOwnerResetContext(input.slug, input.email);
   if (!ctx) {
@@ -269,6 +270,7 @@ export async function completeOwnerPasswordReset(input: {
       slug: ctx.slug,
       email: ctx.email,
       username: ctx.ownerUsername,
+      portalOrigin: input.portalOrigin ?? {},
     });
     await sendMail({
       to: ctx.email,

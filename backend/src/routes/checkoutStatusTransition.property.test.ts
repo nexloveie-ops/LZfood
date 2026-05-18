@@ -16,7 +16,7 @@ import { Checkout } from '../models/Checkout';
 /**
  * Feature: restaurant-ordering-system, Property 8: 结账后订单状态流转
  *
- * 结账后所有关联订单状态应变为 checked_out。
+ * 结账后所有关联订单：默认先付堂食 → completed；后结等 → checked_out。
  *
  * **Validates: Requirements 4.5**
  */
@@ -86,7 +86,7 @@ const checkoutScenarioArb = fc.record({
 // --- Tests ---
 
 describe('Feature: restaurant-ordering-system, Property 8: 结账后订单状态流转', () => {
-  it('after checkout, all associated orders should have status checked_out', async () => {
+  it('after checkout, pay_first dine-in orders should be completed', async () => {
     await fc.assert(
       fc.asyncProperty(checkoutScenarioArb, async ({ tableNumber, seats, paymentMethod, useTableCheckout }) => {
         // 1. Create category and menu item
@@ -142,10 +142,11 @@ describe('Feature: restaurant-ordering-system, Property 8: 结账后订单状态
           }
         }
 
-        // 5. Property: all orders should now be checked_out
+        // 5. Property: default pay_first dine-in → completed (flow ended)
         for (const id of orderIds) {
           const order = await Order.findById(id);
-          expect(order!.status).toBe('checked_out');
+          expect(order!.status).toBe('completed');
+          expect(order!.completedAt).toBeDefined();
         }
 
         // Cleanup

@@ -36,7 +36,9 @@ export default function MemberManager() {
   const [members, setMembers] = useState<MemberRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<MemberRow | null>(null);
+  const [rechargeMode, setRechargeMode] = useState<'amount' | 'target'>('amount');
   const [rechargeAmount, setRechargeAmount] = useState('');
+  const [rechargeTarget, setRechargeTarget] = useState('');
   const [rechargeNote, setRechargeNote] = useState('');
   const [msg, setMsg] = useState('');
   const [msgOk, setMsgOk] = useState(false);
@@ -104,19 +106,89 @@ export default function MemberManager() {
     return lbl === key ? type : lbl;
   };
 
-  const doRecharge = async () => {
-    if (!selected) return;
+  const targetPreview = (() => {
+    if (!selected || rechargeMode !== 'target') return null;
+    const target = parseFloat(rechargeTarget);
+    if (!Number.isFinite(target) || target < 0) return null;
+    const current = Number(selected.creditBalance) || 0;
+    const delta = Math.round((target - current) * 100) / 100;
+    return { current, target, delta };
+  })();
+
+  const memberRechargeLabel = (m: MemberRow) =>
+    `#${m.memberNo} · ${m.phone}${m.displayName ? ` · ${m.displayName}` : ''}`;
+
+  const confirmRecharge = (): boolean => {
+    if (!selected) return false;
+    if (rechargeMode === 'target') {
+      const target = parseFloat(rechargeTarget);
+      if (!Number.isFinite(target) || target < 0) {
+        setMsg(t('admin.memberRechargeTargetInvalid', '请输入有效的目标余额'));
+        setMsgOk(false);
+        return false;
+      }
+      const current = Number(selected.creditBalance) || 0;
+      const delta = Math.round((target - current) * 100) / 100;
+      let detail: string;
+      if (delta > 0) {
+        detail = t('admin.memberRechargeConfirmTargetUp', '将充值 €{{a}}，余额 €{{c}} → €{{t}}', {
+          a: delta.toFixed(2),
+          c: current.toFixed(2),
+          t: target.toFixed(2),
+        });
+      } else if (delta < 0) {
+        detail = t('admin.memberRechargeConfirmTargetDown', '将扣减 €{{a}}，余额 €{{c}} → €{{t}}', {
+          a: (-delta).toFixed(2),
+          c: current.toFixed(2),
+          t: target.toFixed(2),
+        });
+      } else {
+        detail = t('admin.memberRechargeConfirmTargetSame', '余额已是 €{{t}}，确认后不变', {
+          t: target.toFixed(2),
+        });
+      }
+      return window.confirm(
+        `${t('admin.memberRechargeConfirmTitle', '请再次核对充值信息')}\n\n${memberRechargeLabel(selected)}\n${detail}`,
+      );
+    }
     const amt = parseFloat(rechargeAmount);
     if (!Number.isFinite(amt) || amt <= 0) {
       setMsg(t('admin.memberRechargeInvalid', '请输入有效充值金额'));
-      return;
+      setMsgOk(false);
+      return false;
     }
+    return window.confirm(
+      `${t('admin.memberRechargeConfirmTitle', '请再次核对充值信息')}\n\n${memberRechargeLabel(selected)}\n${t('admin.memberRechargeConfirmAmount', '将充值 €{{a}}', { a: amt.toFixed(2) })}`,
+    );
+  };
+
+  const doRecharge = async () => {
+    if (!selected) return;
+    if (!confirmRecharge()) return;
     setMsg('');
     setMsgOk(false);
+
+    let body: { amountEuro?: number; targetBalanceEuro?: number; note?: string };
+    const noteTrim = rechargeNote.trim();
+
+    if (rechargeMode === 'target') {
+      const target = parseFloat(rechargeTarget);
+      body = {
+        targetBalanceEuro: target,
+        ...(noteTrim ? { note: noteTrim } : {}),
+      };
+    } else {
+      const amt = parseFloat(rechargeAmount);
+      body = {
+        amountEuro: amt,
+        note: noteTrim || t('admin.memberRechargeDefaultNote', '后台充值'),
+      };
+    }
+
     const res = await apiFetch(`/api/admin/members/${selected._id}/recharge`, {
       method: 'POST',
       headers: { ...authH, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ amountEuro: amt, note: rechargeNote.trim() || t('admin.memberRechargeDefaultNote', '后台充值') }),
+      body: JSON.stringify(body),
     });
     const d = await res.json().catch(() => null);
     if (!res.ok) {
@@ -124,10 +196,35 @@ export default function MemberManager() {
       return;
     }
     setRechargeAmount('');
+    setRechargeTarget('');
     setRechargeNote('');
     setSelected(null);
     setMsgOk(true);
-    setMsg(t('admin.memberRechargeOk', '充值成功，当前余额 €{{b}}', { b: Number(d.creditBalance).toFixed(2) }));
+    const credited = Number(d.creditedEuro) || 0;
+    const debited = Number(d.debitedEuro) || 0;
+    if (rechargeMode === 'target' && debited > 0) {
+      setMsg(
+        t('admin.memberRechargeTargetDebitOk', '已扣减 €{{a}}，当前余额 €{{b}}', {
+          a: debited.toFixed(2),
+          b: Number(d.creditBalance).toFixed(2),
+        }),
+      );
+    } else if (rechargeMode === 'target' && credited <= 0 && debited <= 0) {
+      setMsg(
+        t('admin.memberRechargeTargetNoChangeOk', '余额未变，当前 €{{b}}', {
+          b: Number(d.creditBalance).toFixed(2),
+        }),
+      );
+    } else if (rechargeMode === 'target' && credited > 0) {
+      setMsg(
+        t('admin.memberRechargeTargetOk', '已充值 €{{a}}，当前余额 €{{b}}', {
+          a: credited.toFixed(2),
+          b: Number(d.creditBalance).toFixed(2),
+        }),
+      );
+    } else {
+      setMsg(t('admin.memberRechargeOk', '充值成功，当前余额 €{{b}}', { b: Number(d.creditBalance).toFixed(2) }));
+    }
     fetchMembers();
   };
 
@@ -250,6 +347,10 @@ export default function MemberManager() {
                       onClick={(e) => {
                         e.stopPropagation();
                         setSelected(m);
+                        setRechargeMode('amount');
+                        setRechargeAmount('');
+                        setRechargeTarget('');
+                        setRechargeNote('');
                         setMsg('');
                       }}
                     >
@@ -277,8 +378,57 @@ export default function MemberManager() {
                 <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 8 }}>
                   {t('member.balance')}: €{Number(selected.creditBalance).toFixed(2)}
                 </div>
-                <label style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>{t('admin.memberRechargeAmount', '金额 (€)')}</label>
-                <input className="input" type="number" step="0.01" min="0.01" value={rechargeAmount} onChange={(e) => setRechargeAmount(e.target.value)} style={{ width: '100%', marginBottom: 10 }} />
+                <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+                  <button
+                    type="button"
+                    className={rechargeMode === 'amount' ? 'btn btn-primary' : 'btn btn-outline'}
+                    style={{ flex: 1, fontSize: 12, padding: '6px 8px' }}
+                    onClick={() => setRechargeMode('amount')}
+                  >
+                    {t('admin.memberRechargeModeAmount', '按金额')}
+                  </button>
+                  <button
+                    type="button"
+                    className={rechargeMode === 'target' ? 'btn btn-primary' : 'btn btn-outline'}
+                    style={{ flex: 1, fontSize: 12, padding: '6px 8px' }}
+                    onClick={() => setRechargeMode('target')}
+                  >
+                    {t('admin.memberRechargeModeTarget', '至目标余额')}
+                  </button>
+                </div>
+                <p style={{ fontSize: 11, color: 'var(--text-light)', margin: '0 0 10px', lineHeight: 1.4 }}>
+                  {t('admin.memberRechargeTargetHint', '输入目标余额：高于当前则充值，低于当前则扣减。提交前请仔细核对。')}
+                </p>
+                {rechargeMode === 'amount' ? (
+                  <>
+                    <label style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>{t('admin.memberRechargeAmount', '金额 (€)')}</label>
+                    <input className="input" type="number" step="0.01" min="0.01" value={rechargeAmount} onChange={(e) => setRechargeAmount(e.target.value)} style={{ width: '100%', marginBottom: 10 }} />
+                  </>
+                ) : (
+                  <>
+                    <label style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>{t('admin.memberRechargeTargetBalance', '目标余额 (€)')}</label>
+                    <input className="input" type="number" step="0.01" min="0" value={rechargeTarget} onChange={(e) => setRechargeTarget(e.target.value)} style={{ width: '100%', marginBottom: 8 }} />
+                    {targetPreview ? (
+                      <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 10, lineHeight: 1.45 }}>
+                        {targetPreview.delta > 0
+                          ? t('admin.memberRechargeTargetPreview', '将充值 €{{a}}（€{{c}} → €{{t}}）', {
+                              a: targetPreview.delta.toFixed(2),
+                              c: targetPreview.current.toFixed(2),
+                              t: targetPreview.target.toFixed(2),
+                            })
+                          : targetPreview.delta < 0
+                            ? t('admin.memberRechargeTargetPreviewDown', '将扣减 €{{a}}（€{{c}} → €{{t}}）', {
+                                a: (-targetPreview.delta).toFixed(2),
+                                c: targetPreview.current.toFixed(2),
+                                t: targetPreview.target.toFixed(2),
+                              })
+                            : t('admin.memberRechargeTargetPreviewSame', '余额已是 €{{t}}，确认后不变', {
+                                t: targetPreview.target.toFixed(2),
+                              })}
+                      </div>
+                    ) : null}
+                  </>
+                )}
                 <label style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>{t('admin.memberRechargeNote', '备注')}</label>
                 <input className="input" value={rechargeNote} onChange={(e) => setRechargeNote(e.target.value)} style={{ width: '100%', marginBottom: 12 }} />
                 <button type="button" className="btn btn-primary" style={{ width: '100%' }} onClick={doRecharge}>

@@ -255,8 +255,20 @@ router.post('/finalize', async (req: Request, res: Response, next: NextFunction)
         }
       }
     }
-    order.status = 'checked_out';
+    const payFirstDineInFullyClosed =
+      order.type === 'dine_in' &&
+      wfFin === 'pay_first' &&
+      computeDineInUnsettledPayableEuro(order) <= 0.02 &&
+      !dineInHasUnsettledFoodLineQty(order);
+    if (payFirstDineInFullyClosed) {
+      order.status = 'completed';
+      order.completedAt = new Date();
+    } else {
+      order.status = 'checked_out';
+    }
     await order.save();
+
+    io.to(storeIoRoom(req.storeId!)).emit('order:updated', order);
 
     res.json({ message: 'Order finalized', checkoutId: checkout._id, totalAmount });
   } catch (err: unknown) {

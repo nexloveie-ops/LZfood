@@ -4,6 +4,7 @@ import {
   completeOwnerPasswordReset,
   sendOwnerPasswordResetCode,
 } from '../utils/portalPasswordReset';
+import { portalOriginInputFromRequest } from '../utils/portalPublicOrigin';
 import {
   assertSlugAvailable,
   completePortalRegistration,
@@ -61,13 +62,14 @@ router.post('/register/send-code', async (req: Request, res: Response, next: Nex
 /** POST /api/public/portal/register/complete */
 router.post('/register/complete', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { displayName, slug, email, code, username, password } = req.body as {
+    const { displayName, slug, email, code, username, password, publicOrigin } = req.body as {
       displayName?: string;
       slug?: string;
       email?: string;
       code?: string;
       username?: string;
       password?: string;
+      publicOrigin?: string;
     };
     if (!displayName || !slug || !email || !code || !username || !password) {
       throw createAppError('VALIDATION_ERROR', '请填写完整注册信息');
@@ -79,6 +81,7 @@ router.post('/register/complete', async (req: Request, res: Response, next: Next
       code,
       username,
       password,
+      portalOrigin: portalOriginInputFromRequest(req, { publicOrigin }),
     });
     res.status(201).json({
       ...result,
@@ -92,11 +95,19 @@ router.post('/register/complete', async (req: Request, res: Response, next: Next
 /** POST /api/public/portal/password-reset/send-code  { slug, email } */
 router.post('/password-reset/send-code', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { slug, email } = req.body as { slug?: string; email?: string };
+    const { slug, email, publicOrigin } = req.body as {
+      slug?: string;
+      email?: string;
+      publicOrigin?: string;
+    };
     if (!slug || typeof slug !== 'string' || !email || typeof email !== 'string') {
       throw createAppError('VALIDATION_ERROR', '店铺 slug 与邮箱必填');
     }
-    await sendOwnerPasswordResetCode(slug, email);
+    await sendOwnerPasswordResetCode(
+      slug,
+      email,
+      portalOriginInputFromRequest(req, { publicOrigin }),
+    );
     res.json({
       ok: true,
       message:
@@ -110,16 +121,23 @@ router.post('/password-reset/send-code', async (req: Request, res: Response, nex
 /** POST /api/public/portal/password-reset/complete */
 router.post('/password-reset/complete', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { slug, email, code, newPassword } = req.body as {
+    const { slug, email, code, newPassword, publicOrigin } = req.body as {
       slug?: string;
       email?: string;
       code?: string;
       newPassword?: string;
+      publicOrigin?: string;
     };
     if (!slug || !email || !code || !newPassword) {
       throw createAppError('VALIDATION_ERROR', '请填写完整信息');
     }
-    const result = await completeOwnerPasswordReset({ slug, email, code, newPassword });
+    const result = await completeOwnerPasswordReset({
+      slug,
+      email,
+      code,
+      newPassword,
+      portalOrigin: portalOriginInputFromRequest(req, { publicOrigin }),
+    });
     res.json({
       ok: true,
       ...result,

@@ -97,6 +97,26 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+/** 当前余额与目标余额差额（正=需充值，负=需扣减，0=已一致） */
+export function computeTargetBalanceDelta(
+  currentBalanceEuro: number,
+  targetBalanceEuro: number,
+): { deltaEuro: number; current: number; target: number } {
+  const current = round2(currentBalanceEuro);
+  const target = round2(targetBalanceEuro);
+  const deltaEuro = round2(target - current);
+  return { deltaEuro, current, target };
+}
+
+/** @deprecated 使用 computeTargetBalanceDelta */
+export function computeTopUpToTargetBalance(
+  currentBalanceEuro: number,
+  targetBalanceEuro: number,
+): { topUpEuro: number; current: number; target: number } {
+  const { deltaEuro, current, target } = computeTargetBalanceDelta(currentBalanceEuro, targetBalanceEuro);
+  return { topUpEuro: Math.max(0, deltaEuro), current, target };
+}
+
 type MemberDoc = {
   _id: mongoose.Types.ObjectId;
   pinHash: string;
@@ -224,6 +244,119 @@ export async function debitMemberWallet(params: {
   });
 
   return { balanceAfter, txnId: txn._id as mongoose.Types.ObjectId };
+}
+
+/** 后台扣减余额（调整类，不发送消费短信） */
+export async function debitMemberWalletAdjustment(params: {
+  Member: mongoose.Model<unknown>;
+  MemberWalletTxn: mongoose.Model<unknown>;
+  storeId: mongoose.Types.ObjectId;
+  memberId: mongoose.Types.ObjectId;
+  amountEuro: number;
+  note?: string;
+  operatorAdminId?: mongoose.Types.ObjectId;
+}): Promise<{ balanceAfter: number }> {
+  const amt = round2(params.amountEuro);
+  if (amt <= 0) throw createAppError('VALIDATION_ERROR', '扣减金额须大于 0');
+
+  const doc = (await params.Member.findOne({
+    _id: params.memberId,
+    storeId: params.storeId,
+    status: 'active',
+  }).lean()) as MemberDoc | null;
+  if (!doc) throw createAppError('NOT_FOUND', '会员不存在');
+  if (doc.creditBalance < amt - 1e-9) {
+    throw createAppError('VALIDATION_ERROR', '储值余额不足');
+  }
+
+  const updated = (await params.Member.findOneAndUpdate(
+    {
+      _id: params.memberId,
+      storeId: params.storeId,
+      status: 'active',
+      walletVersion: doc.walletVersion,
+      creditBalance: { $gte: amt },
+    },
+    { $inc: { creditBalance: -amt, walletVersion: 1 } },
+    { new: true },
+  ).lean()) as MemberDoc | null;
+
+  if (!updated) throw createAppError('CONFLICT', '余额或版本冲突，请重试');
+
+  const balanceBefore = round2(doc.creditBalance);
+  const balanceAfter = round2(updated.creditBalance);
+
+  await params.MemberWalletTxn.create({
+    storeId: params.storeId,
+    memberId: params.memberId,
+    type: 'adjustment',
+    amountEuro: -amt,
+    balanceBefore,
+    balanceAfter,
+    note: params.note || '',
+    operatorAdminId: params.operatorAdminId,
+  });
+
+  return { balanceAfter };
+}
+
+/** 将会员余额设为指定目标（高则充值，低则扣减，相同则无流水） */
+export async function applyMemberWalletToTargetBalance(params: {
+  Member: mongoose.Model<unknown>;
+  MemberWalletTxn: mongoose.Model<unknown>;
+  storeId: mongoose.Types.ObjectId;
+  memberId: mongoose.Types.ObjectId;
+  targetBalanceEuro: number;
+  note?: string;
+  operatorAdminId?: mongoose.Types.ObjectId;
+}): Promise<{ balanceAfter: number; deltaEuro: number }> {
+  const target = round2(params.targetBalanceEuro);
+  if (!Number.isFinite(target) || target < 0) {
+    throw createAppError('VALIDATION_ERROR', '目标余额无效');
+  }
+
+  const doc = (await params.Member.findOne({
+    _id: params.memberId,
+    storeId: params.storeId,
+    status: 'active',
+  }).lean()) as MemberDoc | null;
+  if (!doc) throw createAppError('NOT_FOUND', '会员不存在');
+
+  const { deltaEuro, current } = computeTargetBalanceDelta(doc.creditBalance, target);
+  if (Math.abs(deltaEuro) < 0.005) {
+    return { balanceAfter: current, deltaEuro: 0 };
+  }
+
+  const note =
+    params.note?.trim() ||
+    (deltaEuro > 0
+      ? `充值至目标余额 €${target.toFixed(2)}`
+      : `调整至目标余额 €${target.toFixed(2)}`);
+
+  if (deltaEuro > 0) {
+    const { balanceAfter } = await creditMemberWallet({
+      Member: params.Member,
+      MemberWalletTxn: params.MemberWalletTxn,
+      storeId: params.storeId,
+      memberId: params.memberId,
+      amountEuro: deltaEuro,
+      type: 'recharge',
+      note,
+      operatorAdminId: params.operatorAdminId,
+    });
+    return { balanceAfter, deltaEuro };
+  }
+
+  const { balanceAfter } = await debitMemberWalletAdjustment({
+    Member: params.Member,
+    MemberWalletTxn: params.MemberWalletTxn,
+    storeId: params.storeId,
+    memberId: params.memberId,
+    amountEuro: -deltaEuro,
+    note,
+    operatorAdminId: params.operatorAdminId,
+  });
+  return { balanceAfter, deltaEuro };
 }
 
 /** 入账（充值、冲正等） */

@@ -22,7 +22,7 @@ import {
 } from '../utils/stripeConfig';
 import { FeatureKeys, resolveStoreEffectiveFeatures } from '../utils/featureCatalog';
 import { requireFeature } from '../middleware/featureAccess';
-import { creditMemberWallet } from '../utils/memberWalletOps';
+import { applyMemberWalletToTargetBalance, creditMemberWallet } from '../utils/memberWalletOps';
 import {
   computeMemberCreditRefundGapEuro,
   round2Euro,
@@ -503,6 +503,7 @@ router.post(
 );
 
 // POST /api/admin/members/:memberId/recharge — 老板/有 config 权限：手动充值
+// body: { amountEuro } 或 { targetBalanceEuro }（二选一；后者将余额补至目标）
 router.post(
   '/members/:memberId/recharge',
   ...requireAuthSameStore,
@@ -516,33 +517,77 @@ router.post(
       if (!mongoose.Types.ObjectId.isValid(memberId)) {
         throw createAppError('VALIDATION_ERROR', 'Invalid member ID');
       }
-      const amount = Number(req.body.amountEuro);
-      if (!Number.isFinite(amount) || amount <= 0) {
-        throw createAppError('VALIDATION_ERROR', 'amountEuro 须为正数');
+
+      const body = req.body as { amountEuro?: unknown; targetBalanceEuro?: unknown; note?: string };
+      const hasAmount = body.amountEuro !== undefined && body.amountEuro !== null && body.amountEuro !== '';
+      const hasTarget =
+        body.targetBalanceEuro !== undefined &&
+        body.targetBalanceEuro !== null &&
+        body.targetBalanceEuro !== '';
+      if (hasAmount === hasTarget) {
+        throw createAppError(
+          'VALIDATION_ERROR',
+          '请填写 amountEuro（充值金额）或 targetBalanceEuro（目标余额）其一',
+        );
       }
-      const note = String(req.body.note || '后台充值').slice(0, 200);
+
       const adminId = req.user?.userId;
       const opId = adminId && mongoose.Types.ObjectId.isValid(adminId) ? new mongoose.Types.ObjectId(adminId) : undefined;
 
-      const member = await Member.findOne({
+      const member = (await Member.findOne({
         _id: memberId,
         storeId: req.storeId,
         status: 'active',
-      });
+      }).lean()) as { creditBalance?: number } | null;
       if (!member) throw createAppError('NOT_FOUND', '会员不存在');
+
+      const memberOid = new mongoose.Types.ObjectId(memberId);
+
+      let amount: number;
+      let note = String(body.note || '').trim().slice(0, 200);
+
+      if (hasTarget) {
+        const target = Number(body.targetBalanceEuro);
+        if (!Number.isFinite(target) || target < 0) {
+          throw createAppError('VALIDATION_ERROR', 'targetBalanceEuro 无效');
+        }
+        const { balanceAfter, deltaEuro } = await applyMemberWalletToTargetBalance({
+          Member,
+          MemberWalletTxn,
+          storeId: req.storeId!,
+          memberId: memberOid,
+          targetBalanceEuro: target,
+          note: note || undefined,
+          operatorAdminId: opId,
+        });
+        res.json({
+          ok: true,
+          creditBalance: balanceAfter,
+          creditedEuro: deltaEuro > 0 ? deltaEuro : 0,
+          debitedEuro: deltaEuro < 0 ? -deltaEuro : 0,
+          deltaEuro,
+        });
+        return;
+      } else {
+        amount = Number(body.amountEuro);
+        if (!Number.isFinite(amount) || amount <= 0) {
+          throw createAppError('VALIDATION_ERROR', 'amountEuro 须为正数');
+        }
+        if (!note) note = '后台充值';
+      }
 
       const { balanceAfter } = await creditMemberWallet({
         Member,
         MemberWalletTxn,
         storeId: req.storeId!,
-        memberId: new mongoose.Types.ObjectId(memberId),
+        memberId: memberOid,
         amountEuro: amount,
         type: 'recharge',
         note,
         operatorAdminId: opId,
       });
 
-      res.json({ ok: true, creditBalance: balanceAfter });
+      res.json({ ok: true, creditBalance: balanceAfter, creditedEuro: amount });
     } catch (err) {
       next(err);
     }
