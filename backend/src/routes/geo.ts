@@ -149,14 +149,12 @@ async function handleAddressGet(req: Request, res: Response, next: NextFunction)
       typeof req.query.customerProfileId === 'string' ? req.query.customerProfileId.trim() : '';
     if (profileIdRaw && mongoose.Types.ObjectId.isValid(profileIdRaw)) {
       const { CustomerProfile } = getModels();
-      const deliveryAddress = address;
-      const addressKey = normalizeDeliveryAddressKey(deliveryAddress, resolved.eircode);
+      const addressKey = normalizeDeliveryAddressKey(address, resolved.eircode);
       await CustomerProfile.updateOne(
         { _id: profileIdRaw, storeId: req.storeId },
         {
           $set: {
             postalCode: resolved.eircode,
-            deliveryAddress,
             addressKey,
           },
         },

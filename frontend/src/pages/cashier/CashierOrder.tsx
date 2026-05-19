@@ -171,7 +171,6 @@ export default function CashierOrder() {
   const [deliveryCustomerProfileId, setDeliveryCustomerProfileId] = useState('');
   const [deliveryProfiles, setDeliveryProfiles] = useState<DeliveryProfileRow[]>([]);
   const geoReqRef = useRef(0);
-  const skipNextGeoAddressFillRef = useRef(false);
   const memberDeliveryLookupReqRef = useRef(0);
   const deliveryPhoneRef = useRef('');
   const [deliveryCustomerCollapsed, setDeliveryCustomerCollapsed] = useState(false);
@@ -329,14 +328,11 @@ export default function CashierOrder() {
   const lookupEircode = useCallback(async (raw: string) => {
     const norm = raw.toUpperCase().replace(/[\s-]/g, '');
     if (norm.length !== 7 || !/^[A-Z][0-9][0-9W][0-9A-Z]{4}$/.test(norm)) {
-      skipNextGeoAddressFillRef.current = false;
       setDeliveryDistanceKm(null);
       setDeliveryGeoError('');
       setDeliveryGeoLoading(false);
       return;
     }
-    const preserveAddress = skipNextGeoAddressFillRef.current;
-    if (preserveAddress) skipNextGeoAddressFillRef.current = false;
     const id = ++geoReqRef.current;
     setDeliveryGeoLoading(true);
     setDeliveryGeoError('');
@@ -353,9 +349,11 @@ export default function CashierOrder() {
         const msg = data?.error?.message || `HTTP ${res.status}`;
         throw new Error(msg);
       }
-      if (!preserveAddress) {
-        setDeliveryAddress(data?.formattedAddress || '');
-      }
+      // 仅在没有地址时由邮编反填；已有地址（含地址→邮编推导）时不覆盖店员/档案原文
+      setDeliveryAddress((prev) => {
+        if (prev.trim()) return prev;
+        return data?.formattedAddress || '';
+      });
       setDeliveryDistanceKm(typeof data?.distanceKm === 'number' ? data.distanceKm : null);
     } catch (e) {
       if (id !== geoReqRef.current) return;
@@ -399,7 +397,6 @@ export default function CashierOrder() {
         if (!code) {
           throw new Error(t('cashier.geoAddressNoEircode'));
         }
-        skipNextGeoAddressFillRef.current = true;
         setDeliveryPostalCode(code);
         setDeliveryDistanceKm(typeof data?.distanceKm === 'number' ? data.distanceKm : null);
       } catch (e) {
@@ -433,7 +430,6 @@ export default function CashierOrder() {
         if (id !== memberDeliveryLookupReqRef.current) return;
         if (deliveryPhoneRef.current.replace(/\D/g, '') !== digits) return;
         if (!data?._id) return;
-        skipNextGeoAddressFillRef.current = true;
         setDeliveryCustomerName(String(data.displayName || '').trim());
         setDeliveryPostalCode(String(data.postalCode || '').trim());
         setDeliveryAddress(String(data.deliveryAddress || '').trim());
