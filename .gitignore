@@ -11,3 +11,6 @@ backend/seed-admin.ts
 
 # Local snapshots (git bundle / tar); do not commit
 backups/
+
+# Exported third-party customer data (PII)
+customers/

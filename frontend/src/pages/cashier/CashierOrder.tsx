@@ -114,6 +114,26 @@ function isMongoObjectId(s: string): boolean {
   return /^[a-f0-9]{24}$/i.test(s.trim());
 }
 
+function isValidEircodeInput(raw: string): boolean {
+  const norm = raw.toUpperCase().replace(/[\s-]/g, '');
+  return norm.length === 7 && /^[A-Z][0-9][0-9W][0-9A-Z]{4}$/.test(norm);
+}
+
+type DeliveryProfileRow = {
+  _id: string;
+  customerName: string;
+  deliveryAddress: string;
+  postalCode: string;
+};
+
+/** 同号多档案：优先选有邮编的（API 已按 updatedAt 降序，取第一条有邮编的） */
+function pickPreferredDeliveryProfile(profiles: DeliveryProfileRow[]): DeliveryProfileRow | null {
+  if (!profiles.length) return null;
+  if (profiles.length === 1) return profiles[0];
+  const withPostal = profiles.filter((p) => (p.postalCode || '').trim().length > 0);
+  return withPostal[0] ?? profiles[0];
+}
+
 interface FrequentItemRow {
   menuItemId: string;
   itemName: string;
@@ -149,10 +169,8 @@ export default function CashierOrder() {
   const [deliveryDistanceKm, setDeliveryDistanceKm] = useState<number | null>(null);
   const [deliveryGeoError, setDeliveryGeoError] = useState('');
   const [deliveryCustomerProfileId, setDeliveryCustomerProfileId] = useState('');
-  const [deliveryProfiles, setDeliveryProfiles] = useState<
-    { _id: string; customerName: string; deliveryAddress: string; postalCode: string }[]
-  >([]);
-  const eircodeReqRef = useRef(0);
+  const [deliveryProfiles, setDeliveryProfiles] = useState<DeliveryProfileRow[]>([]);
+  const geoReqRef = useRef(0);
   const skipNextGeoAddressFillRef = useRef(false);
   const memberDeliveryLookupReqRef = useRef(0);
   const deliveryPhoneRef = useRef('');
@@ -249,6 +267,14 @@ export default function CashierOrder() {
     }
   }, [canMemberWallet]);
 
+  const applyDeliveryProfileRow = useCallback((p: DeliveryProfileRow) => {
+    setDeliveryCustomerProfileId(String(p._id));
+    if (p.customerName?.trim()) setDeliveryCustomerName(p.customerName.trim());
+    if (p.deliveryAddress?.trim()) setDeliveryAddress(p.deliveryAddress.trim());
+    if (p.postalCode?.trim()) setDeliveryPostalCode(p.postalCode.trim());
+    setDeliveryCustomerCollapsed(true);
+  }, []);
+
   useEffect(() => {
     if (orderType !== 'delivery' || !token) {
       setDeliveryProfiles([]);
@@ -265,26 +291,15 @@ export default function CashierOrder() {
       })
         .then((r) => (r.ok ? r.json() : []))
         .then((list: unknown) => {
-          const arr = Array.isArray(list)
-            ? (list as { _id: string; customerName: string; deliveryAddress: string; postalCode: string }[])
-            : [];
+          const arr = Array.isArray(list) ? (list as DeliveryProfileRow[]) : [];
           setDeliveryProfiles(arr);
-          if (arr.length === 1) {
-            const p = arr[0];
-            setDeliveryCustomerProfileId(p._id);
-            if (p.customerName?.trim()) setDeliveryCustomerName(p.customerName.trim());
-            if (p.deliveryAddress?.trim()) setDeliveryAddress(p.deliveryAddress.trim());
-            if (p.postalCode?.trim()) setDeliveryPostalCode(p.postalCode.trim());
-            setDeliveryCustomerCollapsed(true);
-          } else if (arr.length > 1) {
-            setDeliveryCustomerProfileId('');
-            setDeliveryCustomerCollapsed(false);
-          }
+          const preferred = pickPreferredDeliveryProfile(arr);
+          if (preferred) applyDeliveryProfileRow(preferred);
         })
         .catch(() => setDeliveryProfiles([]));
     }, 400);
     return () => window.clearTimeout(tmr);
-  }, [orderType, deliveryCustomerPhone, token]);
+  }, [orderType, deliveryCustomerPhone, token, applyDeliveryProfileRow]);
 
   useEffect(() => {
     deliveryPhoneRef.current = deliveryCustomerPhone;
@@ -322,7 +337,7 @@ export default function CashierOrder() {
     }
     const preserveAddress = skipNextGeoAddressFillRef.current;
     if (preserveAddress) skipNextGeoAddressFillRef.current = false;
-    const id = ++eircodeReqRef.current;
+    const id = ++geoReqRef.current;
     setDeliveryGeoLoading(true);
     setDeliveryGeoError('');
     try {
@@ -333,7 +348,7 @@ export default function CashierOrder() {
         distanceKm?: number;
         error?: { message?: string };
       } | null;
-      if (id !== eircodeReqRef.current) return;
+      if (id !== geoReqRef.current) return;
       if (!res.ok) {
         const msg = data?.error?.message || `HTTP ${res.status}`;
         throw new Error(msg);
@@ -343,13 +358,62 @@ export default function CashierOrder() {
       }
       setDeliveryDistanceKm(typeof data?.distanceKm === 'number' ? data.distanceKm : null);
     } catch (e) {
-      if (id !== eircodeReqRef.current) return;
+      if (id !== geoReqRef.current) return;
       setDeliveryDistanceKm(null);
       setDeliveryGeoError(e instanceof Error ? e.message : t('cashier.geoLookupErrorFallback'));
     } finally {
-      if (id === eircodeReqRef.current) setDeliveryGeoLoading(false);
+      if (id === geoReqRef.current) setDeliveryGeoLoading(false);
     }
   }, [t]);
+
+  const lookupAddressToEircode = useCallback(
+    async (addressRaw: string, profileId?: string) => {
+      const address = addressRaw.trim();
+      if (address.length < 8) {
+        setDeliveryDistanceKm(null);
+        setDeliveryGeoError('');
+        setDeliveryGeoLoading(false);
+        return;
+      }
+      const id = ++geoReqRef.current;
+      setDeliveryGeoLoading(true);
+      setDeliveryGeoError('');
+      try {
+        const q = new URLSearchParams({ address });
+        const pid = profileId?.trim() || '';
+        if (pid && isMongoObjectId(pid)) {
+          q.set('customerProfileId', pid);
+        }
+        const res = await apiFetch(`/api/geo/address?${q.toString()}`);
+        const data = (await res.json().catch(() => null)) as {
+          eircode?: string;
+          distanceKm?: number;
+          error?: { message?: string };
+        } | null;
+        if (id !== geoReqRef.current) return;
+        if (!res.ok) {
+          const msg = data?.error?.message || `HTTP ${res.status}`;
+          throw new Error(msg);
+        }
+        const code = String(data?.eircode || '').trim();
+        if (!code) {
+          throw new Error(t('cashier.geoAddressNoEircode'));
+        }
+        skipNextGeoAddressFillRef.current = true;
+        setDeliveryPostalCode(code);
+        setDeliveryDistanceKm(typeof data?.distanceKm === 'number' ? data.distanceKm : null);
+      } catch (e) {
+        if (id !== geoReqRef.current) return;
+        setDeliveryDistanceKm(null);
+        setDeliveryGeoError(
+          e instanceof Error ? e.message : t('cashier.geoAddressLookupErrorFallback'),
+        );
+      } finally {
+        if (id === geoReqRef.current) setDeliveryGeoLoading(false);
+      }
+    },
+    [t],
+  );
 
   const runMemberDeliveryLookup = useCallback(
     async (phoneRaw?: string) => {
@@ -449,6 +513,24 @@ export default function CashierOrder() {
     }, 500);
     return () => window.clearTimeout(timerId);
   }, [deliveryPostalCode, orderType, canDelivery, lookupEircode]);
+
+  useEffect(() => {
+    if (orderType !== 'delivery' || !canDelivery) return;
+    const address = deliveryAddress.trim();
+    if (address.length < 8) return;
+    if (isValidEircodeInput(deliveryPostalCode)) return;
+    const timerId = window.setTimeout(() => {
+      void lookupAddressToEircode(address, deliveryCustomerProfileId);
+    }, 600);
+    return () => window.clearTimeout(timerId);
+  }, [
+    deliveryAddress,
+    deliveryPostalCode,
+    deliveryCustomerProfileId,
+    orderType,
+    canDelivery,
+    lookupAddressToEircode,
+  ]);
 
   /** 只拉分类；当前分类菜品由 fetchItemsForCategory + activeCat effect 拉取（后端按 category 缩小 merge 范围） */
   const fetchMenu = useCallback(async () => {
@@ -917,7 +999,10 @@ export default function CashierOrder() {
           error?: { message?: string; details?: { customerProfiles?: typeof deliveryProfiles } };
         } | null;
         if (orderRes.status === 409 && d?.error?.details?.customerProfiles?.length) {
-          setDeliveryProfiles(d.error.details.customerProfiles);
+          const profiles = d.error.details.customerProfiles;
+          setDeliveryProfiles(profiles);
+          const preferred = pickPreferredDeliveryProfile(profiles);
+          if (preferred) applyDeliveryProfileRow(preferred);
         }
         throw new Error(d?.error?.message || 'Failed');
       }

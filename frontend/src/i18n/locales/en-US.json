@@ -246,6 +246,8 @@
     "afterCoupon": "After coupon",
     "profileAddressDash": "—",
     "geoLookupErrorFallback": "Postcode lookup failed",
+    "geoAddressLookupErrorFallback": "Could not resolve Eircode from address",
+    "geoAddressNoEircode": "Address found but no Eircode — enter postcode manually",
     "deliverySummaryTitle": "Delivery customer",
     "deliveryEditCustomer": "Edit",
     "deliverySummaryName": "Name",

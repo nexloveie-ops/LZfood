@@ -5,9 +5,11 @@ import { createAppError } from '../middleware/errorHandler';
 import { requireAuthSameStore } from '../middleware/authForStore';
 import { requireFeature } from '../middleware/featureAccess';
 import { FeatureKeys } from '../utils/featureCatalog';
+import { normalizeDeliveryAddressKey } from '../utils/customerProfileDelivery';
 import { normalizeIrishEircode } from '../utils/irishEircode';
 import { googleGeocodeAddress } from '../utils/googleGeocode';
 import { haversineKm } from '../utils/haversineKm';
+import { resolveAddressToEircode } from '../utils/resolveAddressEircode';
 
 type StoreGeoCache = { lat: number; lng: number; at: number };
 const storeLatLngCache = new Map<string, StoreGeoCache>();
@@ -34,6 +36,16 @@ async function resolveStoreGeocodeQuery(storeId: mongoose.Types.ObjectId): Promi
   if (!addr) return null;
   const parts = [name, addr].filter(Boolean);
   return parts.join(', ');
+}
+
+async function getStoreAddressHint(storeId: mongoose.Types.ObjectId): Promise<string> {
+  const { SystemConfig } = getModels() as { SystemConfig: mongoose.Model<any> };
+  const configs = await SystemConfig.find({ storeId }).lean();
+  const map: Record<string, string> = {};
+  for (const c of configs) {
+    map[c.key] = c.value;
+  }
+  return (map.restaurant_address_en || map.restaurant_address || '').trim();
 }
 
 async function getStoreLatLng(
@@ -109,6 +121,64 @@ router.get(
   ...requireAuthSameStore,
   requireFeature(FeatureKeys.CashierDeliveryPage),
   handleEircodeGet,
+);
+
+async function handleAddressGet(req: Request, res: Response, next: NextFunction) {
+  try {
+    const apiKey = process.env.GoogleGeo?.trim();
+    if (!apiKey) {
+      throw createAppError('SERVICE_UNAVAILABLE', '未配置 GoogleGeo 环境变量，无法解析邮编');
+    }
+
+    const address = typeof req.query.address === 'string' ? req.query.address.trim() : '';
+    if (!address) {
+      throw createAppError('VALIDATION_ERROR', '请先填写送餐地址');
+    }
+
+    const storeLoc = await getStoreLatLng(req.storeId!, apiKey);
+    const storeHint = await getStoreAddressHint(req.storeId!);
+    const resolved = await resolveAddressToEircode({
+      address,
+      storeLat: storeLoc.lat,
+      storeLng: storeLoc.lng,
+      apiKey,
+      storeAddressHint: storeHint,
+    });
+
+    const profileIdRaw =
+      typeof req.query.customerProfileId === 'string' ? req.query.customerProfileId.trim() : '';
+    if (profileIdRaw && mongoose.Types.ObjectId.isValid(profileIdRaw)) {
+      const { CustomerProfile } = getModels();
+      const deliveryAddress = address;
+      const addressKey = normalizeDeliveryAddressKey(deliveryAddress, resolved.eircode);
+      await CustomerProfile.updateOne(
+        { _id: profileIdRaw, storeId: req.storeId },
+        {
+          $set: {
+            postalCode: resolved.eircode,
+            deliveryAddress,
+            addressKey,
+          },
+        },
+      ).catch(() => {});
+    }
+
+    res.json({
+      eircode: resolved.eircode,
+      formattedAddress: resolved.formattedAddress,
+      distanceKm: resolved.distanceKm,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/** GET /api/geo/address?address=... — 地址反查 Eircode + 距店距离（多结果时按离店最近） */
+router.get(
+  '/address',
+  ...requireAuthSameStore,
+  requireFeature(FeatureKeys.CashierDeliveryPage),
+  handleAddressGet,
 );
 
 /**

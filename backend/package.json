@@ -13,6 +13,8 @@
     "purge:store-orders": "ts-node scripts/purge-store-orders.ts",
     "sales:overview": "ts-node scripts/sales-data-overview.ts",
     "import:legacy-orders": "ts-node scripts/import-legacy-store-orders.ts",
+    "import:web-customers": "ts-node scripts/import-web-customers-to-store.ts",
+    "import:customers-with-address": "ts-node scripts/import-customers-with-address.ts",
     "bench:active-all": "ts-node scripts/benchmark-active-all.ts",
     "db:dump-full": "ts-node scripts/dump-mongodb-full.ts",
     "db:mongodump": "ts-node scripts/mongodump-backup.ts",
