@@ -4,6 +4,7 @@ import { connectStoreSocket } from '../../api/storeSocket';
 import { useAuth } from '../../context/AuthContext';
 import { apiFetch } from '../../api/client';
 import { buildReceiptHTML, printViaIframe, type BundleDiscountInfo } from '../../components/cashier/ReceiptPrint';
+import { type ReceiptOptionSnapshot, receiptOptionExtraEuro } from '../../utils/receiptOptionPrice';
 import { computeDineInUnsettledPayableEuro, computePartialDineInSettlementPreview, dineInHasUnsettledFoodLineQty } from '../../utils/orderPayableEuro';
 import CashierMemberCheckoutBlock, {
   buildMemberFullWalletCheckoutBody,
@@ -69,6 +70,31 @@ interface OrderRow {
   dineInStaffLockedAt?: string;
   /** 收银创建时客人已通过「电话刷卡」付款；与 paid_online 同流程，结账记为 card */
   phoneCardPaidAtPlacement?: boolean;
+}
+
+function mapSelectedOptionsForReceipt(
+  opts: OrderRow['items'][0]['selectedOptions'],
+): ReceiptOptionSnapshot[] {
+  return (opts || []).map((opt) => ({
+    groupName: String(opt.groupName ?? '').trim(),
+    groupNameEn: String(opt.groupNameEn ?? '').trim(),
+    choiceName: String(opt.choiceName ?? '').trim(),
+    choiceNameEn: String(opt.choiceNameEn ?? '').trim(),
+    extraPrice: opt.extraPrice || 0,
+  }));
+}
+
+function mapOrderItemToReceipt(item: OrderRow['items'][0], qtyOverride: number) {
+  return {
+    _id: item._id,
+    ...(item.lineKind === 'delivery_fee' ? {} : { menuItemId: item._id }),
+    lineKind: item.lineKind,
+    quantity: qtyOverride,
+    unitPrice: item.unitPrice,
+    itemName: item.itemName,
+    itemNameEn: item.itemNameEn,
+    selectedOptions: mapSelectedOptionsForReceipt(item.selectedOptions),
+  };
 }
 
 interface RestaurantConfig {
@@ -697,25 +723,6 @@ export default function UnifiedOrderCenter() {
     }
   }, [fetchAll, token]);
 
-  const printDeliveryPrepTicket = useCallback((order: OrderRow) => {
-    const now = new Date();
-    const rows = order.items.map((i) => {
-      const extra = (i.selectedOptions || []).reduce((s, o) => s + (o.extraPrice || 0), 0);
-      return `<div style="display:flex;justify-content:space-between;margin:4px 0;"><span>${i.itemName} x${i.quantity}</span><span>€${((i.unitPrice + extra) * i.quantity).toFixed(2)}</span></div>`;
-    }).join('');
-    const html = `<!doctype html><html><head><meta charset="utf-8"><title>Delivery Prep</title></head><body style="font-family:Arial,sans-serif;padding:14px;max-width:380px;margin:0 auto;">
-      <h2 style="margin:0 0 6px;">送餐备餐单</h2>
-      <div style="font-size:12px;color:#555;margin-bottom:6px;">#${order.dailyOrderNumber ?? '--'} · ${now.toLocaleString()}</div>
-      <div style="font-size:12px;margin-bottom:6px;">${order.customerName || ''} · ${order.customerPhone || ''}</div>
-      <div style="font-size:11px;color:#666;margin-bottom:2px;">送餐地址（客人）/ Guest delivery</div>
-      <div style="font-size:12px;margin-bottom:8px;white-space:pre-wrap;word-break:break-word;">${(order.deliveryAddress || '').replace(/</g, '&lt;')}<br/>送餐邮编 / Postcode: ${(order.postalCode || '').replace(/</g, '&lt;')}</div>
-      <hr/>
-      ${rows}
-      <hr/>
-      <div style="display:flex;justify-content:space-between;font-weight:700;"><span>合计</span><span>€${calcTotal(order).toFixed(2)}</span></div>
-    </body></html>`;
-    void printViaIframe(html, 1).catch(() => {});
-  }, []);
 
   type KitchenTicketMode = 'auto' | 'full_mark_all' | 'full_no_mark';
 
@@ -740,20 +747,7 @@ export default function UnifiedOrderCenter() {
       const isPhoneCardPlacement =
         !!(src as OrderRow).phoneCardPaidAtPlacement && (src.type === 'phone' || src.type === 'delivery');
 
-      const mapItemToReceipt = (item: OrderRow['items'][0], qtyOverride: number) => ({
-        _id: item._id,
-        ...(item.lineKind === 'delivery_fee' ? {} : { menuItemId: item._id }),
-        lineKind: item.lineKind,
-        quantity: qtyOverride,
-        unitPrice: item.unitPrice,
-        itemName: item.itemName,
-        itemNameEn: item.itemNameEn,
-        selectedOptions: (item.selectedOptions || []).map((opt) => ({
-          groupName: String(opt.groupName ?? '').trim(),
-          choiceName: String(opt.choiceName ?? '').trim(),
-          extraPrice: opt.extraPrice || 0,
-        })),
-      });
+      const mapItemToReceipt = mapOrderItemToReceipt;
 
       const pm: 'cash' | 'online' | 'member' | 'card' =
         src.status !== 'paid_online'
@@ -798,7 +792,7 @@ export default function UnifiedOrderCenter() {
           return;
         }
         receiptTotal = receiptItems.reduce((sum, item) => {
-          const extra = (item.selectedOptions || []).reduce((s, o) => s + (o.extraPrice || 0), 0);
+          const extra = (item.selectedOptions || []).reduce((s, o) => s + receiptOptionExtraEuro(o.extraPrice), 0);
           return sum + (item.unitPrice + extra) * item.quantity;
         }, 0);
         bundleDiscounts = undefined;
@@ -936,20 +930,7 @@ export default function UnifiedOrderCenter() {
           sources.push(src);
         }
 
-        const mapItemToReceipt = (item: OrderRow['items'][0], qtyOverride: number) => ({
-          _id: item._id,
-          ...(item.lineKind === 'delivery_fee' ? {} : { menuItemId: item._id }),
-          lineKind: item.lineKind,
-          quantity: qtyOverride,
-          unitPrice: item.unitPrice,
-          itemName: item.itemName,
-          itemNameEn: item.itemNameEn,
-          selectedOptions: (item.selectedOptions || []).map((opt) => ({
-            groupName: String(opt.groupName ?? '').trim(),
-            choiceName: String(opt.choiceName ?? '').trim(),
-            extraPrice: opt.extraPrice || 0,
-          })),
-        });
+        const mapItemToReceipt = mapOrderItemToReceipt;
 
         const hasAnyLine = sources.some((s) =>
           (s.items || []).some((it) => it.lineKind !== 'delivery_fee' && !it.refunded),
@@ -1249,9 +1230,9 @@ export default function UnifiedOrderCenter() {
   );
 
   const handleDeliveryPrintAndCook = useCallback(async (order: OrderRow) => {
-    printDeliveryPrepTicket(order);
+    await printOrderTicket(order, 'full_no_mark');
     await setDeliveryStage(order._id, 'accepted');
-  }, [printDeliveryPrepTicket, setDeliveryStage]);
+  }, [printOrderTicket, setDeliveryStage]);
 
   const handleDeliveryDriverPickup = useCallback(async (order: OrderRow) => {
     await setDeliveryStage(order._id, 'picked_up_by_driver');
