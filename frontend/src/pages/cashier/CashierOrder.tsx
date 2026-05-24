@@ -881,9 +881,6 @@ export default function CashierOrder() {
   };
 
   const groupedOrderLines = useMemo(() => groupOrderLines(order), [order]);
-  const clearOrder = () => {
-    setOrder([]);
-  };
 
   const totalAmount = order.reduce((s, o) => s + o.price + (o.options || []).reduce((sum, opt) => sum + opt.extraPrice, 0), 0);
   const getItemCount = (menuItemId: string) => order.filter(o => o.menuItemId === menuItemId).length;
@@ -943,6 +940,69 @@ export default function CashierOrder() {
   const displayTotal = orderType === 'delivery' ? grandTotal : finalTotal;
   const deliveryFeeEditable = deliveryFeeRules.length === 0 || deliveryDistanceKm != null;
 
+  const renderDeliveryFeeField = (compact = false) => {
+    const feeInput = (
+      <>
+        <span style={{ color: compact ? 'var(--text-light)' : undefined, fontSize: compact ? 11 : undefined }}>
+          {t('cashier.deliveryFee')}:
+        </span>
+        <span style={{ fontWeight: 600 }}>€</span>
+        <input
+          className="cashier-qty-input"
+          type="number"
+          min={0}
+          step="0.01"
+          value={deliveryFeeInput}
+          disabled={!deliveryFeeEditable}
+          onChange={(e) => {
+            setDeliveryFeeTouched(true);
+            setDeliveryFeeInput(e.target.value);
+          }}
+          style={{ width: 56, textAlign: 'center', fontWeight: 600 }}
+        />
+        {deliveryFeeTouched &&
+        deliveryFeeRules.length > 0 &&
+        deliveryDistanceKm != null &&
+        Math.abs(effectiveDeliveryFee - autoDeliveryFee) > 0.001 ? (
+          <button
+            type="button"
+            className="btn btn-ghost"
+            style={{ fontSize: 11, padding: '2px 6px' }}
+            onClick={() => {
+              setDeliveryFeeTouched(false);
+              setDeliveryFeeInput(autoDeliveryFee.toFixed(2));
+            }}
+          >
+            {t('cashier.deliveryFeeResetAuto')}
+          </button>
+        ) : null}
+      </>
+    );
+
+    if (compact) {
+      return (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0, fontSize: 12, whiteSpace: 'nowrap' }}>
+          {feeInput}
+        </span>
+      );
+    }
+
+    return (
+      <div style={{ marginTop: 6 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', fontSize: 12 }}>{feeInput}</div>
+        <div style={{ fontSize: 10, color: 'var(--text-light)', marginTop: 4 }}>{t('cashier.deliveryFeeEditableHint')}</div>
+        {deliveryFeeTouched &&
+        deliveryFeeRules.length > 0 &&
+        deliveryDistanceKm != null &&
+        Math.abs(effectiveDeliveryFee - autoDeliveryFee) > 0.001 ? (
+          <div style={{ fontSize: 10, color: 'var(--text-light)', marginTop: 2 }}>
+            {t('cashier.deliveryFeeAutoHint', { amount: autoDeliveryFee.toFixed(2) })}
+          </div>
+        ) : null}
+      </div>
+    );
+  };
+
   const renderDeliveryGeoSection = () => (
     <>
       {deliveryGeoLoading ? (
@@ -971,50 +1031,7 @@ export default function CashierOrder() {
       !deliveryGeoError ? (
         <div style={{ fontSize: 11, color: 'var(--text-light)', marginTop: 4 }}>{t('cashier.deliveryFeeRulesNeedDistance')}</div>
       ) : null}
-      <div style={{ marginTop: 6 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', fontSize: 12 }}>
-          <span>{t('cashier.deliveryFee')}:</span>
-          <span style={{ fontWeight: 600 }}>€</span>
-          <input
-            className="cashier-qty-input"
-            type="number"
-            min={0}
-            step="0.01"
-            value={deliveryFeeInput}
-            disabled={!deliveryFeeEditable}
-            onChange={(e) => {
-              setDeliveryFeeTouched(true);
-              setDeliveryFeeInput(e.target.value);
-            }}
-            style={{ width: 56, textAlign: 'center', fontWeight: 600 }}
-          />
-          {deliveryFeeTouched &&
-          deliveryFeeRules.length > 0 &&
-          deliveryDistanceKm != null &&
-          Math.abs(effectiveDeliveryFee - autoDeliveryFee) > 0.001 ? (
-            <button
-              type="button"
-              className="btn btn-ghost"
-              style={{ fontSize: 11, padding: '2px 8px' }}
-              onClick={() => {
-                setDeliveryFeeTouched(false);
-                setDeliveryFeeInput(autoDeliveryFee.toFixed(2));
-              }}
-            >
-              {t('cashier.deliveryFeeResetAuto')}
-            </button>
-          ) : null}
-        </div>
-        <div style={{ fontSize: 10, color: 'var(--text-light)', marginTop: 4 }}>{t('cashier.deliveryFeeEditableHint')}</div>
-        {deliveryFeeTouched &&
-        deliveryFeeRules.length > 0 &&
-        deliveryDistanceKm != null &&
-        Math.abs(effectiveDeliveryFee - autoDeliveryFee) > 0.001 ? (
-          <div style={{ fontSize: 10, color: 'var(--text-light)', marginTop: 2 }}>
-            {t('cashier.deliveryFeeAutoHint', { amount: autoDeliveryFee.toFixed(2) })}
-          </div>
-        ) : null}
-      </div>
+      {renderDeliveryFeeField()}
     </>
   );
 
@@ -1773,10 +1790,6 @@ export default function CashierOrder() {
 
       {/* Right: Order Panel */}
       <div style={{ width: 320, flexShrink: 0, background: 'var(--bg-white)', borderLeft: '2px solid var(--border)', display: 'flex', flexDirection: 'column' }}>
-        <div style={{ padding: '10px 12px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-          <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>🧾 {t('cashier.orderPoint')}</h3>
-          <button className="btn btn-ghost" style={{ fontSize: 12, padding: '2px 6px', flexShrink: 0 }} onClick={clearOrder}>{t('cashier.clearOrder')}</button>
-        </div>
         <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)' }}>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
             <button
@@ -1849,8 +1862,8 @@ export default function CashierOrder() {
         </div>
 
         {orderType === 'delivery' && deliveryCustomerCollapsed ? (
-          <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)', background: 'var(--bg)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+          <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)', background: 'var(--bg)', flexShrink: 0 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
               <span style={{ fontSize: 12, fontWeight: 700 }}>{t('cashier.deliverySummaryTitle')}</span>
               <button
                 type="button"
@@ -1858,50 +1871,46 @@ export default function CashierOrder() {
                 style={{ fontSize: 11, padding: '2px 8px' }}
                 onClick={() => setDeliveryCustomerCollapsed(false)}
               >
-                {t('cashier.deliveryEditCustomer')}
+                {t('cashier.deliveryExpandCustomer')}
               </button>
             </div>
-            <div style={{ display: 'grid', gap: 4, fontSize: 12 }}>
-              <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', lineHeight: 1.35 }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <span style={{ color: 'var(--text-light)', fontSize: 11 }}>{t('cashier.deliverySummaryName')}</span>{' '}
-                  <span style={{ fontWeight: 600, wordBreak: 'break-word' }}>
-                    {deliveryCustomerName.trim() || t('cashier.profileAddressDash')}
-                  </span>
-                </div>
-                <div
-                  style={{ width: 1, alignSelf: 'stretch', minHeight: 28, background: 'var(--border)', flexShrink: 0 }}
-                  aria-hidden
-                />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <span style={{ color: 'var(--text-light)', fontSize: 11 }}>{t('cashier.deliverySummaryPhone')}</span>{' '}
-                  <span style={{ fontWeight: 600, wordBreak: 'break-all' }}>
-                    {deliveryCustomerPhone.trim() || t('cashier.profileAddressDash')}
-                  </span>
-                </div>
-              </div>
-              <div style={{ lineHeight: 1.35 }}>
-                <span style={{ color: 'var(--text-light)', fontSize: 11 }}>{t('cashier.deliverySummaryAddress')}</span>{' '}
-                <span style={{ fontWeight: 600, wordBreak: 'break-word' }}>
-                  {deliveryAddress.trim() || t('cashier.profileAddressDash')}
-                </span>
-              </div>
-            </div>
-            {renderDeliveryFrequentSection()}
-            <div style={{ marginTop: 10, paddingTop: 8, borderTop: '1px solid var(--border)' }}>
-              <div style={{ fontSize: 11, color: 'var(--text-light)', marginBottom: 6, fontWeight: 600 }}>
-                {t('cashier.deliveryMapInfoTitle')}
-              </div>
-              <div style={{ fontSize: 12, marginBottom: 6 }}>
-                <span style={{ color: 'var(--text-light)', fontSize: 11 }}>{t('cashier.deliverySummaryEircode')}</span>{' '}
-                <span style={{ fontWeight: 600 }}>{deliveryPostalCode.trim() || t('cashier.profileAddressDash')}</span>
-              </div>
-              {renderDeliveryGeoSection()}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                fontSize: 12,
+                lineHeight: 1.35,
+                minWidth: 0,
+              }}
+            >
+              <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <span style={{ color: 'var(--text-light)', fontSize: 11 }}>{t('cashier.deliverySummaryName')}</span>{' '}
+                <span style={{ fontWeight: 600 }}>{deliveryCustomerName.trim() || t('cashier.profileAddressDash')}</span>
+              </span>
+              <span style={{ flexShrink: 0, whiteSpace: 'nowrap' }}>
+                <span style={{ color: 'var(--text-light)', fontSize: 11 }}>{t('cashier.deliverySummaryPhone')}</span>{' '}
+                <span style={{ fontWeight: 600 }}>{deliveryCustomerPhone.trim() || t('cashier.profileAddressDash')}</span>
+              </span>
+              <span style={{ marginLeft: 'auto', flexShrink: 0 }}>{renderDeliveryFeeField(true)}</span>
             </div>
           </div>
         ) : null}
         {orderType === 'delivery' && !deliveryCustomerCollapsed ? (
-          <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)', display: 'grid', gap: 6 }}>
+          <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)', display: 'grid', gap: 6, flexShrink: 0 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 12, fontWeight: 700 }}>{t('cashier.deliverySummaryTitle')}</span>
+              {(deliveryCustomerName.trim() || deliveryCustomerPhone.trim() || deliveryAddress.trim()) ? (
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  style={{ fontSize: 11, padding: '2px 8px', flexShrink: 0 }}
+                  onClick={() => setDeliveryCustomerCollapsed(true)}
+                >
+                  {t('cashier.deliveryCollapseCustomer')}
+                </button>
+              ) : null}
+            </div>
             <input
               className="input"
               placeholder={t('cashier.deliveryPhonePlaceholder')}

@@ -274,6 +274,8 @@
     "geoAddressNoEircode": "Address found but no Eircode — enter postcode manually",
     "deliverySummaryTitle": "Delivery customer",
     "deliveryEditCustomer": "Edit",
+    "deliveryCollapseCustomer": "Collapse",
+    "deliveryExpandCustomer": "Expand",
     "deliverySummaryName": "Name",
     "deliverySummaryPhone": "Phone",
     "deliverySummaryAddress": "Address",

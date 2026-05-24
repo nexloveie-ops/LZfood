@@ -274,6 +274,8 @@
     "geoAddressNoEircode": "已识别地址但未找到 Eircode，请手动填写邮编",
     "deliverySummaryTitle": "送餐客户",
     "deliveryEditCustomer": "编辑",
+    "deliveryCollapseCustomer": "折叠",
+    "deliveryExpandCustomer": "展开",
     "deliverySummaryName": "姓名",
     "deliverySummaryPhone": "电话",
     "deliverySummaryAddress": "地址",
