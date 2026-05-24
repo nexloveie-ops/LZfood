@@ -151,6 +151,21 @@ function escapeReceiptHtml(s: string): string {
     .replace(/"/g, '&quot;');
 }
 
+function countReceiptItemQty(receipt: ReceiptData): number {
+  const partial = describeDineInPartialLines(receipt);
+  if (partial) {
+    return partial.lines.reduce((s, L) => s + L.qty, 0);
+  }
+  let total = 0;
+  for (const o of receipt.orders) {
+    for (const it of o.items) {
+      if (it.lineKind === 'delivery_fee') continue;
+      total += Math.max(0, Number(it.quantity) || 0);
+    }
+  }
+  return total;
+}
+
 /** Delivery fee as an order line vs legacy order.deliveryFeeEuro only */
 function receiptDeliveryFeeBreakdown(receipt: ReceiptData): { deliveryAmt: number; showLegacyDeliveryRow: boolean } {
   let fromItems = 0;
@@ -193,6 +208,7 @@ function buildReceiptHTML(
   const paymentLabel = paymentMethodLabel(receipt.paymentMethod);
   const restaurantName = config.restaurant_name_en || config.restaurant_name_zh || '';
   const termsSegments = config.receipt_terms ? parseQRCodes(config.receipt_terms) : [];
+  const receiptItemQty = countReceiptItemQty(receipt);
 
   let html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -246,13 +262,25 @@ function buildReceiptHTML(
       const orderNum = receipt.orders.find(o => o.dineInOrderNumber)?.dineInOrderNumber;
       if (orderNum) html += `<div class="big">Order #${escapeReceiptHtml(String(orderNum))}</div>`;
     }
+    if (receiptItemQty > 0) {
+      html += `<div class="big">Item: ${receiptItemQty}</div>`;
+    }
     html += `<div style="font-size:12px;margin-top:4px">Ref: ${String(receipt.checkoutId).slice(-8).toUpperCase()}</div>`;
   } else if (isPhone) {
     html += `<div class="big">Phone #${receipt.orders[0]?.dailyOrderNumber || ''}</div>`;
+    if (receiptItemQty > 0) {
+      html += `<div class="big">Item: ${receiptItemQty}</div>`;
+    }
   } else if (isDelivery) {
     html += `<div class="big">Delivery #${receipt.orders[0]?.dailyOrderNumber || ''}</div>`;
+    if (receiptItemQty > 0) {
+      html += `<div class="big">Item: ${receiptItemQty}</div>`;
+    }
   } else {
     html += `<div class="big">Pickup #${receipt.orders[0]?.dailyOrderNumber || ''}</div>`;
+    if (receiptItemQty > 0) {
+      html += `<div class="big">Item: ${receiptItemQty}</div>`;
+    }
   }
 
   if (!isDineIn) {
@@ -531,6 +559,7 @@ export default function ReceiptPrint({ checkoutId, cashReceived, changeAmount, b
   const restaurantName = config.restaurant_name_en || config.restaurant_name_zh || '';
   const termsSegments = config.receipt_terms ? parseQRCodes(config.receipt_terms) : [];
   const partialDescPreview = describeDineInPartialLines(receipt);
+  const previewItemQty = countReceiptItemQty(receipt);
 
   return (
     <div style={{ fontFamily: 'Arial, Helvetica, sans-serif', maxWidth: 420, margin: '0 auto', padding: 16, fontSize: 14, fontWeight: 'bold', color: '#000', background: '#fff', border: '1px solid #ddd', borderRadius: 8 }}>
@@ -569,6 +598,9 @@ export default function ReceiptPrint({ checkoutId, cashReceived, changeAmount, b
           ) : (
             <div style={{ fontSize: 20 }}>Pickup #{receipt.orders[0]?.dailyOrderNumber}</div>
           )}
+          {previewItemQty > 0 ? (
+            <div style={{ fontSize: 20 }}>Item: {previewItemQty}</div>
+          ) : null}
           {!isDineIn && previewGuestTel ? (
             <div style={{ fontSize: 15, marginTop: 6 }}>客人电话 / Guest Tel: {previewGuestTel}</div>
           ) : null}

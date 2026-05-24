@@ -258,6 +258,14 @@ export default function CashierOrder() {
   const memberDeliveryLookupReqRef = useRef(0);
   const deliveryPhoneRef = useRef('');
   const [deliveryCustomerCollapsed, setDeliveryCustomerCollapsed] = useState(false);
+  const menuScrollRef = useRef<HTMLDivElement>(null);
+  const categorySectionRefs = useRef<Record<string, HTMLElement | null>>({});
+  const categoryBtnRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const menuScrollLockRef = useRef(false);
+  const menuScrollLockTimerRef = useRef<number | undefined>(undefined);
+  const pendingScrollCatRef = useRef<string | null>(null);
+  const sidebarFollowCatRef = useRef(false);
+  const [menuLoading, setMenuLoading] = useState(true);
   const frequentFetchGenRef = useRef(0);
   const [frequentItems, setFrequentItems] = useState<FrequentItemRow[]>([]);
   const [frequentItemsLoading, setFrequentItemsLoading] = useState(false);
@@ -311,10 +319,7 @@ export default function CashierOrder() {
     }
   }, []);
 
-  /** 按分类拉菜：避免整本菜单一次 merge；切语言时清空 */
-  const loadedCategoryIds = useRef(new Set<string>());
-  const loadingCategoryIds = useRef(new Set<string>());
-
+  /** 全店菜单：进页一次拉分类 + 全部菜品（方案 A 长列表滚动） */
   const mergeMenuItems = useCallback((incoming: MenuItem[]) => {
     setMenuItems((prev) => {
       const map = new Map(prev.map((i) => [i._id, i]));
@@ -323,25 +328,31 @@ export default function CashierOrder() {
     });
   }, []);
 
-  const fetchItemsForCategory = useCallback(
-    async (categoryId: string) => {
-      if (!categoryId) return;
-      if (loadedCategoryIds.current.has(categoryId) || loadingCategoryIds.current.has(categoryId)) return;
-      loadingCategoryIds.current.add(categoryId);
-      try {
-        const res = await apiFetch(
-          `/api/menu/items?lang=${encodeURIComponent(lang)}&category=${encodeURIComponent(categoryId)}`,
-        );
-        if (!res.ok) return;
-        const rows: MenuItem[] = await res.json();
-        loadedCategoryIds.current.add(categoryId);
-        mergeMenuItems(rows);
-      } finally {
-        loadingCategoryIds.current.delete(categoryId);
+  const fetchMenu = useCallback(async () => {
+    setMenuLoading(true);
+    setMenuItems([]);
+    categorySectionRefs.current = {};
+    try {
+      const [catRes, itemsRes] = await Promise.all([
+        apiFetch(`/api/menu/categories?lang=${encodeURIComponent(lang)}`),
+        apiFetch(`/api/menu/items?lang=${encodeURIComponent(lang)}`),
+      ]);
+      if (catRes.ok) {
+        const cats: Category[] = await catRes.json();
+        setCategories(cats);
+        if (cats.length > 0) {
+          setActiveCat((prev) => (prev && cats.some((c) => c._id === prev) ? prev : cats[0]._id));
+        } else {
+          setActiveCat('');
+        }
       }
-    },
-    [lang, mergeMenuItems],
-  );
+      if (itemsRes.ok) {
+        setMenuItems(await itemsRes.json());
+      }
+    } finally {
+      setMenuLoading(false);
+    }
+  }, [lang]);
 
   useEffect(() => {
     if (!canMemberWallet) {
@@ -612,22 +623,6 @@ export default function CashierOrder() {
     lookupAddressToEircode,
   ]);
 
-  /** 只拉分类；当前分类菜品由 fetchItemsForCategory + activeCat effect 拉取（后端按 category 缩小 merge 范围） */
-  const fetchMenu = useCallback(async () => {
-    loadedCategoryIds.current.clear();
-    loadingCategoryIds.current.clear();
-    setMenuItems([]);
-    const catRes = await apiFetch(`/api/menu/categories?lang=${encodeURIComponent(lang)}`);
-    if (!catRes.ok) return;
-    const cats: Category[] = await catRes.json();
-    setCategories(cats);
-    if (cats.length > 0) {
-      setActiveCat((prev) => (prev && cats.some((c) => c._id === prev) ? prev : cats[0]._id));
-    } else {
-      setActiveCat('');
-    }
-  }, [lang]);
-
   const fetchPromosDeferred = useCallback(async () => {
     const [offersRes, couponsRes] = await Promise.all([
       apiFetch('/api/offers'),
@@ -690,25 +685,6 @@ export default function CashierOrder() {
   }, [refreshDineInWorkflowMode]);
 
   useEffect(() => {
-    if (!activeCat) return;
-    void fetchItemsForCategory(activeCat);
-  }, [activeCat, fetchItemsForCategory]);
-
-  /** 搜索跨分类：防抖后拉全店菜品一次并 merge（有 lang） */
-  useEffect(() => {
-    const q = search.trim();
-    if (!q) return;
-    const tid = window.setTimeout(() => {
-      void (async () => {
-        const res = await apiFetch(`/api/menu/items?lang=${encodeURIComponent(lang)}`);
-        if (!res.ok) return;
-        mergeMenuItems(await res.json());
-      })();
-    }, 450);
-    return () => window.clearTimeout(tid);
-  }, [search, lang, mergeMenuItems]);
-
-  useEffect(() => {
     let cancelled = false;
     const run = () => {
       if (!cancelled) void fetchPromosDeferred();
@@ -735,14 +711,121 @@ export default function CashierOrder() {
     return found?.name || '';
   };
 
-  const filteredItems = useMemo(() => {
-    let list = menuItems.filter(i => i.categoryId === activeCat);
-    if (search.trim()) {
-      const q = search.trim().toLowerCase();
-      list = menuItems.filter(i => i.translations.some(t2 => t2.name.toLowerCase().includes(q)));
+  const menuSections = useMemo(() => {
+    const byCat = new Map<string, MenuItem[]>();
+    for (const item of menuItems) {
+      const cid = item.categoryId || '';
+      if (!byCat.has(cid)) byCat.set(cid, []);
+      byCat.get(cid)!.push(item);
     }
-    return list;
-  }, [menuItems, activeCat, search]);
+    return categories
+      .map((cat) => ({ category: cat, items: byCat.get(cat._id) || [] }))
+      .filter((sec) => sec.items.length > 0);
+  }, [categories, menuItems]);
+
+  const searchFilteredItems = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return [];
+    return menuItems.filter((i) => i.translations.some((t2) => t2.name.toLowerCase().includes(q)));
+  }, [menuItems, search]);
+
+  const getSectionScrollTop = useCallback((root: HTMLElement, section: HTMLElement) => {
+    const rootRect = root.getBoundingClientRect();
+    const sectionRect = section.getBoundingClientRect();
+    return Math.max(0, root.scrollTop + (sectionRect.top - rootRect.top) - 4);
+  }, []);
+
+  const pickActiveCategoryFromScroll = useCallback(
+    (root: HTMLElement) => {
+      const anchorY = root.getBoundingClientRect().top + 48;
+      let currentId = menuSections[0]?.category._id ?? '';
+      for (const sec of menuSections) {
+        const el = categorySectionRefs.current[sec.category._id];
+        if (!el) continue;
+        if (el.getBoundingClientRect().top <= anchorY) {
+          currentId = sec.category._id;
+        }
+      }
+      return currentId;
+    },
+    [menuSections],
+  );
+
+  const lockMenuScrollSync = useCallback((root: HTMLElement, ms: number) => {
+    menuScrollLockRef.current = true;
+    if (menuScrollLockTimerRef.current) window.clearTimeout(menuScrollLockTimerRef.current);
+    const unlock = () => {
+      menuScrollLockRef.current = false;
+      root.removeEventListener('scrollend', unlock);
+    };
+    menuScrollLockTimerRef.current = window.setTimeout(unlock, ms);
+    root.addEventListener('scrollend', unlock, { once: true });
+  }, []);
+
+  const scrollToCategory = useCallback(
+    (catId: string) => {
+      if (search.trim()) {
+        pendingScrollCatRef.current = catId;
+        setSearch('');
+        return;
+      }
+      const root = menuScrollRef.current;
+      const el = categorySectionRefs.current[catId];
+      if (!root || !el) {
+        setActiveCat(catId);
+        return;
+      }
+      sidebarFollowCatRef.current = true;
+      setActiveCat(catId);
+      lockMenuScrollSync(root, 900);
+      root.scrollTo({ top: getSectionScrollTop(root, el), behavior: 'smooth' });
+    },
+    [search, getSectionScrollTop, lockMenuScrollSync],
+  );
+
+  useEffect(() => {
+    const catId = pendingScrollCatRef.current;
+    if (!catId || search.trim() || menuSections.length === 0) return;
+    pendingScrollCatRef.current = null;
+    const root = menuScrollRef.current;
+    const el = categorySectionRefs.current[catId];
+    if (root && el) {
+      sidebarFollowCatRef.current = true;
+      setActiveCat(catId);
+      lockMenuScrollSync(root, 400);
+      root.scrollTo({ top: getSectionScrollTop(root, el), behavior: 'auto' });
+    } else {
+      setActiveCat(catId);
+    }
+  }, [search, menuSections, getSectionScrollTop, lockMenuScrollSync]);
+
+  useEffect(() => {
+    const root = menuScrollRef.current;
+    if (!root || search.trim() || menuSections.length === 0) return;
+    let raf = 0;
+    const onScroll = () => {
+      if (menuScrollLockRef.current) return;
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        const currentId = pickActiveCategoryFromScroll(root);
+        if (currentId) {
+          setActiveCat((prev) => (prev === currentId ? prev : currentId));
+        }
+      });
+    };
+    root.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      root.removeEventListener('scroll', onScroll);
+      cancelAnimationFrame(raf);
+    };
+  }, [menuSections, search, pickActiveCategoryFromScroll]);
+
+  useEffect(() => {
+    if (search.trim() || !sidebarFollowCatRef.current) return;
+    sidebarFollowCatRef.current = false;
+    const btn = categoryBtnRefs.current[activeCat];
+    btn?.scrollIntoView({ block: 'nearest', behavior: 'auto' });
+  }, [activeCat, search]);
 
   /** 将同桌某条待结订单的菜品追加到当前点单（显式点击列表行） */
   const appendActiveOrderToCart = useCallback(
@@ -884,6 +967,97 @@ export default function CashierOrder() {
 
   const totalAmount = order.reduce((s, o) => s + o.price + (o.options || []).reduce((sum, opt) => sum + opt.extraPrice, 0), 0);
   const getItemCount = (menuItemId: string) => order.filter(o => o.menuItemId === menuItemId).length;
+
+  const renderMenuItemCard = (item: MenuItem) => {
+    const qty = getItemCount(item._id);
+    return (
+      <div
+        key={item._id}
+        onClick={() => addToOrder(item)}
+        style={{
+          background: 'var(--bg-white)',
+          border: qty > 0 ? '2px solid var(--red-primary)' : '1px solid var(--border)',
+          borderRadius: 8,
+          padding: '10px 8px',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          textAlign: 'center',
+          cursor: item.isSoldOut ? 'not-allowed' : 'pointer',
+          opacity: item.isSoldOut ? 0.4 : 1,
+          boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
+          minHeight: 80,
+          justifyContent: 'center',
+          position: 'relative',
+          userSelect: 'none',
+        }}
+      >
+        {qty > 0 && (
+          <span
+            style={{
+              position: 'absolute',
+              top: -6,
+              left: -6,
+              width: 22,
+              height: 22,
+              borderRadius: '50%',
+              background: 'var(--red-primary)',
+              color: '#fff',
+              fontSize: 12,
+              fontWeight: 700,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            {qty}
+          </span>
+        )}
+        {item.isSoldOut && (
+          <span
+            style={{
+              position: 'absolute',
+              top: 4,
+              right: 4,
+              fontSize: 9,
+              padding: '1px 5px',
+              borderRadius: 3,
+              fontWeight: 600,
+              background: '#9E9E9E',
+              color: '#fff',
+            }}
+          >
+            {t('cashier.orderSoldOutBadge')}
+          </span>
+        )}
+        <div
+          style={{
+            fontSize: 13,
+            fontWeight: 600,
+            lineHeight: 1.3,
+            marginBottom: 4,
+            display: '-webkit-box',
+            WebkitLineClamp: 2,
+            WebkitBoxOrient: 'vertical',
+            overflow: 'hidden',
+          }}
+        >
+          {getName(item.translations)}
+        </div>
+        <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--red-primary)' }}>€{item.price}</div>
+        {item.optionGroups && item.optionGroups.length > 0 && (
+          <div style={{ fontSize: 9, color: 'var(--text-light)', marginTop: 2 }}>⚙ {t('customer.selectOptions')}</div>
+        )}
+      </div>
+    );
+  };
+
+  const menuGridStyle: CSSProperties = {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))',
+    gap: 8,
+    alignContent: 'start',
+  };
 
   // Bundle matching
   const matchedBundles: MatchedBundle[] = useMemo(() => {
@@ -1752,11 +1926,33 @@ export default function CashierOrder() {
     <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden', gap: 0 }}>
       {/* Left: Category Sidebar */}
       <div style={{ width: 110, flexShrink: 0, background: 'var(--bg-white)', borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column', overflowY: 'auto', padding: '8px 0' }}>
-        {categories.map(cat => {
+        {menuSections.map((sec) => {
+          const cat = sec.category;
           const isActive = activeCat === cat._id;
           return (
-            <button key={cat._id} onClick={() => { setActiveCat(cat._id); setSearch(''); }}
-              style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '14px 8px', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: isActive ? 700 : 500, color: isActive ? 'var(--red-primary)' : 'var(--text-secondary)', background: isActive ? 'var(--red-light)' : 'transparent', borderLeft: isActive ? '4px solid var(--red-primary)' : '4px solid transparent', minHeight: 56 }}>
+            <button
+              key={cat._id}
+              ref={(el) => {
+                categoryBtnRefs.current[cat._id] = el;
+              }}
+              type="button"
+              onClick={() => scrollToCategory(cat._id)}
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '14px 8px',
+                border: 'none',
+                cursor: 'pointer',
+                fontSize: 13,
+                fontWeight: isActive ? 700 : 500,
+                color: isActive ? 'var(--red-primary)' : 'var(--text-secondary)',
+                background: isActive ? 'var(--red-light)' : 'transparent',
+                borderLeft: isActive ? '4px solid var(--red-primary)' : '4px solid transparent',
+                minHeight: 56,
+              }}
+            >
               {getName(cat.translations)}
             </button>
           );
@@ -1768,23 +1964,59 @@ export default function CashierOrder() {
         <div style={{ padding: '10px 12px', background: 'var(--bg-white)', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
           <input className="input" placeholder={t('cashier.searchMenuPlaceholder')} value={search} onChange={e => setSearch(e.target.value)} style={{ width: '100%', padding: '10px 14px', fontSize: 14 }} />
         </div>
-        <div style={{ padding: '10px 12px 6px', fontSize: 14, fontWeight: 700, background: 'var(--bg)', flexShrink: 0 }}>
-          {search ? t('cashier.searchResultsFor', { q: search }) : getName(categories.find(c => c._id === activeCat)?.translations || [])}
-          <span style={{ fontWeight: 400, color: 'var(--text-light)', marginLeft: 8 }}>({filteredItems.length})</span>
-        </div>
-        <div style={{ flex: 1, overflowY: 'auto', padding: '8px 10px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: 8, alignContent: 'start' }}>
-          {filteredItems.map(item => {
-            const qty = getItemCount(item._id);
-            return (
-              <div key={item._id} onClick={() => addToOrder(item)} style={{ background: 'var(--bg-white)', border: qty > 0 ? '2px solid var(--red-primary)' : '1px solid var(--border)', borderRadius: 8, padding: '10px 8px', display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', cursor: item.isSoldOut ? 'not-allowed' : 'pointer', opacity: item.isSoldOut ? 0.4 : 1, boxShadow: '0 1px 3px rgba(0,0,0,0.06)', minHeight: 80, justifyContent: 'center', position: 'relative', userSelect: 'none' }}>
-                {qty > 0 && <span style={{ position: 'absolute', top: -6, left: -6, width: 22, height: 22, borderRadius: '50%', background: 'var(--red-primary)', color: '#fff', fontSize: 12, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{qty}</span>}
-                {item.isSoldOut && <span style={{ position: 'absolute', top: 4, right: 4, fontSize: 9, padding: '1px 5px', borderRadius: 3, fontWeight: 600, background: '#9E9E9E', color: '#fff' }}>{t('cashier.orderSoldOutBadge')}</span>}
-                <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.3, marginBottom: 4, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{getName(item.translations)}</div>
-                <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--red-primary)' }}>€{item.price}</div>
-                {item.optionGroups && item.optionGroups.length > 0 && <div style={{ fontSize: 9, color: 'var(--text-light)', marginTop: 2 }}>⚙ {t('customer.selectOptions')}</div>}
+        {search.trim() ? (
+          <div style={{ padding: '10px 12px 6px', fontSize: 14, fontWeight: 700, background: 'var(--bg)', flexShrink: 0 }}>
+            {t('cashier.searchResultsFor', { q: search.trim() })}
+            <span style={{ fontWeight: 400, color: 'var(--text-light)', marginLeft: 8 }}>({searchFilteredItems.length})</span>
+          </div>
+        ) : null}
+        <div ref={menuScrollRef} style={{ flex: 1, overflowY: 'auto', padding: '8px 10px' }}>
+          {menuLoading ? (
+            <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-light)', fontSize: 13 }}>
+              {t('cashier.menuLoading')}
+            </div>
+          ) : search.trim() ? (
+            searchFilteredItems.length === 0 ? (
+              <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-light)', fontSize: 13 }}>
+                {t('cashier.menuSearchEmpty')}
               </div>
-            );
-          })}
+            ) : (
+              <div style={menuGridStyle}>{searchFilteredItems.map((item) => renderMenuItemCard(item))}</div>
+            )
+          ) : menuSections.length === 0 ? (
+            <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-light)', fontSize: 13 }}>
+              {t('cashier.menuEmpty')}
+            </div>
+          ) : (
+            menuSections.map((sec) => (
+              <section
+                key={sec.category._id}
+                ref={(el) => {
+                  categorySectionRefs.current[sec.category._id] = el;
+                }}
+                data-category-id={sec.category._id}
+                style={{ marginBottom: 16 }}
+              >
+                <div
+                  style={{
+                    position: 'sticky',
+                    top: 0,
+                    zIndex: 1,
+                    background: 'var(--bg)',
+                    padding: '8px 0 6px',
+                    fontSize: 14,
+                    fontWeight: 700,
+                    borderBottom: '1px solid var(--border)',
+                    marginBottom: 8,
+                  }}
+                >
+                  {getName(sec.category.translations)}
+                  <span style={{ fontWeight: 400, color: 'var(--text-light)', marginLeft: 8 }}>({sec.items.length})</span>
+                </div>
+                <div style={menuGridStyle}>{sec.items.map((item) => renderMenuItemCard(item))}</div>
+              </section>
+            ))
+          )}
         </div>
       </div>
 
