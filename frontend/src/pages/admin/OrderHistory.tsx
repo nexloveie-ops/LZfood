@@ -116,6 +116,7 @@ export default function OrderHistory() {
             <option value="">全部</option>
             <option value="card">刷卡</option>
             <option value="cash">现金</option>
+            <option value="member">会员</option>
           </select>
         </div>
         <button className="btn btn-primary" onClick={fetchOrders} disabled={loading || !startDate || !endDate}>
@@ -148,17 +149,18 @@ export default function OrderHistory() {
                 const orderNum = o.dineInOrderNumber
                   || (o.dailyOrderNumber ? `#${o.dailyOrderNumber}` : o._id.slice(-6).toUpperCase());
                 const isHidden = o.status === 'completed-hide' || o.status === 'checked_out-hide';
-                const isCash = o.checkout?.paymentMethod === 'cash';
+                const canToggleHide =
+                  o.checkout?.paymentMethod === 'cash' || o.checkout?.paymentMethod === 'member';
                 return (
                   <tr
                     key={o._id}
                     style={{
                       borderBottom: '1px solid #f0f0f0',
                       background: isHidden ? '#FFFDE7' : undefined,
-                      cursor: isCash ? 'pointer' : undefined,
+                      cursor: canToggleHide ? 'pointer' : undefined,
                     }}
-                    onClick={isCash ? () => toggleHide(o._id) : undefined}
-                    title={isCash ? (isHidden ? '点击恢复显示' : '点击隐藏') : undefined}
+                    onClick={canToggleHide ? () => toggleHide(o._id) : undefined}
+                    title={canToggleHide ? (isHidden ? '点击恢复显示' : '点击隐藏') : undefined}
                   >
                     <td style={{ padding: '8px 12px', fontFamily: 'monospace', fontWeight: 600 }}>{orderNum}</td>
                     <td style={{ padding: '8px 12px' }}>

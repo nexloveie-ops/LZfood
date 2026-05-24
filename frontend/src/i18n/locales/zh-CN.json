@@ -582,6 +582,7 @@
     "allergenIcon": "图标",
     "allergenInUse": "该过敏原正在被菜品使用，无法删除",
     "optionGroups": "选项组",
+    "dragToReorder": "拖动 ☰ 可调整选项组与选项顺序",
     "addOptionGroup": "添加选项组",
     "addChoice": "添加选项",
     "groupName": "选项组名称",

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../../context/AuthContext';
 import { apiFetch } from '../../api/client';
@@ -55,6 +55,26 @@ const emptyRuleForm = {
   categoryIds: [] as string[],
   menuItemIds: [] as string[],
   excludedMenuItemIds: [] as string[],
+};
+
+function reorderList<T>(list: T[], fromIdx: number, toIdx: number): T[] {
+  if (fromIdx === toIdx || fromIdx < 0 || toIdx < 0 || fromIdx >= list.length || toIdx >= list.length) {
+    return list;
+  }
+  const next = [...list];
+  const [moved] = next.splice(fromIdx, 1);
+  next.splice(toIdx, 0, moved);
+  return next;
+}
+
+const dragHandleStyle: CSSProperties = {
+  cursor: 'grab',
+  color: 'var(--text-light)',
+  fontSize: 16,
+  lineHeight: 1,
+  userSelect: 'none',
+  padding: '2px 4px',
+  flexShrink: 0,
 };
 
 /** Accept translation array or locale→name map from API / legacy data */
@@ -269,6 +289,11 @@ export default function OptionGroupTemplates() {
   const [savingRule, setSavingRule] = useState(false);
   const [filter, setFilter] = useState('');
 
+  const groupDragFromRef = useRef<number | null>(null);
+  const [groupDragOverIdx, setGroupDragOverIdx] = useState<number | null>(null);
+  const choiceDragFromRef = useRef<{ gi: number; ci: number } | null>(null);
+  const [choiceDragOver, setChoiceDragOver] = useState<{ gi: number; ci: number } | null>(null);
+
   const getName = (translations: Translation[]) => {
     const found = translations.find((t2) => t2.locale === lang) || translations[0];
     return found?.name || '';
@@ -341,6 +366,66 @@ export default function OptionGroupTemplates() {
         i === gi ? { ...g, choices: g.choices.map((c, j) => (j === ci ? { ...c, [field]: value } : c)) } : g,
       ),
     }));
+  };
+
+  const moveTemplateGroup = (fromIdx: number, toIdx: number) => {
+    setTemplateForm((prev) => ({
+      ...prev,
+      optionGroups: reorderList(prev.optionGroups, fromIdx, toIdx),
+    }));
+  };
+
+  const moveTemplateChoice = (gi: number, fromCi: number, toCi: number) => {
+    setTemplateForm((prev) => ({
+      ...prev,
+      optionGroups: prev.optionGroups.map((g, i) =>
+        i === gi ? { ...g, choices: reorderList(g.choices, fromCi, toCi) } : g,
+      ),
+    }));
+  };
+
+  const handleGroupDragStart = (idx: number) => {
+    groupDragFromRef.current = idx;
+  };
+
+  const handleGroupDragOver = (e: DragEvent, idx: number) => {
+    e.preventDefault();
+    setGroupDragOverIdx(idx);
+  };
+
+  const handleGroupDrop = (targetIdx: number) => {
+    const fromIdx = groupDragFromRef.current;
+    groupDragFromRef.current = null;
+    setGroupDragOverIdx(null);
+    if (fromIdx == null || fromIdx === targetIdx) return;
+    moveTemplateGroup(fromIdx, targetIdx);
+  };
+
+  const handleGroupDragEnd = () => {
+    groupDragFromRef.current = null;
+    setGroupDragOverIdx(null);
+  };
+
+  const handleChoiceDragStart = (gi: number, ci: number) => {
+    choiceDragFromRef.current = { gi, ci };
+  };
+
+  const handleChoiceDragOver = (e: DragEvent, gi: number, ci: number) => {
+    e.preventDefault();
+    setChoiceDragOver({ gi, ci });
+  };
+
+  const handleChoiceDrop = (gi: number, targetCi: number) => {
+    const from = choiceDragFromRef.current;
+    choiceDragFromRef.current = null;
+    setChoiceDragOver(null);
+    if (!from || from.gi !== gi || from.ci === targetCi) return;
+    moveTemplateChoice(gi, from.ci, targetCi);
+  };
+
+  const handleChoiceDragEnd = () => {
+    choiceDragFromRef.current = null;
+    setChoiceDragOver(null);
   };
 
   const saveTemplate = async () => {
@@ -543,16 +628,46 @@ export default function OptionGroupTemplates() {
 
             <div style={{ marginTop: 14, borderTop: '1px dashed var(--border)', paddingTop: 12 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                <div style={{ fontSize: 13, fontWeight: 700 }}>{t('admin.optionGroups')}</div>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700 }}>{t('admin.optionGroups')}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-light)', marginTop: 2 }}>
+                    ☰ {t('admin.dragToReorder', { defaultValue: 'Drag handle to reorder groups and choices' })}
+                  </div>
+                </div>
                 <button className="btn btn-outline" style={{ fontSize: 12, padding: '4px 10px' }} onClick={addTemplateGroup}>
                   + {t('admin.addOptionGroup')}
                 </button>
               </div>
 
               {templateForm.optionGroups.map((group, gi) => (
-                <div key={gi} style={{ background: 'var(--bg)', borderRadius: 8, padding: 12, marginBottom: 10, border: '1px solid var(--border)' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                    <span style={{ fontSize: 12, fontWeight: 600 }}>#{gi + 1}</span>
+                <div
+                  key={gi}
+                  onDragOver={(e) => handleGroupDragOver(e, gi)}
+                  onDragLeave={() => setGroupDragOverIdx(null)}
+                  onDrop={() => handleGroupDrop(gi)}
+                  style={{
+                    background: groupDragOverIdx === gi ? '#E3F2FD' : 'var(--bg)',
+                    borderRadius: 8,
+                    padding: 12,
+                    marginBottom: 10,
+                    border: `1px solid ${groupDragOverIdx === gi ? '#90CAF9' : 'var(--border)'}`,
+                    transition: 'background 0.15s, border-color 0.15s',
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, gap: 8 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span
+                        draggable
+                        onDragStart={() => handleGroupDragStart(gi)}
+                        onDragEnd={handleGroupDragEnd}
+                        style={dragHandleStyle}
+                        title={t('admin.dragToReorder', { defaultValue: 'Drag to reorder' })}
+                        aria-hidden
+                      >
+                        ☰
+                      </span>
+                      <span style={{ fontSize: 12, fontWeight: 600 }}>#{gi + 1}</span>
+                    </div>
                     <button className="btn btn-ghost" style={{ fontSize: 11, color: 'var(--red-primary)' }} onClick={() => removeTemplateGroup(gi)}>
                       {t('common.delete')}
                     </button>
@@ -613,15 +728,43 @@ export default function OptionGroupTemplates() {
                     </div>
                   )}
 
-                  {group.choices.map((choice, ci) => (
-                    <div key={ci} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 90px 90px auto', gap: 6, marginBottom: 4 }}>
+                  {group.choices.map((choice, ci) => {
+                    const choiceDropActive = choiceDragOver?.gi === gi && choiceDragOver.ci === ci;
+                    return (
+                    <div
+                      key={ci}
+                      onDragOver={(e) => handleChoiceDragOver(e, gi, ci)}
+                      onDragLeave={() => setChoiceDragOver(null)}
+                      onDrop={() => handleChoiceDrop(gi, ci)}
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'auto 1fr 1fr 90px 90px auto',
+                        gap: 6,
+                        marginBottom: 4,
+                        alignItems: 'center',
+                        borderRadius: 6,
+                        background: choiceDropActive ? '#E3F2FD' : 'transparent',
+                        outline: choiceDropActive ? '1px solid #90CAF9' : 'none',
+                      }}
+                    >
+                      <span
+                        draggable
+                        onDragStart={() => handleChoiceDragStart(gi, ci)}
+                        onDragEnd={handleChoiceDragEnd}
+                        style={dragHandleStyle}
+                        title={t('admin.dragToReorder', { defaultValue: 'Drag to reorder' })}
+                        aria-hidden
+                      >
+                        ☰
+                      </span>
                       <input className="input" placeholder={`${t('admin.choiceName')} (中文)`} value={choice.nameZh} onChange={(e) => updateTemplateChoice(gi, ci, 'nameZh', e.target.value)} style={{ fontSize: 12 }} />
                       <input className="input" placeholder={`${t('admin.choiceName')} (EN)`} value={choice.nameEn} onChange={(e) => updateTemplateChoice(gi, ci, 'nameEn', e.target.value)} style={{ fontSize: 12 }} />
                       <input className="input" type="number" placeholder={t('admin.originalPrice')} value={choice.originalPrice || ''} onChange={(e) => updateTemplateChoice(gi, ci, 'originalPrice', Number(e.target.value))} style={{ fontSize: 12 }} />
                       <input className="input" type="number" placeholder={t('admin.extraPrice')} value={choice.extraPrice} onChange={(e) => updateTemplateChoice(gi, ci, 'extraPrice', Number(e.target.value))} style={{ fontSize: 12 }} />
                       <button className="btn btn-ghost" style={{ fontSize: 14, color: 'var(--red-primary)' }} onClick={() => removeTemplateChoice(gi, ci)}>✕</button>
                     </div>
-                  ))}
+                    );
+                  })}
                   <button className="btn btn-ghost" style={{ fontSize: 11, marginTop: 4 }} onClick={() => addTemplateChoice(gi)}>
                     + {t('admin.addChoice')}
                   </button>

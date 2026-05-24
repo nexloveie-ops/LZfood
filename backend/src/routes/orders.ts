@@ -1373,7 +1373,7 @@ export function createOrdersRouter(io: SocketIOServer): Router {
     }
   });
 
-  // PUT /api/orders/:id/toggle-hide — Toggle hide status for cash orders
+  // PUT /api/orders/:id/toggle-hide — Toggle hide status (cash / member orders in admin history)
   router.put('/:id/toggle-hide', async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { Order } = orderModels();

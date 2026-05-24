@@ -582,6 +582,7 @@
     "allergenIcon": "Icon",
     "allergenInUse": "This allergen is in use by menu items and cannot be deleted",
     "optionGroups": "Option Groups",
+    "dragToReorder": "Drag handle to reorder groups and choices",
     "addOptionGroup": "Add Option Group",
     "addChoice": "Add Choice",
     "groupName": "Group Name",
