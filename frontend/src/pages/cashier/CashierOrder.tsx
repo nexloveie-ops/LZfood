@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useMemo, useRef, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../../context/AuthContext';
-import { apiFetch } from '../../api/client';
+import { apiFetch, getConfiguredStoreSlug } from '../../api/client';
 import CashierMemberCheckoutBlock, {
   buildMemberFullWalletCheckoutBody,
   canMemberFullWalletPay,
@@ -13,6 +13,11 @@ import type { CartItemOption } from '../../context/CartContext';
 import ReceiptPrint from '../../components/cashier/ReceiptPrint';
 import { buildReceiptHTML, printViaIframe } from '../../components/cashier/ReceiptPrint';
 import { matchBundles, calcBundleTotal, type OfferData, type MatchedBundle } from '../../utils/bundleMatcher';
+import {
+  cashierMenuSessionCacheKey,
+  getCashierMenuSessionCache,
+  setCashierMenuSessionCache,
+} from '../../utils/cashierMenuSessionCache';
 import {
   DELIVERY_FEE_RULES_CONFIG_KEY,
   deliveryFeeForDistance,
@@ -230,9 +235,12 @@ export default function CashierOrder() {
   const canMemberWallet = hasFeature('cashier.member.wallet');
   const lang = i18n.language;
 
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
-  const [activeCat, setActiveCat] = useState('');
+  const menuSessionCacheKey = cashierMenuSessionCacheKey(getConfiguredStoreSlug(), lang);
+  const initialMenuCache = getCashierMenuSessionCache(menuSessionCacheKey);
+
+  const [categories, setCategories] = useState<Category[]>(() => (initialMenuCache?.categories as Category[]) ?? []);
+  const [menuItems, setMenuItems] = useState<MenuItem[]>(() => (initialMenuCache?.menuItems as MenuItem[]) ?? []);
+  const [activeCat, setActiveCat] = useState(() => initialMenuCache?.categories[0]?._id ?? '');
   const [search, setSearch] = useState('');
   const [order, setOrder] = useState<OrderLine[]>([]);
   const [orderType, setOrderType] = useState<'dine_in' | 'takeout' | 'phone' | 'delivery'>('dine_in');
@@ -265,7 +273,7 @@ export default function CashierOrder() {
   const menuScrollLockTimerRef = useRef<number | undefined>(undefined);
   const pendingScrollCatRef = useRef<string | null>(null);
   const sidebarFollowCatRef = useRef(false);
-  const [menuLoading, setMenuLoading] = useState(true);
+  const [menuLoading, setMenuLoading] = useState(() => !(initialMenuCache && initialMenuCache.menuItems.length > 0));
   const frequentFetchGenRef = useRef(0);
   const [frequentItems, setFrequentItems] = useState<FrequentItemRow[]>([]);
   const [frequentItemsLoading, setFrequentItemsLoading] = useState(false);
@@ -329,6 +337,22 @@ export default function CashierOrder() {
   }, []);
 
   const fetchMenu = useCallback(async () => {
+    const cacheKey = cashierMenuSessionCacheKey(getConfiguredStoreSlug(), lang);
+    const cached = getCashierMenuSessionCache(cacheKey);
+    if (cached && cached.menuItems.length > 0) {
+      setCategories(cached.categories as Category[]);
+      setMenuItems(cached.menuItems as MenuItem[]);
+      if (cached.categories.length > 0) {
+        setActiveCat((prev) =>
+          prev && cached.categories.some((c) => c._id === prev) ? prev : cached.categories[0]._id,
+        );
+      } else {
+        setActiveCat('');
+      }
+      setMenuLoading(false);
+      return;
+    }
+
     setMenuLoading(true);
     setMenuItems([]);
     categorySectionRefs.current = {};
@@ -337,8 +361,10 @@ export default function CashierOrder() {
         apiFetch(`/api/menu/categories?lang=${encodeURIComponent(lang)}`),
         apiFetch(`/api/menu/items?lang=${encodeURIComponent(lang)}`),
       ]);
+      let cats: Category[] = [];
+      let items: MenuItem[] = [];
       if (catRes.ok) {
-        const cats: Category[] = await catRes.json();
+        cats = await catRes.json();
         setCategories(cats);
         if (cats.length > 0) {
           setActiveCat((prev) => (prev && cats.some((c) => c._id === prev) ? prev : cats[0]._id));
@@ -347,7 +373,11 @@ export default function CashierOrder() {
         }
       }
       if (itemsRes.ok) {
-        setMenuItems(await itemsRes.json());
+        items = await itemsRes.json();
+        setMenuItems(items);
+      }
+      if (cats.length > 0 || items.length > 0) {
+        setCashierMenuSessionCache(cacheKey, { categories: cats, menuItems: items });
       }
     } finally {
       setMenuLoading(false);
@@ -837,8 +867,13 @@ export default function CashierOrder() {
         const mids = new Set(lines.map((l) => l.menuItemId));
         const needMerge = [...mids].some((id) => !menuItems.some((m) => m._id === id));
         if (needMerge) {
-          const res = await apiFetch(`/api/menu/items?lang=${encodeURIComponent(lang)}`);
-          if (res.ok) mergeMenuItems(await res.json());
+          const cached = getCashierMenuSessionCache(cashierMenuSessionCacheKey(getConfiguredStoreSlug(), lang));
+          if (cached && cached.menuItems.length > 0) {
+            mergeMenuItems(cached.menuItems as MenuItem[]);
+          } else {
+            const res = await apiFetch(`/api/menu/items?lang=${encodeURIComponent(lang)}`);
+            if (res.ok) mergeMenuItems(await res.json());
+          }
         }
         setOrder((prev) => [...prev, ...lines]);
       } finally {
