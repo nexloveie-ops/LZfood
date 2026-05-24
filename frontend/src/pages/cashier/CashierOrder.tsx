@@ -2691,6 +2691,7 @@ export default function CashierOrder() {
           itemName={getName(optionModal.translations)}
           price={optionModal.price}
           optionGroups={optionModal.optionGroups}
+          layout="cashier"
           onConfirm={(opts) => addToOrderWithOptions(optionModal, opts)}
           onClose={() => setOptionModal(null)}
         />

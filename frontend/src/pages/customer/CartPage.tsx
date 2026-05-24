@@ -362,13 +362,12 @@ export default function CartPage() {
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--text-dark)' }}>{getItemName(item.names)}</div>
                 {item.options && item.options.length > 0 && (
-                  <div style={{ fontSize: 11, color: 'var(--text-light)', marginTop: 2 }}>
+                  <div style={{ fontSize: 11, color: 'var(--text-light)', marginTop: 4, display: 'flex', flexDirection: 'column', gap: 2 }}>
                     {item.options.map((o, i) => (
-                      <span key={i}>
-                        {i > 0 && ' · '}
+                      <div key={`${o.groupId}-${o.choiceId}-${i}`} style={{ lineHeight: 1.35 }}>
                         {o.groupName[lang] || Object.values(o.groupName)[0]}: {o.choiceName[lang] || Object.values(o.choiceName)[0]}
                         {o.extraPrice > 0 && ` +€${o.extraPrice}`}
-                      </span>
+                      </div>
                     ))}
                   </div>
                 )}

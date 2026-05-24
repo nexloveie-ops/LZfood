@@ -28,9 +28,11 @@ interface Props {
   optionGroups: OptionGroup[];
   onConfirm: (options: CartItemOption[]) => void;
   onClose: () => void;
+  /** customer: 底部窄 sheet；cashier: 居中宽面板，选项多列排布 */
+  layout?: 'customer' | 'cashier';
 }
 
-export default function OptionSelectModal({ itemName, price, optionGroups, onConfirm, onClose }: Props) {
+export default function OptionSelectModal({ itemName, price, optionGroups, onConfirm, onClose, layout = 'customer' }: Props) {
   const { t, i18n } = useTranslation();
   const lang = i18n.language;
 
@@ -133,6 +135,8 @@ export default function OptionSelectModal({ itemName, price, optionGroups, onCon
     };
   }, [onClose]);
 
+  const isCashier = layout === 'cashier';
+
   const sheet = (
     <div
       role="presentation"
@@ -142,9 +146,10 @@ export default function OptionSelectModal({ itemName, price, optionGroups, onCon
         zIndex: 10050,
         display: 'flex',
         flexDirection: 'column',
-        justifyContent: 'flex-end',
+        justifyContent: isCashier ? 'center' : 'flex-end',
         alignItems: 'center',
         pointerEvents: 'auto',
+        padding: isCashier ? 16 : 0,
       }}
     >
       <div
@@ -167,15 +172,15 @@ export default function OptionSelectModal({ itemName, price, optionGroups, onCon
           position: 'relative',
           zIndex: 1,
           background: 'var(--bg-white, #fff)',
-          borderRadius: '16px 16px 0 0',
+          borderRadius: isCashier ? 16 : '16px 16px 0 0',
           width: '100%',
-          maxWidth: 430,
-          maxHeight: 'min(88dvh, 88vh)',
+          maxWidth: isCashier ? 820 : 430,
+          maxHeight: isCashier ? 'min(92dvh, 92vh)' : 'min(88dvh, 88vh)',
           minHeight: 0,
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
-          boxShadow: '0 -8px 32px rgba(0,0,0,0.18)',
+          boxShadow: isCashier ? '0 12px 40px rgba(0,0,0,0.22)' : '0 -8px 32px rgba(0,0,0,0.18)',
           paddingBottom: 'env(safe-area-inset-bottom, 0px)',
         }}
       >
@@ -183,7 +188,7 @@ export default function OptionSelectModal({ itemName, price, optionGroups, onCon
         <div
           style={{
             flexShrink: 0,
-            padding: '12px 16px 10px',
+            padding: isCashier ? '14px 20px 12px' : '12px 16px 10px',
             borderBottom: '1px solid var(--border, #eee)',
             display: 'flex',
             justifyContent: 'space-between',
@@ -192,7 +197,7 @@ export default function OptionSelectModal({ itemName, price, optionGroups, onCon
           }}
         >
           <div style={{ minWidth: 0, flex: 1 }}>
-            <div id="option-modal-title" style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-dark)', lineHeight: 1.25 }}>
+            <div id="option-modal-title" style={{ fontSize: isCashier ? 18 : 16, fontWeight: 700, color: 'var(--text-dark)', lineHeight: 1.25 }}>
               {itemName}
             </div>
             <div style={{ fontSize: 14, color: 'var(--red-primary)', fontWeight: 600, marginTop: 2 }}>€{price}</div>
@@ -232,12 +237,12 @@ export default function OptionSelectModal({ itemName, price, optionGroups, onCon
             WebkitOverflowScrolling: 'touch',
             overscrollBehavior: 'contain',
             touchAction: 'pan-y',
-            padding: '12px 16px',
+            padding: isCashier ? '14px 20px' : '12px 16px',
           }}
         >
           {optionGroups.map(group => (
-            <div key={group._id} style={{ marginBottom: 20 }}>
-              <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            <div key={group._id} style={{ marginBottom: isCashier ? 16 : 20 }}>
+              <div style={{ fontSize: isCashier ? 15 : 14, fontWeight: 700, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                 {getName(group.translations)}
                 {group.required
                   ? <span style={{ fontSize: 11, color: '#fff', background: 'var(--red-primary)', padding: '1px 6px', borderRadius: 4 }}>{t('admin.required')}</span>
@@ -253,7 +258,7 @@ export default function OptionSelectModal({ itemName, price, optionGroups, onCon
                       : t('customer.optionalBetween', { min: getOptionalMinSelect(group), max: getOptionalMaxSelect(group) })}
                 </div>
               )}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: isCashier ? 'repeat(4, minmax(0, 1fr))' : 'repeat(2, minmax(0, 1fr))', gap: isCashier ? 10 : 8 }}>
                 {group.choices.map(choice => {
                   const selected = group.required
                     ? singleSelections[group._id] === choice._id
@@ -310,10 +315,10 @@ export default function OptionSelectModal({ itemName, price, optionGroups, onCon
         <div
           style={{
             flexShrink: 0,
-            padding: '10px 16px 16px',
+            padding: isCashier ? '12px 20px 16px' : '10px 16px 16px',
             borderTop: '1px solid var(--border, #eee)',
             display: 'flex',
-            flexDirection: 'column',
+            flexDirection: isCashier ? 'row' : 'column',
             gap: 10,
           }}
         >
@@ -323,8 +328,9 @@ export default function OptionSelectModal({ itemName, price, optionGroups, onCon
             disabled={!canConfirm}
             className="btn btn-primary"
             style={{
-              width: '100%',
-              padding: '14px 0',
+              width: isCashier ? 'auto' : '100%',
+              flex: isCashier ? 1 : undefined,
+              padding: isCashier ? '14px 16px' : '14px 0',
               fontSize: 15,
               letterSpacing: 1,
               opacity: canConfirm ? 1 : 0.5,
@@ -342,7 +348,7 @@ export default function OptionSelectModal({ itemName, price, optionGroups, onCon
             type="button"
             onClick={onClose}
             className="btn btn-outline"
-            style={{ width: '100%', padding: '12px 0', fontSize: 14 }}
+            style={{ width: isCashier ? 'auto' : '100%', flex: isCashier ? '0 0 120px' : undefined, padding: isCashier ? '14px 16px' : '12px 0', fontSize: 14 }}
           >
             {t('common.cancel')}
           </button>
