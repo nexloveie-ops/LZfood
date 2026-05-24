@@ -1999,9 +1999,6 @@ export default function CashierOrder() {
               >
                 <div
                   style={{
-                    position: 'sticky',
-                    top: 0,
-                    zIndex: 1,
                     background: 'var(--bg)',
                     padding: '8px 0 6px',
                     fontSize: 14,
