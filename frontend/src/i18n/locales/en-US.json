@@ -404,7 +404,7 @@
   },
   "admin": {
     "title": "Admin Panel",
-    "categories": "Categories",
+    "categories": "Menu catalog",
     "menuItems": "Menu Items",
     "optionGroupTemplatesNav": "Option Templates",
     "optionGroupTemplatesTitle": "Option Group Templates",
@@ -414,7 +414,6 @@
     "template": "Template",
     "pickTemplate": "Select a template",
     "priority": "Priority (smaller comes first)",
-    "categories": "Categories",
     "targetMenuItems": "Menu items (explicit)",
     "excludedItems": "Excluded items",
     "excludedItemsHelp": "Exclusions apply to all match paths: if an item is excluded, this rule's template will not apply to it.",

@@ -404,7 +404,7 @@
   },
   "admin": {
     "title": "管理后台",
-    "categories": "菜品分类",
+    "categories": "菜品目录",
     "menuItems": "菜品管理",
     "optionGroupTemplatesNav": "选项组模板",
     "optionGroupTemplatesTitle": "选项组模板与分配",
@@ -414,7 +414,6 @@
     "template": "模板",
     "pickTemplate": "请选择模板",
     "priority": "优先级（数字越小越靠前）",
-    "categories": "分类",
     "targetMenuItems": "菜品（显式分配）",
     "excludedItems": "排除菜品",
     "excludedItemsHelp": "排除对所有命中路径生效：只要菜品被勾选排除，则不会应用该规则对应的模板。",
