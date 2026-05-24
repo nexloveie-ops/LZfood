@@ -1,6 +1,4 @@
-/**
- * Aggregates third-party integration status for platform admins (read-only, env + provider APIs).
- */
+import { GTS_FREE_TIER_CHARS_PER_MONTH, getGtsUsageForMonth } from './translationUsage';
 
 function twilioBasicAuthHeader(): string | null {
   const sid = process.env.TWILIO_ACCOUNT_SID?.trim();
@@ -80,6 +78,16 @@ export type IntegrationsOverview = {
     configured: boolean;
     note: string;
   };
+  googleTranslate: {
+    configured: boolean;
+    charactersThisMonth: number;
+    requestsThisMonth: number;
+    freeTierCharsPerMonth: number;
+    estimatedRemainingThisMonth: number;
+    monthUtc: string;
+    consoleUrl: string;
+    note: string;
+  };
   gcs: {
     configured: boolean;
     bucket: string | null;
@@ -144,6 +152,27 @@ export async function buildIntegrationsOverview(): Promise<IntegrationsOverview>
     note: 'Usage and quotas are managed in Google Cloud Console → APIs & Services.',
   };
 
+  const gtsUsage = await getGtsUsageForMonth();
+  const gtsConfigured = !!process.env.GTS?.trim();
+  const gtsChars = gtsUsage.characters;
+  const googleTranslate = {
+    configured: gtsConfigured,
+    charactersThisMonth: gtsChars,
+    requestsThisMonth: gtsUsage.requests,
+    freeTierCharsPerMonth: GTS_FREE_TIER_CHARS_PER_MONTH,
+    estimatedRemainingThisMonth: Math.max(0, GTS_FREE_TIER_CHARS_PER_MONTH - gtsChars),
+    monthUtc: gtsUsage.month,
+    consoleUrl: 'https://console.cloud.google.com/apis/api/translate.googleapis.com/metrics',
+    note: 'Free tier: 500,000 source characters/month (NMT). Usage below is counted by this app when staff use「译成英文」.',
+  };
+
+  if (gtsConfigured && gtsChars >= GTS_FREE_TIER_CHARS_PER_MONTH * 0.9) {
+    alerts.push({
+      level: gtsChars >= GTS_FREE_TIER_CHARS_PER_MONTH ? 'critical' : 'warning',
+      message: `Google Translation (GTS) usage this month: ${gtsChars.toLocaleString()} / ${GTS_FREE_TIER_CHARS_PER_MONTH.toLocaleString()} free characters.`,
+    });
+  }
+
   const gcsBucket = process.env.GCS_BUCKET?.trim() || null;
   const gcs = {
     configured: !!gcsBucket && !/^1|true|yes$/i.test(String(process.env.USE_LOCAL_UPLOADS || '').trim()),
@@ -161,6 +190,7 @@ export async function buildIntegrationsOverview(): Promise<IntegrationsOverview>
     fetchedAt,
     twilio,
     googleGeo,
+    googleTranslate,
     gcs,
     alerts,
   };

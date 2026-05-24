@@ -11,6 +11,7 @@ import { resolveStoreEffectiveFeatures, FeatureKeys } from '../utils/featureCata
 import {
   DELIVERY_FEE_RULES_CONFIG_KEY,
   deliveryFeeForDistance,
+  parseDeliveryFeeEuroInput,
   parseDeliveryFeeRulesJson,
 } from '../utils/deliveryFeeRules';
 import { computeOrderPayableTotalEuro } from '../utils/orderPayableTotal';
@@ -23,6 +24,11 @@ import { aggregateFrequentMenuItemsForCustomer } from '../utils/customerFrequent
 import { zonedDayBoundsForRef } from '../utils/zonedDayBounds';
 import { getDineInWorkflowModeForStore } from '../utils/dineInWorkflowMode';
 import { assertDineInItemsAdditiveOnly, mergeDineInKitchenPrintedAndSettledFromPrevious } from '../utils/dineInPayAfterItems';
+import {
+  adHocOptionsToSnapshots,
+  parseAdHocOptionsFromItemPayload,
+  type AdHocOptionInput,
+} from '../utils/cashierAdHocOptions';
 
 function isStaffCashierOrOwner(req: Request): boolean {
   const u = req.user;
@@ -56,6 +62,26 @@ export function createOrdersRouter(io: SocketIOServer): Router {
   const ACTIVE_ORDER_STATUSES = ['pending', 'paid_online', 'checked_out'] as const;
 
   type SelectedOptInput = { groupId: string; choiceId: string };
+
+  type OrderItemBuildInput = {
+    menuItemId: string;
+    quantity: number;
+    selectedOptions?: SelectedOptInput[];
+    adHocOptions?: AdHocOptionInput[];
+  };
+
+  function parseOrderItemAdHoc(raw: unknown, staffAllowed: boolean): AdHocOptionInput[] {
+    const hasField = raw !== undefined && raw !== null && !(Array.isArray(raw) && raw.length === 0);
+    if (!hasField) return [];
+    if (!staffAllowed) {
+      throw createAppError('FORBIDDEN', 'adHocOptions requires cashier or owner session');
+    }
+    const parsed = parseAdHocOptionsFromItemPayload(raw);
+    if (parsed === null) {
+      throw createAppError('VALIDATION_ERROR', 'Invalid adHocOptions on order item');
+    }
+    return parsed;
+  }
 
   async function snapshotSelectedOptionsFromMenuItem(
     storeId: mongoose.Types.ObjectId,
@@ -135,8 +161,9 @@ export function createOrdersRouter(io: SocketIOServer): Router {
 
   async function buildOrderItemsPayload(
     storeId: mongoose.Types.ObjectId,
-    items: { menuItemId: string; quantity: number; selectedOptions?: SelectedOptInput[] }[],
+    items: OrderItemBuildInput[],
     menuItemMap: Map<string, MenuItemForOrder>,
+    staffAllowed: boolean,
   ) {
     const orderItems: {
       menuItemId?: string;
@@ -145,7 +172,14 @@ export function createOrdersRouter(io: SocketIOServer): Router {
       unitPrice: number;
       itemName: string;
       itemNameEn: string;
-      selectedOptions: { groupName: string; groupNameEn: string; choiceName: string; choiceNameEn: string; extraPrice: number }[];
+      selectedOptions: {
+        groupName: string;
+        groupNameEn: string;
+        choiceName: string;
+        choiceNameEn: string;
+        extraPrice: number;
+        source?: string;
+      }[];
     }[] = [];
 
     for (const item of items) {
@@ -154,7 +188,12 @@ export function createOrdersRouter(io: SocketIOServer): Router {
       const enTrans = menuItem.translations?.find((t: { locale: string }) => t.locale === 'en-US');
       const itemName = zhTrans?.name || enTrans?.name || (menuItem.translations?.[0] as { name: string })?.name || 'Unknown';
       const itemNameEn = enTrans?.name || zhTrans?.name || itemName;
-      const selectedOptions = await snapshotSelectedOptionsFromMenuItem(storeId, menuItem, item.selectedOptions);
+      const menuSnapshots = await snapshotSelectedOptionsFromMenuItem(storeId, menuItem, item.selectedOptions);
+      const adHocSnapshots = adHocOptionsToSnapshots(parseOrderItemAdHoc(item.adHocOptions, staffAllowed));
+      const selectedOptions = [
+        ...menuSnapshots.map((s) => ({ ...s, source: 'menu' as const })),
+        ...adHocSnapshots,
+      ];
 
       orderItems.push({
         menuItemId: item.menuItemId,
@@ -282,7 +321,8 @@ export function createOrdersRouter(io: SocketIOServer): Router {
       const menuItemMap = new Map(menuItems.map((m) => [m._id.toString(), m as MenuItemForOrder]));
 
       // Build order items with price/name snapshots
-      const orderItems = await buildOrderItemsPayload(req.storeId!, items, menuItemMap);
+      const staffAllowed = isStaffCashierOrOwner(req);
+      const orderItems = await buildOrderItemsPayload(req.storeId!, items, menuItemMap, staffAllowed);
       const orderData: Record<string, unknown> = {
         storeId: req.storeId,
         type,
@@ -353,7 +393,7 @@ export function createOrdersRouter(io: SocketIOServer): Router {
           if (Number.isFinite(p) && p >= 0) dist = p;
         }
 
-        let fee = 0;
+        let suggestedFee = 0;
         if (deliveryRules.length > 0) {
           if (dist === undefined) {
             throw createAppError(
@@ -361,11 +401,27 @@ export function createOrdersRouter(io: SocketIOServer): Router {
               '已配置距离阶梯送餐费：需提供 deliveryDistanceKm（公里，可由邮编解析）',
             );
           }
-          fee = deliveryFeeForDistance(deliveryRules, dist);
+          suggestedFee = deliveryFeeForDistance(deliveryRules, dist);
+        }
+
+        let fee = suggestedFee;
+        const rawFeeOverride = (req.body as { deliveryFeeEuroOverride?: unknown }).deliveryFeeEuroOverride;
+        if (rawFeeOverride !== undefined && rawFeeOverride !== null && rawFeeOverride !== '') {
+          const parsedOverride = parseDeliveryFeeEuroInput(rawFeeOverride);
+          if (parsedOverride === null) {
+            throw createAppError('VALIDATION_ERROR', 'deliveryFeeEuroOverride must be a non-negative number');
+          }
+          if (!isStaffCashierOrOwner(req)) {
+            throw createAppError('FORBIDDEN', 'deliveryFeeEuroOverride requires cashier or owner session');
+          }
+          fee = parsedOverride;
         }
 
         if (dist !== undefined) orderData.deliveryDistanceKm = dist;
         orderData.deliveryFeeEuro = fee;
+        if (deliveryRules.length > 0 && dist !== undefined) {
+          orderData.suggestedDeliveryFeeEuro = suggestedFee;
+        }
         appendDeliveryFeeLineToOrderItems(orderItems as Record<string, unknown>[], type, fee);
 
         /** 关联/创建 CustomerProfile：仅在订单落库时执行，不在未下单时建档 */
@@ -1224,7 +1280,8 @@ export function createOrdersRouter(io: SocketIOServer): Router {
       const menuItemMap = new Map(menuItems.map((m) => [m._id.toString(), m as MenuItemForOrder]));
 
       // Build updated order items with price/name snapshots
-      const orderItems = await buildOrderItemsPayload(req.storeId!, items, menuItemMap);
+      const staffAllowed = isStaffCashierOrOwner(req);
+      const orderItems = await buildOrderItemsPayload(req.storeId!, items, menuItemMap, staffAllowed);
       appendDeliveryFeeLineToOrderItems(
         orderItems as Record<string, unknown>[],
         order.type,

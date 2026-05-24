@@ -111,8 +111,8 @@ router.post('/confirm', async (req: Request, res: Response, next: NextFunction) 
         storeId: req.storeId,
         type: 'seat',
         totalAmount: totalChargedEuro,
-        // Stripe：计入营业报表「刷卡收入」（与柜台 finalize 的 paid_online → online 区分）
-        paymentMethod: 'card',
+        // 顾客端 Stripe 网上支付：与堂食/自取 finalize 一致，报表记 online
+        paymentMethod: 'online',
         orderIds: [order._id],
         tableNumber: order.tableNumber,
       });

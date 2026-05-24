@@ -15,6 +15,16 @@ type Overview = {
     consoleBillingUrl: string;
   };
   googleGeo: { configured: boolean; note: string };
+  googleTranslate: {
+    configured: boolean;
+    charactersThisMonth: number;
+    requestsThisMonth: number;
+    freeTierCharsPerMonth: number;
+    estimatedRemainingThisMonth: number;
+    monthUtc: string;
+    consoleUrl: string;
+    note: string;
+  };
   gcs: { configured: boolean; bucket: string | null };
   alerts: Alert[];
 };
@@ -118,6 +128,42 @@ export default function PlatformIntegrationsPage() {
                   Open Twilio billing →
                 </a>
               </>
+            )}
+          </div>
+
+          <div className="card" style={{ padding: 18 }}>
+            <h2 style={{ margin: '0 0 12px', fontSize: 16, color: '#283593' }}>Google Cloud Translation (GTS)</h2>
+            <p style={{ margin: '0 0 8px', fontSize: 14, color: '#444' }}>
+              <strong>Server key present (GTS):</strong> {data.googleTranslate.configured ? 'Yes' : 'No'}
+            </p>
+            {data.googleTranslate.configured ? (
+              <>
+                <p style={{ margin: '0 0 8px', fontSize: 14, color: '#444' }}>
+                  <strong>Characters this month (UTC {data.googleTranslate.monthUtc}):</strong>{' '}
+                  {data.googleTranslate.charactersThisMonth.toLocaleString()} /{' '}
+                  {data.googleTranslate.freeTierCharsPerMonth.toLocaleString()} free
+                </p>
+                <p style={{ margin: '0 0 8px', fontSize: 14, color: '#444' }}>
+                  <strong>Estimated remaining (free tier):</strong>{' '}
+                  {data.googleTranslate.estimatedRemainingThisMonth.toLocaleString()}
+                </p>
+                <p style={{ margin: '0 0 8px', fontSize: 14, color: '#444' }}>
+                  <strong>Translation requests (this app):</strong> {data.googleTranslate.requestsThisMonth.toLocaleString()}
+                </p>
+                <p style={{ margin: '0 0 8px', fontSize: 13, color: '#666' }}>{data.googleTranslate.note}</p>
+                <a
+                  href={data.googleTranslate.consoleUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ fontSize: 14, fontWeight: 600, display: 'inline-block', marginTop: 4 }}
+                >
+                  Google Cloud Translation metrics →
+                </a>
+              </>
+            ) : (
+              <p style={{ margin: 0, fontSize: 13, color: '#666' }}>
+                Set <code style={{ fontSize: 12 }}>GTS</code> on the server for cashier ad-hoc option translation.
+              </p>
             )}
           </div>
 

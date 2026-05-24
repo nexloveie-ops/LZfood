@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../../context/AuthContext';
 import { buildReceiptHTML, printViaIframe } from '../../components/cashier/ReceiptPrint';
-import { receiptOptionDisplayLabel, receiptOptionExtraEuro, receiptOptionExtraSuffix } from '../../utils/receiptOptionPrice';
+import { receiptOptionBilingualLines, receiptOptionExtraEuro, receiptOptionExtraSuffix } from '../../utils/receiptOptionPrice';
 import { bundleAdjustedLineTotals, lineGrossEuro, type AppliedBundleLite } from '../../utils/bundleLineAllocation';
 import { apiFetch } from '../../api/client';
 
@@ -16,7 +16,7 @@ interface OrderItem {
   quantity: number;
   unitPrice: number;
   refunded?: boolean;
-  selectedOptions?: { groupName?: string; choiceName?: string; extraPrice?: number }[];
+  selectedOptions?: { groupName?: string; groupNameEn?: string; choiceName?: string; choiceNameEn?: string; extraPrice?: number }[];
 }
 
 function isVirtualCheckoutId(checkoutId: string): boolean {
@@ -413,11 +413,17 @@ export default function ReprintReceipt() {
                             {item.selectedOptions && item.selectedOptions.length > 0 && (
                               <div style={{ fontSize: 10, color: 'var(--text-light)' }}>
                                 {item.selectedOptions.map((o, i) => {
-                                  const label =
-                                    receiptOptionDisplayLabel(o) ||
+                                  const { primary, secondary } = receiptOptionBilingualLines(o);
+                                  const main =
+                                    primary ||
+                                    secondary ||
                                     (receiptOptionExtraEuro(o.extraPrice) > 0 ? 'Option' : '');
                                   const suf = receiptOptionExtraSuffix(o.extraPrice);
-                                  const text = label ? `${label}${suf}` : suf.trim() ? `Option${suf}` : '';
+                                  const text = main
+                                    ? `${main}${suf}${secondary && primary ? ` / ${secondary}` : ''}`
+                                    : suf.trim()
+                                      ? `Option${suf}`
+                                      : '';
                                   return (
                                     <span key={i}>
                                       {i > 0 && ' · '}

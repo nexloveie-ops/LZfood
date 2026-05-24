@@ -60,3 +60,11 @@ export function deliveryFeeForDistance(rules: DeliveryFeeTier[], distanceKm: num
   }
   return rules[rules.length - 1].feeEuro;
 }
+
+/** Parse optional delivery fee override (€, non-negative). Returns null if absent/invalid. */
+export function parseDeliveryFeeEuroInput(raw: unknown): number | null {
+  if (raw === undefined || raw === null || raw === '') return null;
+  const n = typeof raw === 'number' ? raw : parseFloat(String(raw).trim().replace(',', '.'));
+  if (!Number.isFinite(n) || n < 0) return null;
+  return Math.round(n * 100) / 100;
+}

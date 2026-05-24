@@ -14,6 +14,8 @@ const OrderItemSubdocSchema = new mongoose.Schema({
     choiceName: { type: String },
     choiceNameEn: { type: String, default: '' },
     extraPrice: { type: Number, default: 0 },
+    /** menu = 菜单选项快照；cashier_adhoc = 收银临时加料 */
+    source: { type: String, enum: ['menu', 'cashier_adhoc'] },
   }],
   refunded: { type: Boolean, default: false },
   /** 已送至厨房打印的份数（≤ quantity）；用于后结堂食「只打新增」 */
@@ -49,6 +51,8 @@ const OrderSchema = new mongoose.Schema({
   deliveryStage: { type: String, enum: ['new', 'accepted', 'picked_up_by_driver', 'out_for_delivery'], default: 'new' },
   deliveryDistanceKm: { type: Number },
   deliveryFeeEuro: { type: Number, default: 0 },
+  /** 距离阶梯自动算出的送餐费（审计；可与 deliveryFeeEuro 不同） */
+  suggestedDeliveryFeeEuro: { type: Number },
   deliveryPaidByDriver: { type: Boolean, default: false },
   /** 顾客端 Stripe 支付成功时间（送餐扫码付等）；完结后仍保留，便于区分线上已付 */
   customerOnlinePaymentAt: { type: Date },

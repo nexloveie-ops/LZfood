@@ -157,7 +157,7 @@ export default function CashierLayout() {
 
       <nav className="cashier-saas-tabs" aria-label={t('cashier.title')}>
         <NavLink to="." end className={tabClass}>
-          订单中心
+          {t('cashier.orderCenter')}
         </NavLink>
         <NavLink to="order" className={tabClass}>
           {t('cashier.newOrder', '点单')}

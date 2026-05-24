@@ -36,6 +36,7 @@ import {
   normalizeTopUpCardCode,
   TOPUP_CARD_CODE_LEN,
 } from '../utils/memberTopUpCard';
+import { isGtsConfigured, translateWithGts } from '../utils/googleTranslate';
 
 function adminModels() {
   return getModels() as {
@@ -1073,6 +1074,28 @@ router.delete('/users/:id', ...requireAuthSameStore, requirePermission('admin:us
       throw createAppError('NOT_FOUND', 'Admin not found');
     }
     res.json({ message: 'Admin deleted' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/admin/translate-text — Cashier ad-hoc option: zh ↔ en via GTS (staff session)
+router.post('/translate-text', requireAuthSameStore, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const text = typeof req.body?.text === 'string' ? req.body.text.trim() : '';
+    if (!text) {
+      throw createAppError('VALIDATION_ERROR', 'text is required');
+    }
+    if (text.length > 500) {
+      throw createAppError('VALIDATION_ERROR', 'text too long (max 500 characters)');
+    }
+    if (!isGtsConfigured()) {
+      throw createAppError('SERVICE_UNAVAILABLE', 'GTS not configured');
+    }
+    const source = typeof req.body?.source === 'string' ? req.body.source.trim() : undefined;
+    const target = typeof req.body?.target === 'string' ? req.body.target.trim() : undefined;
+    const translatedText = await translateWithGts(text, { source, target });
+    res.json({ translatedText });
   } catch (err) {
     next(err);
   }

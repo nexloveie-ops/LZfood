@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../../context/AuthContext';
 import { apiFetch } from '../../api/client';
@@ -7,6 +7,7 @@ import CashierMemberCheckoutBlock, {
   canMemberFullWalletPay,
   type CashierMemberPreview,
 } from '../../components/cashier/CashierMemberCheckoutBlock';
+import CashierAdHocOptionModal, { type AdHocOptionFormResult } from '../../components/cashier/CashierAdHocOptionModal';
 import OptionSelectModal, { type OptionGroup } from '../../components/customer/OptionSelectModal';
 import type { CartItemOption } from '../../context/CartContext';
 import ReceiptPrint from '../../components/cashier/ReceiptPrint';
@@ -15,6 +16,7 @@ import { matchBundles, calcBundleTotal, type OfferData, type MatchedBundle } fro
 import {
   DELIVERY_FEE_RULES_CONFIG_KEY,
   deliveryFeeForDistance,
+  parseDeliveryFeeEuroInput,
   parseDeliveryFeeRulesJson,
   type DeliveryFeeTier,
 } from '../../utils/deliveryFeeRules';
@@ -30,9 +32,25 @@ interface MenuItem {
 interface OrderItemOption {
   groupId?: string;
   choiceId?: string;
+  isAdHoc?: boolean;
   groupName: Record<string, string>;
   choiceName: Record<string, string>;
   extraPrice: number;
+}
+const AD_HOC_MAX_PER_LINE = 3;
+
+function formatCashierOptionLabel(opt: OrderItemOption, lang: string): string {
+  return opt.choiceName[lang] || Object.values(opt.choiceName)[0] || '';
+}
+
+function adHocPayloadFromOption(opt: OrderItemOption) {
+  return {
+    groupName: opt.groupName['zh-CN'] || '加料',
+    groupNameEn: opt.groupName['en-US'] || 'Extra',
+    choiceName: opt.choiceName['zh-CN'] || Object.values(opt.choiceName)[0] || '',
+    choiceNameEn: opt.choiceName['en-US'] || opt.choiceName['zh-CN'] || '',
+    extraPrice: opt.extraPrice,
+  };
 }
 interface OrderLine {
   id: string;
@@ -61,6 +79,7 @@ interface ActiveDineInOrderRow {
       choiceName?: string;
       choiceNameEn?: string;
       extraPrice?: number;
+      source?: string;
     }>;
   }>;
 }
@@ -74,6 +93,7 @@ function buildLinesFromActiveDineInOrders(orders: ActiveDineInOrderRow[], lang: 
       const q = Math.max(1, Math.floor(Number(it.quantity)) || 1);
       const rawOpts = it.selectedOptions || [];
       const opts: OrderItemOption[] = rawOpts.map((o) => ({
+        isAdHoc: o.source === 'cashier_adhoc',
         groupName: {
           'zh-CN': o.groupName || '',
           'en-US': (o.groupNameEn || o.groupName || '').trim() || (o.groupName || ''),
@@ -103,6 +123,68 @@ function buildLinesFromActiveDineInOrders(orders: ActiveDineInOrderRow[], lang: 
 
 let lineIdCounter = 0;
 function nextLineId() { return `line-${++lineIdCounter}-${Date.now()}`; }
+
+function lineGroupKey(line: OrderLine): string {
+  const optsKey =
+    line.options && line.options.length > 0
+      ? JSON.stringify(
+          line.options.map((o) => ({
+            g: o.groupId,
+            c: o.choiceId,
+            a: o.isAdHoc,
+            gn: o.groupName,
+            cn: o.choiceName,
+            e: o.extraPrice,
+          })),
+        )
+      : '';
+  return `${line.menuItemId}|${optsKey}|${line.price.toFixed(2)}`;
+}
+
+type OrderLineGroup = {
+  key: string;
+  representative: OrderLine;
+  lineIds: string[];
+  quantity: number;
+};
+
+function groupOrderLines(lines: OrderLine[]): OrderLineGroup[] {
+  const map = new Map<string, OrderLineGroup>();
+  for (const line of lines) {
+    const key = lineGroupKey(line);
+    const existing = map.get(key);
+    if (existing) {
+      existing.lineIds.push(line.id);
+      existing.quantity += 1;
+    } else {
+      map.set(key, {
+        key,
+        representative: line,
+        lineIds: [line.id],
+        quantity: 1,
+      });
+    }
+  }
+  return [...map.values()];
+}
+
+const QUICK_ADD_QTY_MAX = 99;
+
+const qtyBtnStyle: CSSProperties = {
+  width: 20,
+  height: 20,
+  padding: 0,
+  fontSize: 12,
+  lineHeight: '20px',
+  border: '1px solid var(--border)',
+  borderRadius: 4,
+  background: 'var(--bg)',
+  cursor: 'pointer',
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  flexShrink: 0,
+};
 
 const FREQUENT_LOOKBACK_DAYS = 60;
 const FREQUENT_ITEMS_LIMIT = 8;
@@ -167,6 +249,8 @@ export default function CashierOrder() {
   const [deliveryFeeRules, setDeliveryFeeRules] = useState<DeliveryFeeTier[]>([]);
   const [deliveryGeoLoading, setDeliveryGeoLoading] = useState(false);
   const [deliveryDistanceKm, setDeliveryDistanceKm] = useState<number | null>(null);
+  const [deliveryFeeInput, setDeliveryFeeInput] = useState('0.00');
+  const [deliveryFeeTouched, setDeliveryFeeTouched] = useState(false);
   const [deliveryGeoError, setDeliveryGeoError] = useState('');
   const [deliveryCustomerProfileId, setDeliveryCustomerProfileId] = useState('');
   const [deliveryProfiles, setDeliveryProfiles] = useState<DeliveryProfileRow[]>([]);
@@ -684,7 +768,15 @@ export default function CashierOrder() {
   const addToOrder = (item: MenuItem) => {
     if (item.isSoldOut) return;
     if (item.optionGroups && item.optionGroups.length > 0) { setOptionModal(item); return; }
-    setOrder((prev) => [...prev, { id: nextLineId(), menuItemId: item._id, name: getName(item.translations), price: item.price }]);
+    setOrder((prev) => [
+      ...prev,
+      {
+        id: nextLineId(),
+        menuItemId: item._id,
+        name: getName(item.translations),
+        price: item.price,
+      },
+    ]);
   };
 
   const addToOrderWithOptions = (item: MenuItem, cartOptions: CartItemOption[]) => {
@@ -697,13 +789,45 @@ export default function CashierOrder() {
     }));
     setOrder((prev) => [
       ...prev,
-      { id: nextLineId(), menuItemId: item._id, name: getName(item.translations), price: item.price, options },
+      {
+        id: nextLineId(),
+        menuItemId: item._id,
+        name: getName(item.translations),
+        price: item.price,
+        options: options.map((o) => ({ ...o })),
+      },
     ]);
     setOptionModal(null);
   };
 
   const [editingLineId, setEditingLineId] = useState<string | null>(null);
   const [editPrice, setEditPrice] = useState('');
+  const [adHocModalGroup, setAdHocModalGroup] = useState<OrderLineGroup | null>(null);
+
+  const openAdHocModal = (group: OrderLineGroup) => {
+    const adHocCount = (group.representative.options || []).filter((o) => o.isAdHoc).length;
+    if (adHocCount >= AD_HOC_MAX_PER_LINE) {
+      setError(t('cashier.adHocMaxReached'));
+      return;
+    }
+    setError('');
+    setAdHocModalGroup(group);
+  };
+
+  const applyAdHocOption = (result: AdHocOptionFormResult) => {
+    if (!adHocModalGroup) return;
+    const newOpt: OrderItemOption = {
+      isAdHoc: true,
+      groupName: { 'zh-CN': '加料', 'en-US': 'Extra' },
+      choiceName: { 'zh-CN': result.choiceNameZh, 'en-US': result.choiceNameEn },
+      extraPrice: result.extraPrice,
+    };
+    const ids = new Set(adHocModalGroup.lineIds);
+    setOrder((prev) =>
+      prev.map((o) => (ids.has(o.id) ? { ...o, options: [...(o.options || []), newOpt] } : o)),
+    );
+    setAdHocModalGroup(null);
+  };
 
   const startEditPrice = (lineId: string, currentPrice: number, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -714,12 +838,49 @@ export default function CashierOrder() {
   const confirmEditPrice = (lineId: string) => {
     const newPrice = parseFloat(editPrice);
     if (!isNaN(newPrice) && newPrice >= 0) {
-      setOrder(prev => prev.map(o => o.id === lineId ? { ...o, price: newPrice } : o));
+      const line = order.find((o) => o.id === lineId);
+      if (line) {
+        const key = lineGroupKey(line);
+        setOrder((prev) => prev.map((o) => (lineGroupKey(o) === key ? { ...o, price: newPrice } : o)));
+      }
     }
     setEditingLineId(null);
   };
 
-  const removeLine = (lineId: string) => { if (editingLineId) return; setOrder(prev => prev.filter(o => o.id !== lineId)); };
+  const removeGroup = (lineIds: string[]) => {
+    if (editingLineId) return;
+    const drop = new Set(lineIds);
+    setOrder((prev) => prev.filter((o) => !drop.has(o.id)));
+  };
+
+  const setGroupQuantity = (group: OrderLineGroup, newQty: number) => {
+    if (editingLineId) return;
+    const qty = Math.max(0, Math.min(QUICK_ADD_QTY_MAX, Math.floor(newQty)));
+    if (qty === group.quantity) return;
+    if (qty === 0) {
+      removeGroup(group.lineIds);
+      return;
+    }
+    if (qty > group.quantity) {
+      const add = qty - group.quantity;
+      const template = group.representative;
+      setOrder((prev) => [
+        ...prev,
+        ...Array.from({ length: add }, () => ({
+          id: nextLineId(),
+          menuItemId: template.menuItemId,
+          name: template.name,
+          price: template.price,
+          options: template.options?.map((o) => ({ ...o })),
+        })),
+      ]);
+      return;
+    }
+    const removeIds = new Set(group.lineIds.slice(qty));
+    setOrder((prev) => prev.filter((o) => !removeIds.has(o.id)));
+  };
+
+  const groupedOrderLines = useMemo(() => groupOrderLines(order), [order]);
   const clearOrder = () => {
     setOrder([]);
   };
@@ -762,13 +923,25 @@ export default function CashierOrder() {
 
   const finalTotal = bundleTotals.finalTotal;
 
-  const deliveryFeeAmount = useMemo(() => {
+  const autoDeliveryFee = useMemo(() => {
     if (orderType !== 'delivery' || deliveryDistanceKm == null) return 0;
     return deliveryFeeForDistance(deliveryFeeRules, deliveryDistanceKm);
   }, [orderType, deliveryDistanceKm, deliveryFeeRules]);
 
-  const grandTotal = finalTotal + (orderType === 'delivery' ? deliveryFeeAmount : 0);
+  const effectiveDeliveryFee = useMemo(() => {
+    const parsed = parseDeliveryFeeEuroInput(deliveryFeeInput);
+    if (deliveryFeeTouched && parsed !== null) return parsed;
+    return autoDeliveryFee;
+  }, [deliveryFeeInput, deliveryFeeTouched, autoDeliveryFee]);
+
+  useEffect(() => {
+    if (orderType !== 'delivery' || deliveryFeeTouched) return;
+    setDeliveryFeeInput(autoDeliveryFee.toFixed(2));
+  }, [orderType, autoDeliveryFee, deliveryFeeTouched, deliveryDistanceKm]);
+
+  const grandTotal = finalTotal + (orderType === 'delivery' ? effectiveDeliveryFee : 0);
   const displayTotal = orderType === 'delivery' ? grandTotal : finalTotal;
+  const deliveryFeeEditable = deliveryFeeRules.length === 0 || deliveryDistanceKm != null;
 
   const renderDeliveryGeoSection = () => (
     <>
@@ -791,11 +964,6 @@ export default function CashierOrder() {
           {t('cashier.openInGoogleMaps')} ↗
         </a>
       ) : null}
-      {deliveryFeeRules.length > 0 && deliveryDistanceKm != null ? (
-        <div style={{ fontSize: 12, color: '#1565c0', marginTop: 4 }}>
-          {t('cashier.deliveryFee')}: <strong>€{deliveryFeeAmount.toFixed(2)}</strong>
-        </div>
-      ) : null}
       {deliveryFeeRules.length > 0 &&
       !deliveryGeoLoading &&
       deliveryPostalCode.trim().length >= 5 &&
@@ -803,6 +971,50 @@ export default function CashierOrder() {
       !deliveryGeoError ? (
         <div style={{ fontSize: 11, color: 'var(--text-light)', marginTop: 4 }}>{t('cashier.deliveryFeeRulesNeedDistance')}</div>
       ) : null}
+      <div style={{ marginTop: 6 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', fontSize: 12 }}>
+          <span>{t('cashier.deliveryFee')}:</span>
+          <span style={{ fontWeight: 600 }}>€</span>
+          <input
+            className="cashier-qty-input"
+            type="number"
+            min={0}
+            step="0.01"
+            value={deliveryFeeInput}
+            disabled={!deliveryFeeEditable}
+            onChange={(e) => {
+              setDeliveryFeeTouched(true);
+              setDeliveryFeeInput(e.target.value);
+            }}
+            style={{ width: 56, textAlign: 'center', fontWeight: 600 }}
+          />
+          {deliveryFeeTouched &&
+          deliveryFeeRules.length > 0 &&
+          deliveryDistanceKm != null &&
+          Math.abs(effectiveDeliveryFee - autoDeliveryFee) > 0.001 ? (
+            <button
+              type="button"
+              className="btn btn-ghost"
+              style={{ fontSize: 11, padding: '2px 8px' }}
+              onClick={() => {
+                setDeliveryFeeTouched(false);
+                setDeliveryFeeInput(autoDeliveryFee.toFixed(2));
+              }}
+            >
+              {t('cashier.deliveryFeeResetAuto')}
+            </button>
+          ) : null}
+        </div>
+        <div style={{ fontSize: 10, color: 'var(--text-light)', marginTop: 4 }}>{t('cashier.deliveryFeeEditableHint')}</div>
+        {deliveryFeeTouched &&
+        deliveryFeeRules.length > 0 &&
+        deliveryDistanceKm != null &&
+        Math.abs(effectiveDeliveryFee - autoDeliveryFee) > 0.001 ? (
+          <div style={{ fontSize: 10, color: 'var(--text-light)', marginTop: 2 }}>
+            {t('cashier.deliveryFeeAutoHint', { amount: autoDeliveryFee.toFixed(2) })}
+          </div>
+        ) : null}
+      </div>
     </>
   );
 
@@ -864,6 +1076,8 @@ export default function CashierOrder() {
       setDeliveryDistanceKm(null);
       setDeliveryGeoError('');
       setDeliveryGeoLoading(false);
+      setDeliveryFeeInput('0.00');
+      setDeliveryFeeTouched(false);
       setDeliveryCustomerCollapsed(false);
       setDeliveryProfiles([]);
       setFrequentItems([]);
@@ -896,7 +1110,7 @@ export default function CashierOrder() {
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify(orderBody),
       });
-      if (!orderRes.ok) { const d = await orderRes.json().catch(() => null); throw new Error(d?.error?.message || 'Failed'); }
+      if (!orderRes.ok) { const d = await orderRes.json().catch(() => null); throw new Error(d?.error?.message || t('common.error')); }
       const orderData = await orderRes.json();
 
       // Print receipt for phone order
@@ -929,7 +1143,7 @@ export default function CashierOrder() {
       setPhoneGuestName('');
       setPhoneCardPaidAtPlacement(false);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed');
+      setError(e instanceof Error ? e.message : t('common.error'));
     } finally {
       setPaying(false);
     }
@@ -942,6 +1156,11 @@ export default function CashierOrder() {
     }
     if (deliveryFeeRules.length > 0 && deliveryDistanceKm == null) {
       setError(t('cashier.deliveryFeeRulesNeedDistance'));
+      return;
+    }
+    const parsedDeliveryFee = parseDeliveryFeeEuroInput(deliveryFeeInput);
+    if (parsedDeliveryFee === null) {
+      setError(t('cashier.deliveryFeeInvalidInput'));
       return;
     }
     if (deliveryProfiles.length > 1) {
@@ -978,6 +1197,7 @@ export default function CashierOrder() {
       if (deliveryDistanceKm != null) {
         orderBody.deliveryDistanceKm = deliveryDistanceKm;
       }
+      orderBody.deliveryFeeEuroOverride = parsedDeliveryFee;
       const profileIdRaw = deliveryCustomerProfileId.trim();
       if (profileIdRaw && profileIdRaw !== DELIVERY_PROFILE_NEW_MANUAL && isMongoObjectId(profileIdRaw)) {
         orderBody.customerProfileId = profileIdRaw;
@@ -1000,28 +1220,56 @@ export default function CashierOrder() {
           const preferred = pickPreferredDeliveryProfile(profiles);
           if (preferred) applyDeliveryProfileRow(preferred);
         }
-        throw new Error(d?.error?.message || 'Failed');
+        throw new Error(d?.error?.message || t('common.error'));
       }
       const orderData = await orderRes.json();
       try {
         const configRes = await apiFetch('/api/admin/config');
         const cfg = configRes.ok ? await configRes.json() : {};
-        const rawItems = orderData.items as Array<{
+        type ReceiptLine = {
+          lineKind?: string;
           unitPrice: number;
           quantity: number;
+          itemName?: string;
+          itemNameEn?: string;
           selectedOptions?: { extraPrice?: number }[];
-        }>;
-        const itemGross = rawItems.reduce((s, i) => {
-          const ox = (i.selectedOptions || []).reduce((a, o) => a + (o.extraPrice || 0), 0);
-          return s + (i.unitPrice + ox) * i.quantity;
-        }, 0);
+        };
+        const deliveryFeeCharged = Number(orderData.deliveryFeeEuro) || 0;
+        let receiptItems = (orderData.items as ReceiptLine[]).map((item) => {
+          if (item.lineKind === 'delivery_fee' && deliveryFeeCharged > 0) {
+            return { ...item, unitPrice: deliveryFeeCharged };
+          }
+          return item;
+        });
+        if (deliveryFeeCharged > 0 && !receiptItems.some((i) => i.lineKind === 'delivery_fee')) {
+          receiptItems = [
+            ...receiptItems,
+            {
+              lineKind: 'delivery_fee',
+              quantity: 1,
+              unitPrice: deliveryFeeCharged,
+              itemName: '送餐费',
+              itemNameEn: 'Delivery fee',
+              selectedOptions: [],
+            },
+          ];
+        }
+        const foodGross = receiptItems
+          .filter((i) => i.lineKind !== 'delivery_fee')
+          .reduce((s, i) => {
+            const ox = (i.selectedOptions || []).reduce((a, o) => a + (o.extraPrice || 0), 0);
+            return s + (i.unitPrice + ox) * i.quantity;
+          }, 0);
+        const feeGross = receiptItems
+          .filter((i) => i.lineKind === 'delivery_fee')
+          .reduce((s, i) => s + i.unitPrice * i.quantity, 0);
         const disc =
           (orderData.appliedBundles as Array<{ discount: number }> | undefined)?.reduce((a, b) => a + b.discount, 0) ??
           0;
         const receiptData = {
           checkoutId: orderData._id,
           type: 'seat' as const,
-          totalAmount: itemGross - disc,
+          totalAmount: foodGross + feeGross - disc,
           paymentMethod: ((orderData as { phoneCardPaidAtPlacement?: boolean }).phoneCardPaidAtPlacement ? 'card' : 'cash') as 'cash' | 'card',
           checkedOutAt: new Date().toISOString(),
           orders: [
@@ -1030,7 +1278,8 @@ export default function CashierOrder() {
               type: 'delivery' as const,
               dailyOrderNumber: orderData.dailyOrderNumber,
               status: (orderData.status as string) || 'pending',
-              items: orderData.items,
+              items: receiptItems,
+              deliveryFeeEuro: deliveryFeeCharged,
               customerName:
                 typeof orderData.customerName === 'string' && orderData.customerName.trim()
                   ? orderData.customerName.trim()
@@ -1075,7 +1324,7 @@ export default function CashierOrder() {
       setFrequentItems([]);
       setPhoneCardPaidAtPlacement(false);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed');
+      setError(e instanceof Error ? e.message : t('common.error'));
     } finally {
       setPaying(false);
     }
@@ -1083,55 +1332,77 @@ export default function CashierOrder() {
 
   // Build grouped items for API
   const buildGroupedItems = () => {
-    const grouped = new Map<string, { menuItemId: string; quantity: number; selectedOptions?: { groupId: string; choiceId: string }[] }>();
+    type Payload = {
+      menuItemId: string;
+      quantity: number;
+      selectedOptions?: { groupId: string; choiceId: string }[];
+      adHocOptions?: ReturnType<typeof adHocPayloadFromOption>[];
+    };
+    const grouped = new Map<string, Payload>();
     for (const line of order) {
-      const mi = menuItems.find(m => m._id === line.menuItemId);
+      const mi = menuItems.find((m) => m._id === line.menuItemId);
+      const menuOpts = (line.options || []).filter((o) => !o.isAdHoc);
+      const adHocOpts = (line.options || []).filter((o) => o.isAdHoc);
       let selOpts: { groupId: string; choiceId: string }[] | undefined;
-      if (line.options && line.options.length > 0 && mi?.optionGroups) {
-        selOpts = line.options.map((opt) => {
-          if (opt.groupId && opt.choiceId) {
-            return { groupId: opt.groupId, choiceId: opt.choiceId };
-          }
-          const choiceNameVals = Object.values(opt.choiceName).filter(Boolean);
-          const groupNameVals = Object.values(opt.groupName).filter(Boolean);
-          let group: OptionGroup | undefined;
-          let choice: OptionGroup['choices'][0] | undefined;
-          for (const g of mi.optionGroups!) {
-            const hitChoice = g.choices.find((c) =>
-              c.translations.some((t2) => choiceNameVals.includes(t2.name)),
-            );
-            if (!hitChoice) continue;
-            if (groupNameVals.length === 0) {
-              group = g;
-              choice = hitChoice;
-              break;
+      if (menuOpts.length > 0 && mi?.optionGroups) {
+        selOpts = menuOpts
+          .map((opt) => {
+            if (opt.groupId && opt.choiceId) {
+              return { groupId: opt.groupId, choiceId: opt.choiceId };
             }
-            const groupNameHit = g.translations.some((t2) => groupNameVals.includes(t2.name));
-            if (groupNameHit) {
-              group = g;
-              choice = hitChoice;
-              break;
-            }
-          }
-          if (!group || !choice) {
+            const choiceNameVals = Object.values(opt.choiceName).filter(Boolean);
+            const groupNameVals = Object.values(opt.groupName).filter(Boolean);
+            let group: OptionGroup | undefined;
+            let choice: OptionGroup['choices'][0] | undefined;
             for (const g of mi.optionGroups!) {
               const hitChoice = g.choices.find((c) =>
                 c.translations.some((t2) => choiceNameVals.includes(t2.name)),
               );
-              if (hitChoice) {
+              if (!hitChoice) continue;
+              if (groupNameVals.length === 0) {
+                group = g;
+                choice = hitChoice;
+                break;
+              }
+              const groupNameHit = g.translations.some((t2) => groupNameVals.includes(t2.name));
+              if (groupNameHit) {
                 group = g;
                 choice = hitChoice;
                 break;
               }
             }
-          }
-          return { groupId: group?._id || '', choiceId: choice?._id || '' };
-        }).filter((o) => o.groupId && o.choiceId);
+            if (!group || !choice) {
+              for (const g of mi.optionGroups!) {
+                const hitChoice = g.choices.find((c) =>
+                  c.translations.some((t2) => choiceNameVals.includes(t2.name)),
+                );
+                if (hitChoice) {
+                  group = g;
+                  choice = hitChoice;
+                  break;
+                }
+              }
+            }
+            return { groupId: group?._id || '', choiceId: choice?._id || '' };
+          })
+          .filter((o) => o.groupId && o.choiceId);
       }
-      const key = line.menuItemId + '|' + JSON.stringify(selOpts || []);
+      const adHocPayload = adHocOpts.map(adHocPayloadFromOption);
+      const key =
+        line.menuItemId +
+        '|' +
+        JSON.stringify({ sel: selOpts || [], ad: adHocPayload });
       const existing = grouped.get(key);
-      if (existing) existing.quantity++;
-      else grouped.set(key, { menuItemId: line.menuItemId, quantity: 1, selectedOptions: selOpts });
+      if (existing) {
+        existing.quantity++;
+      } else {
+        grouped.set(key, {
+          menuItemId: line.menuItemId,
+          quantity: 1,
+          selectedOptions: selOpts?.length ? selOpts : undefined,
+          adHocOptions: adHocPayload.length ? adHocPayload : undefined,
+        });
+      }
     }
     return [...grouped.values()];
   };
@@ -1180,7 +1451,7 @@ export default function CashierOrder() {
       });
       if (!orderRes.ok) {
         const d = await orderRes.json().catch(() => null);
-        throw new Error(d?.error?.message || 'Failed');
+        throw new Error(d?.error?.message || t('common.error'));
       }
       const orderData = (await orderRes.json()) as {
         _id: string;
@@ -1259,7 +1530,7 @@ export default function CashierOrder() {
       setCounterTableInput('');
       setCounterGuestLabel('');
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed');
+      setError(e instanceof Error ? e.message : t('common.error'));
     } finally {
       setPaying(false);
     }
@@ -1337,7 +1608,7 @@ export default function CashierOrder() {
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify(orderBody),
       });
-      if (!orderRes.ok) { const d = await orderRes.json().catch(() => null); throw new Error(d?.error?.message || 'Failed'); }
+      if (!orderRes.ok) { const d = await orderRes.json().catch(() => null); throw new Error(d?.error?.message || t('common.error')); }
       const orderData = await orderRes.json();
 
       // Step 2: Checkout immediately
@@ -1375,7 +1646,7 @@ export default function CashierOrder() {
       setShowPayment(false);
       setOrder([]);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed');
+      setError(e instanceof Error ? e.message : t('common.error'));
     } finally {
       setPaying(false);
     }
@@ -1414,9 +1685,9 @@ export default function CashierOrder() {
       <div style={{ maxWidth: 500, margin: '0 auto' }}>
         <div style={{ textAlign: 'center', padding: 20 }}>
           <div style={{ fontSize: 48, marginBottom: 8 }}>📞</div>
-          <h2 style={{ color: 'var(--blue, #1976D2)', marginBottom: 12 }}>电话订单已创建</h2>
-          <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 16 }}>客人来取时在"电话"页面完成支付</p>
-          <button className="btn btn-primary" onClick={() => setPhoneOrderId(null)} style={{ marginBottom: 20 }}>继续点单</button>
+          <h2 style={{ color: 'var(--blue, #1976D2)', marginBottom: 12 }}>{t('cashier.phoneOrderCreated')}</h2>
+          <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 16 }}>{t('cashier.phoneOrderPayLater')}</p>
+          <button className="btn btn-primary" onClick={() => setPhoneOrderId(null)} style={{ marginBottom: 20 }}>{t('cashier.continueOrder')}</button>
         </div>
       </div>
     );
@@ -1436,9 +1707,9 @@ export default function CashierOrder() {
               <div style={{ fontSize: 24, fontWeight: 700, color: '#E65100' }}>{t('cashier.change')}: €{checkoutMeta.change.toFixed(2)}</div>
             </div>
           )}
-          <button className="btn btn-primary" onClick={handleCloseReceipt} style={{ marginBottom: 20 }}>继续点单</button>
+          <button className="btn btn-primary" onClick={handleCloseReceipt} style={{ marginBottom: 20 }}>{t('cashier.continueOrder')}</button>
           <button className="btn btn-outline" onClick={() => window.print()} style={{ marginBottom: 20, marginLeft: 8 }}>
-            🖨️ 打印小票
+            {t('cashier.printReceiptBtn')}
           </button>
         </div>
         <ReceiptPrint checkoutId={checkoutId} cashReceived={checkoutMeta?.cashReceived} changeAmount={checkoutMeta?.change} bundleDiscounts={receiptBundleDiscounts} />
@@ -1464,10 +1735,10 @@ export default function CashierOrder() {
       {/* Center: Menu Grid */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         <div style={{ padding: '10px 12px', background: 'var(--bg-white)', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
-          <input className="input" placeholder={`🔍  ${t('common.search')}...`} value={search} onChange={e => setSearch(e.target.value)} style={{ width: '100%', padding: '10px 14px', fontSize: 14 }} />
+          <input className="input" placeholder={t('cashier.searchMenuPlaceholder')} value={search} onChange={e => setSearch(e.target.value)} style={{ width: '100%', padding: '10px 14px', fontSize: 14 }} />
         </div>
         <div style={{ padding: '10px 12px 6px', fontSize: 14, fontWeight: 700, background: 'var(--bg)', flexShrink: 0 }}>
-          {search ? `搜索: "${search}"` : getName(categories.find(c => c._id === activeCat)?.translations || [])}
+          {search ? t('cashier.searchResultsFor', { q: search }) : getName(categories.find(c => c._id === activeCat)?.translations || [])}
           <span style={{ fontWeight: 400, color: 'var(--text-light)', marginLeft: 8 }}>({filteredItems.length})</span>
         </div>
         <div style={{ flex: 1, overflowY: 'auto', padding: '8px 10px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: 8, alignContent: 'start' }}>
@@ -1476,7 +1747,7 @@ export default function CashierOrder() {
             return (
               <div key={item._id} onClick={() => addToOrder(item)} style={{ background: 'var(--bg-white)', border: qty > 0 ? '2px solid var(--red-primary)' : '1px solid var(--border)', borderRadius: 8, padding: '10px 8px', display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', cursor: item.isSoldOut ? 'not-allowed' : 'pointer', opacity: item.isSoldOut ? 0.4 : 1, boxShadow: '0 1px 3px rgba(0,0,0,0.06)', minHeight: 80, justifyContent: 'center', position: 'relative', userSelect: 'none' }}>
                 {qty > 0 && <span style={{ position: 'absolute', top: -6, left: -6, width: 22, height: 22, borderRadius: '50%', background: 'var(--red-primary)', color: '#fff', fontSize: 12, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{qty}</span>}
-                {item.isSoldOut && <span style={{ position: 'absolute', top: 4, right: 4, fontSize: 9, padding: '1px 5px', borderRadius: 3, fontWeight: 600, background: '#9E9E9E', color: '#fff' }}>售罄</span>}
+                {item.isSoldOut && <span style={{ position: 'absolute', top: 4, right: 4, fontSize: 9, padding: '1px 5px', borderRadius: 3, fontWeight: 600, background: '#9E9E9E', color: '#fff' }}>{t('cashier.orderSoldOutBadge')}</span>}
                 <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.3, marginBottom: 4, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{getName(item.translations)}</div>
                 <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--red-primary)' }}>€{item.price}</div>
                 {item.optionGroups && item.optionGroups.length > 0 && <div style={{ fontSize: 9, color: 'var(--text-light)', marginTop: 2 }}>⚙ {t('customer.selectOptions')}</div>}
@@ -1488,9 +1759,9 @@ export default function CashierOrder() {
 
       {/* Right: Order Panel */}
       <div style={{ width: 320, flexShrink: 0, background: 'var(--bg-white)', borderLeft: '2px solid var(--border)', display: 'flex', flexDirection: 'column' }}>
-        <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <h3 style={{ fontSize: 15, fontWeight: 700 }}>🧾 点单</h3>
-          <button className="btn btn-ghost" style={{ fontSize: 12 }} onClick={clearOrder}>清空</button>
+        <div style={{ padding: '10px 12px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+          <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>🧾 {t('cashier.orderPoint')}</h3>
+          <button className="btn btn-ghost" style={{ fontSize: 12, padding: '2px 6px', flexShrink: 0 }} onClick={clearOrder}>{t('cashier.clearOrder')}</button>
         </div>
         <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)' }}>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
@@ -1508,7 +1779,7 @@ export default function CashierOrder() {
                 border: '1px solid var(--border)',
               }}
             >
-              堂食
+              {t('cashier.orderTypeDineIn')}
             </button>
             <button
               type="button"
@@ -1524,7 +1795,7 @@ export default function CashierOrder() {
                 border: '1px solid var(--border)',
               }}
             >
-              外卖
+              {t('cashier.orderTypeTakeout')}
             </button>
             <button
               type="button"
@@ -1540,7 +1811,7 @@ export default function CashierOrder() {
                 border: '1px solid var(--border)',
               }}
             >
-              📞 电话
+              {t('cashier.orderTypePhone')}
             </button>
             {canDelivery ? (
               <button
@@ -1818,22 +2089,22 @@ export default function CashierOrder() {
 
         {orderType === 'phone' && (
           <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>客人电话（可选）</label>
+            <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>{t('cashier.phoneGuestPhoneOptionalLabel')}</label>
             <input
               className="input"
               type="tel"
               inputMode="tel"
               autoComplete="tel"
-              placeholder="例如 0851234567"
+              placeholder={t('cashier.phoneGuestPhoneExamplePlaceholder')}
               value={phoneGuestPhone}
               onChange={(e) => setPhoneGuestPhone(e.target.value)}
               style={{ width: '100%', fontSize: 15, padding: '10px 12px' }}
             />
-            <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>称呼（可选）</label>
+            <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>{t('cashier.phoneGuestNameOptionalLabel')}</label>
             <input
               className="input"
               type="text"
-              placeholder="客人姓名"
+              placeholder={t('cashier.deliveryCustomerNamePlaceholder')}
               value={phoneGuestName}
               onChange={(e) => setPhoneGuestName(e.target.value)}
               style={{ width: '100%', fontSize: 14, padding: '8px 12px' }}
@@ -1845,45 +2116,100 @@ export default function CashierOrder() {
           {order.length === 0 ? (
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-light)', gap: 8 }}>
               <span style={{ fontSize: 36, opacity: 0.3 }}>📋</span>
-              <span style={{ fontSize: 13 }}>点击左侧菜品加入</span>
+              <span style={{ fontSize: 13 }}>{t('cashier.emptyOrderHint')}</span>
             </div>
-          ) : order.map((line, idx) => {
+          ) : groupedOrderLines.map((group, idx) => {
+            const line = group.representative;
             const optExtra = (line.options || []).reduce((sum, opt) => sum + opt.extraPrice, 0);
+            const unitPrice = line.price + optExtra;
             const isEditing = editingLineId === line.id;
             return (
-              <div key={line.id} onClick={() => removeLine(line.id)} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 16px', borderBottom: '1px solid #f0f0f0', cursor: 'pointer', transition: 'background 0.1s' }}
-                onMouseEnter={e => (e.currentTarget.style.background = '#FFEBEE')} onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
-                <span style={{ fontSize: 11, color: 'var(--text-light)', minWidth: 20 }}>{idx + 1}.</span>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{line.name}</div>
-                  {line.options && line.options.length > 0 && (
-                    <div style={{ fontSize: 10, color: 'var(--text-light)' }}>
-                      {line.options.map((opt, i) => <span key={i}>{i > 0 && ' · '}{opt.choiceName[lang] || Object.values(opt.choiceName)[0]}{opt.extraPrice > 0 && ` +€${opt.extraPrice}`}</span>)}
+              <div key={group.key} style={{ padding: '6px 10px', borderBottom: '1px solid #f0f0f0' }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
+                  <span style={{ fontSize: 10, color: 'var(--text-light)', width: 14, flexShrink: 0, paddingTop: 2 }}>{idx + 1}.</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 4 }}>
+                      <button
+                        type="button"
+                        style={{ ...qtyBtnStyle, flexShrink: 0, marginTop: 1 }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openAdHocModal(group);
+                        }}
+                        aria-label={t('cashier.adHocAddBtn')}
+                        title={t('cashier.adHocAddBtn')}
+                      >
+                        +
+                      </button>
+                      <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.35, wordBreak: 'break-word', flex: 1, minWidth: 0 }}>{line.name}</div>
                     </div>
-                  )}
-                </div>
-                {isEditing ? (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }} onClick={e => e.stopPropagation()}>
-                    <span style={{ fontSize: 12, color: 'var(--text-light)' }}>€</span>
-                    <input
-                      className="input"
-                      type="number"
-                      step="0.01"
-                      value={editPrice}
-                      onChange={e => setEditPrice(e.target.value)}
-                      onKeyDown={e => { if (e.key === 'Enter') confirmEditPrice(line.id); if (e.key === 'Escape') setEditingLineId(null); }}
-                      onBlur={() => confirmEditPrice(line.id)}
-                      autoFocus
-                      style={{ width: 60, fontSize: 13, fontWeight: 700, padding: '2px 4px', textAlign: 'right' }}
-                    />
+                    {line.options && line.options.length > 0 && (
+                      <div style={{ fontSize: 10, color: 'var(--text-light)', lineHeight: 1.35, wordBreak: 'break-word', marginTop: 2, paddingLeft: 24 }}>
+                        {line.options.map((opt, i) => (
+                          <span key={i}>
+                            {i > 0 && ' · '}
+                            {formatCashierOptionLabel(opt, lang)}
+                            {opt.extraPrice > 0 && ` +€${opt.extraPrice.toFixed(2)}`}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                ) : (
-                  <span
-                    onClick={(e) => startEditPrice(line.id, line.price + optExtra, e)}
-                    style={{ fontSize: 13, fontWeight: 700, color: 'var(--red-primary)', minWidth: 45, textAlign: 'right', cursor: 'text', borderBottom: '1px dashed var(--red-primary)' }}
-                  >€{(line.price + optExtra).toFixed(2)}</span>
-                )}
-                <span style={{ fontSize: 14, color: 'var(--text-light)', marginLeft: 4 }}>✕</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0, paddingTop: 1 }}>
+                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 1 }} onClick={(e) => e.stopPropagation()}>
+                      <button type="button" style={qtyBtnStyle} onClick={() => setGroupQuantity(group, group.quantity - 1)} aria-label={t('cashier.lineQtyDecrease')}>−</button>
+                      <input
+                        type="number"
+                        min={0}
+                        max={QUICK_ADD_QTY_MAX}
+                        value={group.quantity}
+                        onChange={(e) => {
+                          const v = parseInt(e.target.value, 10);
+                          if (!Number.isFinite(v)) return;
+                          setGroupQuantity(group, v);
+                        }}
+                        className="cashier-qty-input"
+                      />
+                      <button type="button" style={qtyBtnStyle} onClick={() => setGroupQuantity(group, group.quantity + 1)} aria-label={t('cashier.lineQtyIncrease')}>+</button>
+                    </div>
+                    {isEditing ? (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 2 }} onClick={e => e.stopPropagation()}>
+                        <span style={{ fontSize: 11, color: 'var(--text-light)' }}>€</span>
+                        <input
+                          className="input"
+                          type="number"
+                          step="0.01"
+                          value={editPrice}
+                          onChange={e => setEditPrice(e.target.value)}
+                          onKeyDown={e => { if (e.key === 'Enter') confirmEditPrice(line.id); if (e.key === 'Escape') setEditingLineId(null); }}
+                          onBlur={() => confirmEditPrice(line.id)}
+                          autoFocus
+                          style={{ width: 52, minHeight: 0, height: 24, fontSize: 12, fontWeight: 700, padding: '2px 4px', textAlign: 'right' }}
+                        />
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', minWidth: 48 }}>
+                        <span
+                          onClick={(e) => startEditPrice(line.id, unitPrice, e)}
+                          style={{ fontSize: 13, fontWeight: 700, color: 'var(--red-primary)', cursor: 'text', borderBottom: '1px dashed var(--red-primary)', whiteSpace: 'nowrap' }}
+                        >
+                          {group.quantity > 1 ? `€${(unitPrice * group.quantity).toFixed(2)}` : `€${unitPrice.toFixed(2)}`}
+                        </span>
+                        {group.quantity > 1 ? (
+                          <span style={{ fontSize: 10, color: 'var(--text-light)', whiteSpace: 'nowrap' }}>×{group.quantity} €{unitPrice.toFixed(2)}</span>
+                        ) : null}
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      style={{ fontSize: 12, color: 'var(--text-light)', padding: 0, border: 'none', background: 'none', cursor: 'pointer', lineHeight: 1 }}
+                      onClick={() => removeGroup(group.lineIds)}
+                      aria-label={t('cashier.lineRemove')}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                </div>
               </div>
             );
           })}
@@ -1903,7 +2229,7 @@ export default function CashierOrder() {
             </div>
           )}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-            <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>合计 · {order.length} 件</span>
+            <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{t('cashier.totalItemsLine', { count: order.length })}</span>
             <div style={{ textAlign: 'right' }}>
               {bundleTotals.bundleDiscount > 0 && (
                 <div style={{ fontSize: 12, color: 'var(--text-light)', textDecoration: 'line-through' }}>€{totalAmount.toFixed(2)}</div>
@@ -2061,6 +2387,16 @@ export default function CashierOrder() {
           </div>
         </div>
       )}
+
+      {adHocModalGroup ? (
+        <CashierAdHocOptionModal
+          dishName={adHocModalGroup.representative.name}
+          existingCount={(adHocModalGroup.representative.options || []).filter((o) => o.isAdHoc).length}
+          maxPerLine={AD_HOC_MAX_PER_LINE}
+          onConfirm={applyAdHocOption}
+          onClose={() => setAdHocModalGroup(null)}
+        />
+      ) : null}
 
       {/* Option selection modal */}
       {optionModal && optionModal.optionGroups && optionModal.optionGroups.length > 0 && (

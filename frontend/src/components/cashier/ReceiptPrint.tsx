@@ -1,9 +1,12 @@
 import { useEffect, useState, useRef, useCallback, type ReactElement } from 'react';
 import { apiFetch } from '../../api/client';
 import {
-  receiptOptionDisplayLabel,
+  receiptOptionBilingualLines,
   receiptOptionExtraEuro,
   receiptOptionExtraSuffix,
+  receiptOptionFallbackLabel,
+  receiptOptionPrintHtml,
+  type ReceiptOptionSnapshot,
 } from '../../utils/receiptOptionPrice';
 
 interface ReceiptOrderItem {
@@ -14,7 +17,7 @@ interface ReceiptOrderItem {
   unitPrice: number;
   itemName: string;
   itemNameEn?: string;
-  selectedOptions?: { groupName?: string; choiceName?: string; extraPrice?: unknown }[];
+  selectedOptions?: ReceiptOptionSnapshot[];
 }
 
 interface ReceiptOrder {
@@ -123,6 +126,23 @@ interface ReceiptPrintProps {
   printCopies?: number;
 }
 
+function ReceiptOptionLines({ o }: { o: ReceiptOptionSnapshot }) {
+  const { primary, secondary } = receiptOptionBilingualLines(o);
+  const main = receiptOptionFallbackLabel(o) || (receiptOptionExtraEuro(o.extraPrice) > 0 ? 'Option' : '');
+  const pricePart = receiptOptionExtraSuffix(o.extraPrice);
+  if (!main && !pricePart) return null;
+  return (
+    <>
+      <div style={{ fontSize: 17, lineHeight: 1.3 }}>
+        {'  · '}
+        {main}
+        {pricePart}
+      </div>
+      {secondary && primary ? <div style={{ fontSize: 15, paddingLeft: 14, lineHeight: 1.3 }}>{secondary}</div> : null}
+    </>
+  );
+}
+
 function escapeReceiptHtml(s: string): string {
   return s
     .replace(/&/g, '&amp;')
@@ -182,10 +202,14 @@ function buildReceiptHTML(
     .row { display: flex; justify-content: space-between; margin: 4px 0; }
     .big { font-size: 22px; margin: 6px 0; letter-spacing: 2px; }
     table { width: 100%; border-collapse: collapse; margin: 8px 0; }
-    td { padding: 4px 0; vertical-align: top; }
-    .qty { text-align: center; width: 36px; }
-    .amt { text-align: right; }
-    .sub { font-size: 13px; padding-left: 4px; }
+    td { padding: 6px 0; vertical-align: top; }
+    .qty { text-align: center; width: 40px; font-size: 18px; }
+    .amt { text-align: right; font-size: 16px; }
+    .item-cn { font-size: 20px; line-height: 1.25; }
+    .item-en { font-size: 16px; padding-left: 4px; line-height: 1.25; }
+    .opt-cn { font-size: 17px; line-height: 1.3; padding-left: 2px; }
+    .opt-en { font-size: 15px; padding-left: 14px; line-height: 1.3; }
+    .sub { font-size: 16px; padding-left: 4px; }
     .terms { text-align: center; font-size: 13px; white-space: pre-line; margin-top: 10px; border-top: 2px dashed #000; padding-top: 10px; }
     .terms img { font-weight: normal; }
     .footer { text-align: center; margin-top: 14px; border-top: 2px dashed #000; padding-top: 10px; font-size: 13px; }
@@ -264,16 +288,11 @@ function buildReceiptHTML(
   if (partialDesc) {
     html += `<tr><td colspan="3" style="font-size:12px;text-align:center;padding:6px 0;font-weight:bold">Partial checkout / 部分结账</td></tr>`;
     for (const L of partialDesc.lines) {
-      html += `<tr><td><div>${escapeReceiptHtml(L.title)}</div>`;
-      if (L.titleEn && L.titleEn !== L.title) html += `<div class="sub">${escapeReceiptHtml(L.titleEn)}</div>`;
+      html += `<tr><td><div class="item-cn">${escapeReceiptHtml(L.title)}</div>`;
+      if (L.titleEn && L.titleEn !== L.title) html += `<div class="item-en">${escapeReceiptHtml(L.titleEn)}</div>`;
       if (L.options && L.options.length > 0) {
         for (const o of L.options) {
-          const label =
-            receiptOptionDisplayLabel(o) || (receiptOptionExtraEuro(o.extraPrice) > 0 ? 'Option' : '');
-          const pricePart = receiptOptionExtraSuffix(o.extraPrice);
-          if (label || pricePart) {
-            html += `<div class="sub">  · ${escapeReceiptHtml(label)}${pricePart}</div>`;
-          }
+          html += receiptOptionPrintHtml(o, escapeReceiptHtml);
         }
       }
       html += `</td><td class="qty">x${L.qty}</td><td class="amt">€${L.amountEuro.toFixed(2)}</td></tr>`;
@@ -292,16 +311,11 @@ function buildReceiptHTML(
         html += `<tr><td colspan="3" style="font-size:11px;padding:${topPad} 0 4px;${borderTop}font-weight:700">${rowLabel}</td></tr>`;
       }
       for (const item of order.items) {
-        html += `<tr><td><div>${item.itemName}</div>`;
-        if (item.itemNameEn && item.itemNameEn !== item.itemName) html += `<div class="sub">${item.itemNameEn}</div>`;
+        html += `<tr><td><div class="item-cn">${item.itemName}</div>`;
+        if (item.itemNameEn && item.itemNameEn !== item.itemName) html += `<div class="item-en">${item.itemNameEn}</div>`;
         if (item.selectedOptions && item.selectedOptions.length > 0) {
           for (const o of item.selectedOptions) {
-            const label =
-              receiptOptionDisplayLabel(o) || (receiptOptionExtraEuro(o.extraPrice) > 0 ? 'Option' : '');
-            const pricePart = receiptOptionExtraSuffix(o.extraPrice);
-            if (label || pricePart) {
-              html += `<div class="sub">  · ${escapeReceiptHtml(label)}${pricePart}</div>`;
-            }
+            html += receiptOptionPrintHtml(o, escapeReceiptHtml);
           }
         }
         html += `</td><td class="qty">x${item.quantity}</td><td class="amt">€${(item.unitPrice * item.quantity).toFixed(2)}</td></tr>`;
@@ -579,14 +593,10 @@ export default function ReceiptPrint({ checkoutId, cashReceived, changeAmount, b
           {partialDescPreview.lines.map((L) => (
             <div key={L.key} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', borderBottom: '1px solid #ddd' }}>
               <div style={{ flex: 1 }}>
-                <div>{L.title}</div>
-                {L.titleEn && L.titleEn !== L.title && <div style={{ fontSize: 12 }}>{L.titleEn}</div>}
+                <div style={{ fontSize: 20, lineHeight: 1.25 }}>{L.title}</div>
+                {L.titleEn && L.titleEn !== L.title && <div style={{ fontSize: 16, lineHeight: 1.25 }}>{L.titleEn}</div>}
                 {L.options && L.options.length > 0 && L.options.map((o, oi) => (
-                  <div key={oi} style={{ fontSize: 12 }}>
-                    {'  · '}
-                    {receiptOptionDisplayLabel(o) || (receiptOptionExtraEuro(o.extraPrice) > 0 ? 'Option' : '')}
-                    {receiptOptionExtraSuffix(o.extraPrice)}
-                  </div>
+                  <ReceiptOptionLines key={oi} o={o} />
                 ))}
               </div>
               <div style={{ whiteSpace: 'nowrap' }}>x{L.qty} €{L.amountEuro.toFixed(2)}</div>
@@ -618,14 +628,10 @@ export default function ReceiptPrint({ checkoutId, cashReceived, changeAmount, b
             subRows.push(
               <div key={`${order._id}-${item._id}`} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', borderBottom: '1px solid #ddd' }}>
                 <div style={{ flex: 1 }}>
-                  <div>{item.itemName}</div>
-                  {item.itemNameEn && item.itemNameEn !== item.itemName && <div style={{ fontSize: 12 }}>{item.itemNameEn}</div>}
+                  <div style={{ fontSize: 20, lineHeight: 1.25 }}>{item.itemName}</div>
+                  {item.itemNameEn && item.itemNameEn !== item.itemName && <div style={{ fontSize: 16, lineHeight: 1.25 }}>{item.itemNameEn}</div>}
                   {item.selectedOptions && item.selectedOptions.length > 0 && item.selectedOptions.map((o, idx) => (
-                    <div key={idx} style={{ fontSize: 12 }}>
-                      {'  · '}
-                      {receiptOptionDisplayLabel(o) || (receiptOptionExtraEuro(o.extraPrice) > 0 ? 'Option' : '')}
-                      {receiptOptionExtraSuffix(o.extraPrice)}
-                    </div>
+                    <ReceiptOptionLines key={idx} o={o} />
                   ))}
                 </div>
                 <div style={{ whiteSpace: 'nowrap' }}>x{item.quantity} €{(item.unitPrice * item.quantity).toFixed(2)}</div>
