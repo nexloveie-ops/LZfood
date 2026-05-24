@@ -1227,31 +1227,45 @@ export default function CashierOrder() {
         const configRes = await apiFetch('/api/admin/config');
         const cfg = configRes.ok ? await configRes.json() : {};
         type ReceiptLine = {
+          _id?: string;
+          menuItemId?: string;
           lineKind?: string;
           unitPrice: number;
           quantity: number;
           itemName?: string;
           itemNameEn?: string;
-          selectedOptions?: { extraPrice?: number }[];
+          selectedOptions?: { groupName?: string; choiceName?: string; extraPrice?: number }[];
         };
         const deliveryFeeCharged = Number(orderData.deliveryFeeEuro) || 0;
+        const mapReceiptLine = (item: ReceiptLine) => ({
+          _id: String(item._id ?? item.lineKind ?? 'line'),
+          menuItemId: item.menuItemId,
+          lineKind: item.lineKind,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          itemName: item.itemName ?? '',
+          itemNameEn: item.itemNameEn,
+          selectedOptions: item.selectedOptions,
+        });
         let receiptItems = (orderData.items as ReceiptLine[]).map((item) => {
+          const mapped = mapReceiptLine(item);
           if (item.lineKind === 'delivery_fee' && deliveryFeeCharged > 0) {
-            return { ...item, unitPrice: deliveryFeeCharged };
+            return { ...mapped, unitPrice: deliveryFeeCharged };
           }
-          return item;
+          return mapped;
         });
         if (deliveryFeeCharged > 0 && !receiptItems.some((i) => i.lineKind === 'delivery_fee')) {
           receiptItems = [
             ...receiptItems,
-            {
+            mapReceiptLine({
+              _id: 'delivery_fee',
               lineKind: 'delivery_fee',
               quantity: 1,
               unitPrice: deliveryFeeCharged,
               itemName: '送餐费',
               itemNameEn: 'Delivery fee',
               selectedOptions: [],
-            },
+            }),
           ];
         }
         const foodGross = receiptItems
