@@ -18,6 +18,7 @@ import { createOrdersRouter } from './routes/orders';
 import { createCheckoutRouter } from './routes/checkout';
 import adminRouter from './routes/admin';
 import optionGroupTemplatesRouter from './routes/optionGroupTemplates';
+import inventoryRouter from './routes/inventory';
 import reportsRouter from './routes/reports';
 import offersRouter from './routes/offers';
 import { createPaymentsRouter } from './routes/payments';
@@ -121,6 +122,9 @@ app.use('/api/members', membersRouter);
 // Admin routes（单路由内按需 auth + enforceJwtStoreMatch）
 app.use('/api/admin', adminRouter);
 app.use('/api/admin/option-group-templates', optionGroupTemplatesRouter);
+
+// Inventory tracking (gated by feature flag; admin + cashier shared)
+app.use('/api/inventory', inventoryRouter);
 
 // Reports routes
 app.use('/api/reports', reportsRouter);

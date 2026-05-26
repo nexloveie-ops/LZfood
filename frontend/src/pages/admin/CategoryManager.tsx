@@ -8,7 +8,8 @@ interface Category { _id: string; sortOrder: number; translations: Translation[]
 
 export default function CategoryManager() {
   const { t } = useTranslation();
-  const { token } = useAuth();
+  const { token, hasFeature } = useAuth();
+  const canTrackInventory = hasFeature('inventory.tracking');
   const [categories, setCategories] = useState<Category[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
@@ -122,6 +123,25 @@ export default function CategoryManager() {
     setDragOverIdx(null);
   };
 
+  const bulkToggleTracking = async (catId: string, enabled: boolean) => {
+    const cat = categories.find(c => c._id === catId);
+    const name = cat?.translations.find(t2 => t2.locale === 'zh-CN')?.name || catId;
+    const msg = enabled
+      ? `将「${name}」目录下所有菜品启用库存追踪？\n（之后仍需逐项配置基础单位、份内数量等）`
+      : `关闭「${name}」目录下所有菜品的库存追踪？`;
+    if (!confirm(msg)) return;
+    const res = await apiFetch(`/api/inventory/categories/${catId}/tracking`, {
+      method: 'POST', headers, body: JSON.stringify({ enabled }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => null);
+      alert(data?.error?.message || '操作失败');
+      return;
+    }
+    const data = await res.json().catch(() => null);
+    alert(`已${enabled ? '启用' : '关闭'} ${data?.modifiedCount ?? 0} 个菜品的库存追踪`);
+  };
+
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
@@ -182,6 +202,12 @@ export default function CategoryManager() {
                 <td style={{ padding: '10px 16px', fontWeight: 600 }}>{cat.translations.find(t2 => t2.locale === 'zh-CN')?.name}</td>
                 <td style={{ padding: '10px 16px' }}>{cat.translations.find(t2 => t2.locale === 'en-US')?.name}</td>
                 <td style={{ padding: '10px 16px', textAlign: 'right' }}>
+                  {canTrackInventory && (
+                    <>
+                      <button className="btn btn-ghost" style={{ fontSize: 12 }} onClick={() => bulkToggleTracking(cat._id, true)}>📦 启用追踪</button>
+                      <button className="btn btn-ghost" style={{ fontSize: 12, color: 'var(--text-light)' }} onClick={() => bulkToggleTracking(cat._id, false)}>关闭追踪</button>
+                    </>
+                  )}
                   <button className="btn btn-ghost" style={{ fontSize: 12 }} onClick={() => startEdit(cat)}>{t('common.edit')}</button>
                   <button className="btn btn-ghost" style={{ fontSize: 12, color: 'var(--red-primary)' }} onClick={() => handleDelete(cat._id)}>{t('common.delete')}</button>
                 </td>

@@ -27,10 +27,12 @@ import TakeoutOrderList from './pages/cashier/TakeoutOrderList';
 import TakeoutDelivery from './pages/cashier/TakeoutDelivery';
 import CheckoutFlow from './pages/cashier/CheckoutFlow';
 import UnifiedOrderCenter from './pages/cashier/UnifiedOrderCenter';
+import RestockPage from './pages/cashier/RestockPage';
 import CategoryManager from './pages/admin/CategoryManager';
 import MenuItemManager from './pages/admin/MenuItemManager';
 import OptionGroupTemplates from './pages/admin/OptionGroupTemplates';
 import InventoryManager from './pages/admin/InventoryManager';
+import AdvancedInventory from './pages/admin/AdvancedInventory';
 import AllergenManager from './pages/admin/AllergenManager';
 import I18nEditor from './pages/admin/I18nEditor';
 import QRCodeManager from './pages/admin/QRCodeManager';
@@ -162,6 +164,7 @@ export default function App() {
               <Route path="reprint" element={<ReprintReceipt />} />
               <Route path="phone" element={<PhoneOrderList />} />
               <Route path="inventory" element={<InventoryManager />} />
+              <Route path="restock" element={<RequireFeature featureKey="inventory.tracking"><RestockPage /></RequireFeature>} />
               <Route path="takeout" element={<TakeoutOrderList />} />
               <Route path="delivery" element={<TakeoutDelivery />} />
               <Route path="checkout/:tableNumber" element={<CheckoutFlow />} />
@@ -176,6 +179,7 @@ export default function App() {
               <Route path="menu-items" element={<MenuItemManager />} />
               <Route path="option-group-templates" element={<RequireFeature featureKey="admin.optionGroupTemplates.page"><OptionGroupTemplates /></RequireFeature>} />
               <Route path="inventory" element={<InventoryManager />} />
+              <Route path="advanced-inventory" element={<RequireFeature featureKey="inventory.tracking"><AdvancedInventory /></RequireFeature>} />
               <Route path="allergens" element={<AllergenManager />} />
               <Route path="i18n" element={<I18nEditor />} />
               <Route path="qr-codes" element={<QRCodeManager />} />

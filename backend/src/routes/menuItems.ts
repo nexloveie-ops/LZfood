@@ -181,7 +181,20 @@ router.put(
         throw createAppError('NOT_FOUND', 'Menu item not found');
       }
 
-      const { categoryId, price, calories, avgWaitMinutes, photoUrl, arFileUrl, isSoldOut, translations, allergenIds, optionGroups } = req.body;
+      const {
+        categoryId,
+        price,
+        calories,
+        avgWaitMinutes,
+        photoUrl,
+        arFileUrl,
+        isSoldOut,
+        translations,
+        allergenIds,
+        optionGroups,
+        inventoryTracked,
+        inventory,
+      } = req.body;
 
       if (categoryId !== undefined) {
         if (!mongoose.Types.ObjectId.isValid(categoryId)) {
@@ -221,6 +234,71 @@ router.put(
       if (translations !== undefined) updateData.translations = translations;
       if (allergenIds !== undefined) updateData.allergenIds = allergenIds;
       if (normalizedOptionGroups !== undefined) updateData.optionGroups = normalizedOptionGroups;
+      if (inventoryTracked !== undefined) {
+        if (typeof inventoryTracked !== 'boolean') {
+          throw createAppError('VALIDATION_ERROR', 'inventoryTracked must be a boolean');
+        }
+        const features = await resolveStoreEffectiveFeatures(req.storeId!);
+        if (inventoryTracked && !features.has(FeatureKeys.InventoryTracking)) {
+          throw createAppError('FORBIDDEN', '当前套餐未开通库存追踪');
+        }
+        updateData.inventoryTracked = inventoryTracked;
+        if (inventoryTracked) {
+          const cur = (await MenuItem.findOne({ _id: id, storeId: req.storeId }).lean()) as
+            | { inventory?: { trackingEnabledAt?: Date } }
+            | null;
+          if (!cur?.inventory?.trackingEnabledAt) {
+            updateData['inventory.trackingEnabledAt'] = new Date();
+          }
+        }
+      }
+      if (inventory !== undefined && inventory !== null && typeof inventory === 'object') {
+        const inv = inventory as Record<string, unknown>;
+        const setInv: Record<string, unknown> = {};
+        if (typeof inv.baseUnit === 'string') setInv['inventory.baseUnit'] = inv.baseUnit.trim();
+        if (inv.perServing !== undefined) {
+          const n = Math.floor(Number(inv.perServing));
+          if (!Number.isFinite(n) || n < 1) {
+            throw createAppError('VALIDATION_ERROR', 'inventory.perServing 必须为 ≥1 的整数');
+          }
+          setInv['inventory.perServing'] = n;
+        }
+        if (inv.reorderFrequencyDays !== undefined) {
+          const n = Math.floor(Number(inv.reorderFrequencyDays));
+          if (!Number.isFinite(n) || n < 1) {
+            throw createAppError('VALIDATION_ERROR', 'inventory.reorderFrequencyDays 必须为 ≥1 的整数');
+          }
+          setInv['inventory.reorderFrequencyDays'] = n;
+        }
+        if (inv.estimatedDailySales !== undefined) {
+          const n = Number(inv.estimatedDailySales);
+          if (!Number.isFinite(n) || n < 0) {
+            throw createAppError('VALIDATION_ERROR', 'inventory.estimatedDailySales 必须为 ≥0 的数字');
+          }
+          setInv['inventory.estimatedDailySales'] = n;
+        }
+        if (Array.isArray(inv.purchaseUnits)) {
+          const seen = new Set<string>();
+          const arr = inv.purchaseUnits.map((u, idx) => {
+            const row = u as Record<string, unknown>;
+            const code = String(row.code ?? '').trim();
+            const label = String(row.label ?? '').trim();
+            const factor = Math.floor(Number(row.factorToBase));
+            if (!code) throw createAppError('VALIDATION_ERROR', `purchaseUnits[${idx}].code 必填`);
+            if (!label) throw createAppError('VALIDATION_ERROR', `purchaseUnits[${idx}].label 必填`);
+            if (!Number.isFinite(factor) || factor < 1) {
+              throw createAppError('VALIDATION_ERROR', `purchaseUnits[${idx}].factorToBase 必须为 ≥1 的整数`);
+            }
+            if (seen.has(code)) {
+              throw createAppError('VALIDATION_ERROR', `purchaseUnits 中 code 重复：${code}`);
+            }
+            seen.add(code);
+            return { code, label, factorToBase: factor };
+          });
+          setInv['inventory.purchaseUnits'] = arr;
+        }
+        Object.assign(updateData, setInv);
+      }
 
       if (Object.keys(updateData).length === 0) {
         throw createAppError('VALIDATION_ERROR', 'At least one field must be provided for update');

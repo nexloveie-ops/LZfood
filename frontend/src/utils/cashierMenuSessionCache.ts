@@ -13,6 +13,12 @@ export interface CashierMenuSessionEntry {
     translations: Array<{ locale: string; name: string; description?: string }>;
     optionGroups?: unknown[];
     isSoldOut?: boolean;
+    inventoryTracked?: boolean;
+    inventory?: {
+      baseUnit?: string;
+      perServing?: number;
+      currentQty?: number;
+    };
   }>;
   fetchedAt: number;
 }
@@ -32,4 +38,33 @@ export function setCashierMenuSessionCache(
   entry: Pick<CashierMenuSessionEntry, 'categories' | 'menuItems'>,
 ): void {
   cache.set(key, { ...entry, fetchedAt: Date.now() });
+}
+
+/**
+ * 就地把会话缓存中某条菜品的 `inventory.currentQty` 替换为新值。
+ * 调用时机：下单 / 加菜 / 进货 / 报损 / 初始化 / 调整 成功后。
+ *
+ * 不会创建缓存项；若缓存中无此 key（尚未首次拉过菜单）则跳过。
+ */
+export function patchCashierMenuInventoryQty(
+  key: string,
+  menuItemId: string,
+  currentQty: number,
+): void {
+  const entry = cache.get(key);
+  if (!entry) return;
+  let changed = false;
+  const items = entry.menuItems.map((it) => {
+    if (it._id !== menuItemId) return it;
+    changed = true;
+    return {
+      ...it,
+      inventory: {
+        ...(it.inventory || {}),
+        currentQty: Math.max(0, Math.floor(Number(currentQty) || 0)),
+      },
+    };
+  });
+  if (!changed) return;
+  cache.set(key, { ...entry, menuItems: items });
 }

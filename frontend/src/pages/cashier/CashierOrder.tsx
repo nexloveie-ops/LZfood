@@ -17,6 +17,7 @@ import {
   cashierMenuSessionCacheKey,
   getCashierMenuSessionCache,
   setCashierMenuSessionCache,
+  patchCashierMenuInventoryQty,
 } from '../../utils/cashierMenuSessionCache';
 import {
   DELIVERY_FEE_RULES_CONFIG_KEY,
@@ -33,6 +34,19 @@ interface MenuItem {
   translations: Translation[];
   optionGroups?: OptionGroup[];
   isSoldOut?: boolean;
+  inventoryTracked?: boolean;
+  inventory?: {
+    baseUnit?: string;
+    perServing?: number;
+    currentQty?: number;
+  };
+}
+
+interface InventorySummaryRow {
+  menuItemId: string;
+  color: 'red' | 'orange' | 'green';
+  currentQty: number;
+  remainingServings: number;
 }
 interface OrderItemOption {
   groupId?: string;
@@ -233,6 +247,7 @@ export default function CashierOrder() {
   const { token, hasFeature } = useAuth();
   const canDelivery = hasFeature('cashier.delivery.page');
   const canMemberWallet = hasFeature('cashier.member.wallet');
+  const canInventoryTracking = hasFeature('inventory.tracking');
   const lang = i18n.language;
 
   const menuSessionCacheKey = cashierMenuSessionCacheKey(getConfiguredStoreSlug(), lang);
@@ -240,6 +255,49 @@ export default function CashierOrder() {
 
   const [categories, setCategories] = useState<Category[]>(() => (initialMenuCache?.categories as Category[]) ?? []);
   const [menuItems, setMenuItems] = useState<MenuItem[]>(() => (initialMenuCache?.menuItems as MenuItem[]) ?? []);
+  const [invSummary, setInvSummary] = useState<Map<string, InventorySummaryRow>>(new Map());
+
+  /**
+   * 就地 patch 三处缓存：menuItems state、会话缓存、invSummary（颜色 / 剩余份数同步）。
+   * 由下单 / 加菜成功后的 `inventoryUpdates` 调用；任何 currentQty 变化都应走这里。
+   */
+  const applyInventoryUpdates = useCallback((updates: Array<{ menuItemId: string; currentQty: number; perServing?: number; baseUnit?: string }>) => {
+    if (!Array.isArray(updates) || updates.length === 0) return;
+    setMenuItems(prev => prev.map(it => {
+      const u = updates.find(x => x.menuItemId === it._id);
+      if (!u) return it;
+      return {
+        ...it,
+        inventory: {
+          ...(it.inventory || {}),
+          currentQty: Math.max(0, Math.floor(Number(u.currentQty) || 0)),
+        },
+      };
+    }));
+    setInvSummary(prev => {
+      const next = new Map(prev);
+      for (const u of updates) {
+        const old = next.get(u.menuItemId);
+        const perServing = Math.max(1, Math.floor(Number(u.perServing ?? old?.remainingServings ? 1 : 1) || 1));
+        const cur = Math.max(0, Math.floor(Number(u.currentQty) || 0));
+        const remainingServings = Math.floor(cur / perServing);
+        let color: 'red' | 'orange' | 'green' = old?.color ?? 'green';
+        if (cur <= 0 || remainingServings <= 0) color = 'red';
+        else if (old && old.color === 'red') color = 'green';
+        next.set(u.menuItemId, {
+          menuItemId: u.menuItemId,
+          color,
+          currentQty: cur,
+          remainingServings,
+        });
+      }
+      return next;
+    });
+    const cacheKey = cashierMenuSessionCacheKey(getConfiguredStoreSlug(), lang);
+    for (const u of updates) {
+      patchCashierMenuInventoryQty(cacheKey, u.menuItemId, u.currentQty);
+    }
+  }, [lang]);
   const [activeCat, setActiveCat] = useState(() => initialMenuCache?.categories[0]?._id ?? '');
   const [search, setSearch] = useState('');
   const [order, setOrder] = useState<OrderLine[]>([]);
@@ -667,6 +725,26 @@ export default function CashierOrder() {
   }, [fetchMenu]);
 
   useEffect(() => {
+    if (!canInventoryTracking || !token) {
+      setInvSummary(new Map());
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await apiFetch('/api/inventory/summary', { headers: { Authorization: `Bearer ${token}` } });
+        if (!res.ok) return;
+        const rows: InventorySummaryRow[] = await res.json();
+        if (cancelled) return;
+        const map = new Map<string, InventorySummaryRow>();
+        for (const r of rows) map.set(r.menuItemId, r);
+        setInvSummary(map);
+      } catch { /* ignore */ }
+    })();
+    return () => { cancelled = true; };
+  }, [canInventoryTracking, token, menuItems]);
+
+  useEffect(() => {
     void refreshDineInWorkflowMode();
   }, [refreshDineInWorkflowMode, token]);
 
@@ -883,8 +961,22 @@ export default function CashierOrder() {
     [lang, menuItems, mergeMenuItems],
   );
 
+  const computeInvAvailability = (item: MenuItem): { remaining: number; blocked: boolean; color: 'red' | 'orange' | 'green' | null } => {
+    if (!item.inventoryTracked) return { remaining: Infinity, blocked: false, color: null };
+    const perServing = Math.max(1, Math.floor(Number(item.inventory?.perServing) || 1));
+    const cur = Math.max(0, Number(item.inventory?.currentQty) || 0);
+    const remaining = Math.floor(cur / perServing) - getItemCount(item._id);
+    const color = invSummary.get(item._id)?.color ?? (cur <= 0 ? 'red' : null);
+    return { remaining, blocked: remaining <= 0, color };
+  };
+
   const addToOrder = (item: MenuItem) => {
     if (item.isSoldOut) return;
+    const av = computeInvAvailability(item);
+    if (av.blocked) {
+      alert(t('cashier.invOutOfStockNotice', { defaultValue: '该菜品库存不足' }));
+      return;
+    }
     if (item.optionGroups && item.optionGroups.length > 0) { setOptionModal(item); return; }
     setOrder((prev) => [
       ...prev,
@@ -1005,21 +1097,28 @@ export default function CashierOrder() {
 
   const renderMenuItemCard = (item: MenuItem) => {
     const qty = getItemCount(item._id);
+    const av = computeInvAvailability(item);
+    const invBlocked = av.blocked;
+    const invBorder = av.color === 'red' ? '2px solid #C62828'
+      : av.color === 'orange' ? '2px solid #E65100'
+      : null;
     return (
       <div
         key={item._id}
         onClick={() => addToOrder(item)}
         style={{
           background: 'var(--bg-white)',
-          border: qty > 0 ? '2px solid var(--red-primary)' : '1px solid var(--border)',
+          border: qty > 0
+            ? '2px solid var(--red-primary)'
+            : (invBorder || '1px solid var(--border)'),
           borderRadius: 8,
           padding: '10px 8px',
           display: 'flex',
           flexDirection: 'column',
           alignItems: 'center',
           textAlign: 'center',
-          cursor: item.isSoldOut ? 'not-allowed' : 'pointer',
-          opacity: item.isSoldOut ? 0.4 : 1,
+          cursor: item.isSoldOut || invBlocked ? 'not-allowed' : 'pointer',
+          opacity: item.isSoldOut || invBlocked ? 0.45 : 1,
           boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
           minHeight: 80,
           justifyContent: 'center',
@@ -1082,6 +1181,19 @@ export default function CashierOrder() {
         <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--red-primary)' }}>€{item.price}</div>
         {item.optionGroups && item.optionGroups.length > 0 && (
           <div style={{ fontSize: 9, color: 'var(--text-light)', marginTop: 2 }}>⚙ {t('customer.selectOptions')}</div>
+        )}
+        {item.inventoryTracked && (
+          <div style={{
+            fontSize: 10,
+            marginTop: 4,
+            padding: '1px 6px',
+            borderRadius: 3,
+            background: av.color === 'red' ? '#FFEBEE' : av.color === 'orange' ? '#FFF3E0' : '#F1F8E9',
+            color: av.color === 'red' ? '#C62828' : av.color === 'orange' ? '#E65100' : '#2E7D32',
+            fontWeight: 600,
+          }}>
+            📦 {Math.max(0, av.remaining)} {t('cashier.invServings')}
+          </div>
         )}
       </div>
     );
@@ -1338,6 +1450,7 @@ export default function CashierOrder() {
       });
       if (!orderRes.ok) { const d = await orderRes.json().catch(() => null); throw new Error(d?.error?.message || t('common.error')); }
       const orderData = await orderRes.json();
+      applyInventoryUpdates(orderData?.inventoryUpdates || []);
 
       // Print receipt for phone order
       try {
@@ -1449,6 +1562,7 @@ export default function CashierOrder() {
         throw new Error(d?.error?.message || t('common.error'));
       }
       const orderData = await orderRes.json();
+      applyInventoryUpdates(orderData?.inventoryUpdates || []);
       try {
         const configRes = await apiFetch('/api/admin/config');
         const cfg = configRes.ok ? await configRes.json() : {};
@@ -1696,6 +1810,7 @@ export default function CashierOrder() {
       const orderData = (await orderRes.json()) as {
         _id: string;
         dineInOrderNumber?: string;
+        inventoryUpdates?: Array<{ menuItemId: string; currentQty: number; perServing?: number; baseUnit?: string }>;
         items?: Array<{
           _id?: string;
           menuItemId?: string;
@@ -1761,6 +1876,7 @@ export default function CashierOrder() {
         /* guest slip print is best-effort */
       }
 
+      applyInventoryUpdates(orderData?.inventoryUpdates || []);
       setDineInSubmittedInfo({
         id: orderData._id,
         dineInOrderNumber: orderData.dineInOrderNumber,
@@ -1850,6 +1966,7 @@ export default function CashierOrder() {
       });
       if (!orderRes.ok) { const d = await orderRes.json().catch(() => null); throw new Error(d?.error?.message || t('common.error')); }
       const orderData = await orderRes.json();
+      applyInventoryUpdates(orderData?.inventoryUpdates || []);
 
       // Step 2: Checkout immediately
       let checkoutBody: Record<string, unknown>;

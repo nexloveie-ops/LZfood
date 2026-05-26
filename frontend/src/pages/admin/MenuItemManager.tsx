@@ -8,27 +8,57 @@ interface Category { _id: string; translations: Translation[]; }
 interface AllergenData { _id: string; name: string; icon: string; translations: { locale: string; name: string }[]; }
 interface OptionChoiceData { _id?: string; extraPrice: number; originalPrice?: number; translations: { locale: string; name: string }[]; }
 interface OptionGroupData { _id?: string; required?: boolean; minSelect?: number; maxSelect?: number; translations: { locale: string; name: string }[]; choices: OptionChoiceData[]; }
+interface InventoryPurchaseUnit { code: string; label: string; factorToBase: number; }
+interface InventorySubdoc {
+  baseUnit?: string;
+  perServing?: number;
+  purchaseUnits?: InventoryPurchaseUnit[];
+  currentQty?: number;
+  reorderFrequencyDays?: number;
+  estimatedDailySales?: number;
+}
 interface MenuItem {
   _id: string; categoryId: string; price: number; calories?: number;
   avgWaitMinutes?: number; photoUrl?: string; arFileUrl?: string;
   isSoldOut?: boolean; translations: Translation[]; allergenIds?: string[];
   optionGroups?: OptionGroupData[];
+  inventoryTracked?: boolean;
+  inventory?: InventorySubdoc;
 }
 
 interface FormOptionChoice { _id?: string; nameZh: string; nameEn: string; extraPrice: number; originalPrice: number; }
 interface FormOptionGroup { _id?: string; nameZh: string; nameEn: string; required: boolean; minSelect: number; maxSelect: number; choices: FormOptionChoice[]; }
+interface FormInventoryUnit { code: string; label: string; factorToBase: number; }
 
-const emptyForm = { categoryId: '', price: 0, calories: 0, avgWaitMinutes: 0, nameZh: '', nameEn: '', descZh: '', descEn: '', allergenIds: [] as string[], optionGroups: [] as FormOptionGroup[] };
+const emptyForm = {
+  categoryId: '',
+  price: 0,
+  calories: 0,
+  avgWaitMinutes: 0,
+  nameZh: '',
+  nameEn: '',
+  descZh: '',
+  descEn: '',
+  allergenIds: [] as string[],
+  optionGroups: [] as FormOptionGroup[],
+  inventoryTracked: false,
+  invBaseUnit: '',
+  invPerServing: 1,
+  invPurchaseUnits: [] as FormInventoryUnit[],
+  invReorderFrequencyDays: 3,
+};
 
 export default function MenuItemManager() {
   const { t } = useTranslation();
-  const { token } = useAuth();
+  const { token, hasFeature } = useAuth();
+  const canTrackInventory = hasFeature('inventory.tracking');
   const [items, setItems] = useState<MenuItem[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [allergens, setAllergens] = useState<AllergenData[]>([]);
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
+  const [editingDailySales, setEditingDailySales] = useState<{ daily: number; basis: 'history' | 'estimate' | 'mixed'; windowDays: number } | null>(null);
 
   const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
   const authHeaders = { Authorization: `Bearer ${token}` };
@@ -71,6 +101,7 @@ export default function MenuItemManager() {
           })),
         };
       });
+      const inv = item.inventory || {};
       setForm({
         categoryId: item.categoryId,
         price: item.price,
@@ -82,11 +113,37 @@ export default function MenuItemManager() {
         descEn: item.translations.find(t2 => t2.locale === 'en-US')?.description || '',
         allergenIds: item.allergenIds || [],
         optionGroups,
+        inventoryTracked: !!item.inventoryTracked,
+        invBaseUnit: inv.baseUnit || '',
+        invPerServing: Math.max(1, Math.floor(Number(inv.perServing) || 1)),
+        invPurchaseUnits: (inv.purchaseUnits || []).map((u) => ({
+          code: String(u.code || ''),
+          label: String(u.label || ''),
+          factorToBase: Math.max(1, Math.floor(Number(u.factorToBase) || 1)),
+        })),
+        invReorderFrequencyDays: Math.max(1, Math.floor(Number(inv.reorderFrequencyDays) || 3)),
       });
       setEditingId(item._id);
+      setEditingDailySales(null);
+      if (canTrackInventory) {
+        void (async () => {
+          try {
+            const res = await apiFetch(`/api/inventory/${item._id}/daily-sales`, { headers: authHeaders });
+            if (res.ok) {
+              const data = await res.json();
+              setEditingDailySales({
+                daily: Number(data.daily) || 0,
+                basis: (data.basis === 'history' ? 'history' : 'estimate') as 'history' | 'estimate' | 'mixed',
+                windowDays: Math.max(1, Number(data.windowDays) || 14),
+              });
+            }
+          } catch { /* ignore */ }
+        })();
+      }
     } else {
       setForm({ ...emptyForm, categoryId: categories[0]?._id || '' });
       setEditingId(null);
+      setEditingDailySales(null);
     }
     setShowForm(true);
   };
@@ -115,6 +172,37 @@ export default function MenuItemManager() {
         }
       }
     }
+    if (canTrackInventory && editingId && form.inventoryTracked) {
+      const seenCodes = new Set<string>();
+      for (let pi = 0; pi < form.invPurchaseUnits.length; pi++) {
+        const u = form.invPurchaseUnits[pi];
+        if (!u.code.trim()) { alert(`进货单位 #${pi + 1} 代码必填`); return; }
+        if (!u.label.trim()) { alert(`进货单位 #${pi + 1} 名称必填`); return; }
+        if (!Number.isFinite(u.factorToBase) || u.factorToBase < 1) {
+          alert(`进货单位 #${pi + 1} 换算系数必须为 ≥1 的整数`); return;
+        }
+        if (seenCodes.has(u.code)) { alert(`进货单位 code 重复：${u.code}`); return; }
+        seenCodes.add(u.code);
+      }
+    }
+    const inventoryPayload =
+      canTrackInventory && editingId
+        ? {
+            inventoryTracked: form.inventoryTracked,
+            inventory: form.inventoryTracked
+              ? {
+                  baseUnit: form.invBaseUnit.trim(),
+                  perServing: Math.max(1, Math.floor(form.invPerServing)),
+                  purchaseUnits: form.invPurchaseUnits.map((u) => ({
+                    code: u.code.trim(),
+                    label: u.label.trim(),
+                    factorToBase: Math.max(1, Math.floor(u.factorToBase)),
+                  })),
+                  reorderFrequencyDays: Math.max(1, Math.floor(form.invReorderFrequencyDays)),
+                }
+              : undefined,
+          }
+        : {};
     const body = {
       categoryId: form.categoryId, price: form.price,
       calories: form.calories, avgWaitMinutes: form.avgWaitMinutes,
@@ -123,6 +211,7 @@ export default function MenuItemManager() {
         { locale: 'zh-CN', name: form.nameZh, description: form.descZh },
         { locale: 'en-US', name: form.nameEn, description: form.descEn },
       ],
+      ...inventoryPayload,
       optionGroups: form.optionGroups.map(g => ({
         ...(g._id ? { _id: g._id } : {}),
         required: g.required,
@@ -244,6 +333,110 @@ export default function MenuItemManager() {
         i === gi ? { ...g, choices: g.choices.map((c, j) => j === ci ? { ...c, [field]: value } : c) } : g
       ),
     }));
+  };
+
+  const addPurchaseUnit = () => setForm(prev => ({
+    ...prev,
+    invPurchaseUnits: [...prev.invPurchaseUnits, { code: '', label: '', factorToBase: 1 }],
+  }));
+  const removePurchaseUnit = (idx: number) => setForm(prev => ({
+    ...prev,
+    invPurchaseUnits: prev.invPurchaseUnits.filter((_, i) => i !== idx),
+  }));
+  const updatePurchaseUnit = (idx: number, field: keyof FormInventoryUnit, value: unknown) => setForm(prev => ({
+    ...prev,
+    invPurchaseUnits: prev.invPurchaseUnits.map((u, i) => i === idx ? { ...u, [field]: value } : u),
+  }));
+
+  const renderInventorySection = (cardBg: string) => {
+    if (!canTrackInventory) return null;
+    if (!editingId) {
+      return (
+        <div style={{ marginTop: 16, borderTop: '1px solid var(--border)', paddingTop: 14, color: 'var(--text-light)', fontSize: 12 }}>
+          {t('admin.inventoryConfigAfterCreate')}
+        </div>
+      );
+    }
+    return (
+      <div style={{ marginTop: 16, borderTop: '1px solid var(--border)', paddingTop: 14 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+          <label style={{ fontSize: 13, fontWeight: 700 }}>📦 {t('admin.inventoryTracking')}</label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={form.inventoryTracked}
+              onChange={e => setForm(prev => ({ ...prev, inventoryTracked: e.target.checked }))}
+            />
+            {t('admin.enableInventoryTracking')}
+          </label>
+        </div>
+        {form.inventoryTracked && (
+          <div style={{ background: cardBg, borderRadius: 8, padding: 12, border: '1px solid var(--border)' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 10 }}>
+              <div>
+                <label style={{ fontSize: 11, color: 'var(--text-light)' }}>{t('admin.invBaseUnit')}</label>
+                <input className="input" placeholder={t('admin.invBaseUnitPlaceholder')} value={form.invBaseUnit}
+                  onChange={e => setForm(prev => ({ ...prev, invBaseUnit: e.target.value }))} style={{ width: '100%' }} />
+              </div>
+              <div>
+                <label style={{ fontSize: 11, color: 'var(--text-light)' }}>{t('admin.invPerServing')}</label>
+                <input className="input" type="number" min={1} value={form.invPerServing}
+                  onChange={e => setForm(prev => ({ ...prev, invPerServing: Math.max(1, Math.floor(Number(e.target.value) || 1)) }))} style={{ width: '100%' }} />
+              </div>
+              <div>
+                <label style={{ fontSize: 11, color: 'var(--text-light)' }}>{t('admin.invReorderFrequency')}</label>
+                <input className="input" type="number" min={1} value={form.invReorderFrequencyDays}
+                  onChange={e => setForm(prev => ({ ...prev, invReorderFrequencyDays: Math.max(1, Math.floor(Number(e.target.value) || 1)) }))} style={{ width: '100%' }} />
+              </div>
+            </div>
+            {editingDailySales && (
+              <div style={{
+                fontSize: 12, color: 'var(--text-secondary)', marginBottom: 12,
+                padding: '6px 10px', background: 'var(--bg)', borderRadius: 6, border: '1px dashed var(--border)',
+              }}>
+                {t('admin.invAutoDailyLabel', { defaultValue: '系统自动统计的日均销量' })}：
+                <strong style={{ color: 'var(--text-primary)' }}>
+                  {editingDailySales.daily.toFixed(2)} {t('admin.invServings')} / {t('admin.invDay', { defaultValue: '天' })}
+                </strong>
+                <span style={{ marginLeft: 8, color: 'var(--text-light)' }}>
+                  ({editingDailySales.basis === 'history'
+                    ? t('admin.invFromHistory', { defaultValue: '基于近 14 天订单历史' })
+                    : t('admin.invNoHistoryYet', { defaultValue: '暂无订单样本，阈值按 0 处理；有销售后自动启用阈值告警' })})
+                </span>
+                {editingDailySales.basis === 'history' && (
+                  <div style={{ marginTop: 2, color: 'var(--text-light)' }}>
+                    {t('admin.invThresholdPreview', {
+                      defaultValue: '当前阈值估算 ≈ {{n}} {{u}}（= 补货周期 × 日均 × 每份数量）',
+                      n: Math.ceil(form.invReorderFrequencyDays * editingDailySales.daily * Math.max(1, form.invPerServing)),
+                      u: form.invBaseUnit || t('admin.invBaseUnit'),
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+              <span style={{ fontSize: 12, fontWeight: 600 }}>{t('admin.invPurchaseUnits')}</span>
+              <button className="btn btn-outline" style={{ fontSize: 11, padding: '4px 10px' }} onClick={addPurchaseUnit}>+ {t('admin.invAddPurchaseUnit')}</button>
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--text-light)', marginBottom: 6 }}>{t('admin.invPurchaseUnitHint')}</div>
+            {form.invPurchaseUnits.length === 0 && (
+              <div style={{ fontSize: 11, color: 'var(--text-light)', padding: '6px 0' }}>{t('admin.invNoPurchaseUnits')}</div>
+            )}
+            {form.invPurchaseUnits.map((u, idx) => (
+              <div key={idx} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr auto', gap: 6, marginBottom: 4 }}>
+                <input className="input" placeholder="code (e.g. case)" value={u.code}
+                  onChange={e => updatePurchaseUnit(idx, 'code', e.target.value)} style={{ fontSize: 12 }} />
+                <input className="input" placeholder={t('admin.invUnitLabelPlaceholder')} value={u.label}
+                  onChange={e => updatePurchaseUnit(idx, 'label', e.target.value)} style={{ fontSize: 12 }} />
+                <input className="input" type="number" min={1} placeholder={t('admin.invFactorPlaceholder')} value={u.factorToBase}
+                  onChange={e => updatePurchaseUnit(idx, 'factorToBase', Math.max(1, Math.floor(Number(e.target.value) || 1)))} style={{ fontSize: 12 }} />
+                <button className="btn btn-ghost" style={{ fontSize: 14, color: 'var(--red-primary)' }} onClick={() => removePurchaseUnit(idx)}>✕</button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
   };
 
   return (
@@ -425,6 +618,8 @@ export default function MenuItemManager() {
             ))}
           </div>
 
+          {renderInventorySection('var(--bg)')}
+
           <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
             <button className="btn btn-primary" onClick={handleSave}>{t('common.save')}</button>
             <button className="btn btn-outline" onClick={() => setShowForm(false)}>{t('common.cancel')}</button>
@@ -468,7 +663,14 @@ export default function MenuItemManager() {
                 <td style={{ padding: '8px 12px', textAlign: 'center' }}>
                   <label style={{ cursor: 'pointer' }}>{item.arFileUrl ? (<span style={{ color: 'var(--green)', fontSize: 13 }}>✓ <span style={{ textDecoration: 'underline', fontSize: 11 }}>替换</span></span>) : (<span className="btn btn-ghost" style={{ fontSize: 11, padding: '4px 8px', display: 'inline-block' }}>上传 AR</span>)}<input type="file" accept=".usdz,.glb" hidden onChange={e => { if (e.target.files?.[0]) { uploadAR(item._id, e.target.files[0]); e.target.value = ''; } }} /></label>
                 </td>
-                <td style={{ padding: '8px 12px', textAlign: 'center' }}>{item.isSoldOut ? <span className="badge" style={{ background: 'var(--red-light)', color: 'var(--red-primary)' }}>售罄</span> : <span className="badge" style={{ background: 'var(--green-light)', color: 'var(--green)' }}>在售</span>}</td>
+                <td style={{ padding: '8px 12px', textAlign: 'center' }}>
+                  {item.isSoldOut ? <span className="badge" style={{ background: 'var(--red-light)', color: 'var(--red-primary)' }}>售罄</span> : <span className="badge" style={{ background: 'var(--green-light)', color: 'var(--green)' }}>在售</span>}
+                  {canTrackInventory && item.inventoryTracked && (
+                    <div style={{ marginTop: 4, fontSize: 10, color: 'var(--text-light)' }}>
+                      📦 {Math.max(0, Number(item.inventory?.currentQty) || 0)}{item.inventory?.baseUnit ? ' ' + item.inventory.baseUnit : ''}
+                    </div>
+                  )}
+                </td>
                 <td style={{ padding: '8px 12px', textAlign: 'right' }}>
                   <button className="btn btn-ghost" style={{ fontSize: 12 }} onClick={() => { if (showForm && editingId === item._id) setShowForm(false); else startEdit(item); }}>{showForm && editingId === item._id ? '收起' : t('common.edit')}</button>
                   <button className="btn btn-ghost" style={{ fontSize: 12, color: 'var(--red-primary)' }} onClick={() => handleDelete(item._id)}>{t('common.delete')}</button>
@@ -491,6 +693,7 @@ export default function MenuItemManager() {
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}><label style={{ fontSize: 13, fontWeight: 700 }}>{t('admin.optionGroups')}</label><button className="btn btn-outline" style={{ fontSize: 12, padding: '4px 10px' }} onClick={addOptionGroup}>+ {t('admin.addOptionGroup')}</button></div>
                     {form.optionGroups.map((group, gi) => (<div key={gi} style={{ background: '#fff', borderRadius: 8, padding: 12, marginBottom: 10, border: '1px solid var(--border)' }}><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}><span style={{ fontSize: 12, fontWeight: 600 }}>#{gi + 1}</span><button className="btn btn-ghost" style={{ fontSize: 11, color: 'var(--red-primary)' }} onClick={() => removeOptionGroup(gi)}>{t('common.delete')}</button></div><div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: 8, marginBottom: 8 }}><div><label style={{ fontSize: 11, color: 'var(--text-light)' }}>名称(中)</label><input className="input" value={group.nameZh} onChange={e => updateOptionGroup(gi, 'nameZh', e.target.value)} style={{ width: '100%' }} /></div><div><label style={{ fontSize: 11, color: 'var(--text-light)' }}>Name(EN)</label><input className="input" value={group.nameEn} onChange={e => updateOptionGroup(gi, 'nameEn', e.target.value)} style={{ width: '100%' }} /></div><div style={{ display: 'flex', alignItems: 'flex-end', paddingBottom: 2 }}><label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 }}><input type="checkbox" checked={group.required} onChange={(e) => { const checked = e.target.checked; setForm((prev) => ({ ...prev, optionGroups: prev.optionGroups.map((g, i) => (i !== gi ? g : { ...g, required: checked, ...(checked ? { minSelect: 0, maxSelect: 0 } : {}) })) })); }} />{t('admin.required')}</label></div></div>{!group.required && (<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}><div><label style={{ fontSize: 11, color: 'var(--text-light)' }}>{t('admin.optionGroupMinSelect')}</label><input className="input" type="number" min={0} value={group.minSelect} onChange={(e) => updateOptionGroup(gi, 'minSelect', Math.max(0, Math.floor(Number(e.target.value) || 0)))} style={{ width: '100%' }} /></div><div><label style={{ fontSize: 11, color: 'var(--text-light)' }}>{t('admin.optionGroupMaxSelect')} <span style={{ opacity: 0.75 }}>({t('admin.optionGroupMaxSelectHint')})</span></label><input className="input" type="number" min={0} value={group.maxSelect} onChange={(e) => updateOptionGroup(gi, 'maxSelect', Math.max(0, Math.floor(Number(e.target.value) || 0)))} style={{ width: '100%' }} /></div></div>)}{group.choices.map((choice, ci) => (<div key={ci} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 70px 70px auto', gap: 6, marginBottom: 4 }}><input className="input" placeholder="中文" value={choice.nameZh} onChange={e => updateChoice(gi, ci, 'nameZh', e.target.value)} style={{ fontSize: 12 }} /><input className="input" placeholder="EN" value={choice.nameEn} onChange={e => updateChoice(gi, ci, 'nameEn', e.target.value)} style={{ fontSize: 12 }} /><input className="input" type="number" placeholder="原价" value={choice.originalPrice || ''} onChange={e => { const v = e.target.value; const n = v === '' ? 0 : Number(v); updateChoice(gi, ci, 'originalPrice', Number.isFinite(n) ? n : 0); }} style={{ fontSize: 12 }} /><input className="input" type="number" placeholder="现价" value={choice.extraPrice} onChange={e => { const v = e.target.value; const n = v === '' ? 0 : Number(v); updateChoice(gi, ci, 'extraPrice', Number.isFinite(n) ? n : 0); }} style={{ fontSize: 12 }} /><button className="btn btn-ghost" style={{ fontSize: 14, color: 'var(--red-primary)' }} onClick={() => removeChoice(gi, ci)}>✕</button></div>))}<button className="btn btn-ghost" style={{ fontSize: 11, marginTop: 4 }} onClick={() => addChoice(gi)}>+ {t('admin.addChoice')}</button></div>))}
                   </div>
+                  {renderInventorySection('#fff')}
                   <div style={{ display: 'flex', gap: 8, marginTop: 14 }}><button className="btn btn-primary" onClick={handleSave}>{t('common.save')}</button><button className="btn btn-outline" onClick={() => setShowForm(false)}>{t('common.cancel')}</button></div>
                 </td></tr>
               )}

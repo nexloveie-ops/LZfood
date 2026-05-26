@@ -34,8 +34,16 @@ interface FeatureAddonRow {
   isActive: boolean;
 }
 
-/** 平台配置 Plan/Add-on 时的功能键分组 */
-const FEATURE_GROUPS: { section: string; options: { key: string; label: string }[] }[] = [
+/**
+ * 平台配置 Plan/Add-on 时的功能键分组。
+ *
+ * `checkedAliases`（可选）—— 旧版本切分过的兄弟 key。任一 alias 命中也算"已勾选"，
+ * 关闭时一起清理。仅为兼容历史数据，新 Plan 只会写入主 key。
+ */
+const FEATURE_GROUPS: {
+  section: string;
+  options: { key: string; label: string; checkedAliases?: string[] }[];
+}[] = [
   {
     section: 'Cashier',
     options: [
@@ -61,6 +69,16 @@ const FEATURE_GROUPS: { section: string; options: { key: string; label: string }
     ],
   },
   {
+    section: '库存追踪',
+    options: [
+      {
+        key: 'inventory.tracking',
+        label: '库存追踪（管理端：销量/进货/报损/流水/报表；收银端：到货录入、报损、初始库存）',
+        checkedAliases: ['admin.inventory.tracking.page', 'cashier.inventory.restock.tab'],
+      },
+    ],
+  },
+  {
     section: '平台',
     options: [{ key: 'platform.postOrderAds.manage.action', label: '平台-广告管理' }],
   },
@@ -74,7 +92,11 @@ const FEATURE_OVERRIDE_TEMPLATE: Record<string, boolean> = Object.fromEntries(
 
 function FeatureCheckboxList(props: {
   selected: string[];
-  onToggle: (key: string) => void;
+  /**
+   * 由父级实现。`aliases` 是该选项要一并清除的历史兄弟 key（关闭时同步删除），
+   * 启用时父级只需写入主 key。
+   */
+  onToggle: (key: string, aliases?: string[]) => void;
   maxHeight?: number;
 }) {
   const { selected, onToggle, maxHeight = 180 } = props;
@@ -83,18 +105,22 @@ function FeatureCheckboxList(props: {
       {FEATURE_GROUPS.map((group) => (
         <div key={group.section} style={{ marginBottom: 10 }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: '#455a64', marginBottom: 6, letterSpacing: 0.2 }}>{group.section}</div>
-          {group.options.map((opt) => (
-            <label key={opt.key} style={{ display: 'block', fontSize: 12, marginBottom: 6, paddingLeft: 4 }}>
-              <input
-                type="checkbox"
-                checked={selected.includes(opt.key)}
-                onChange={() => onToggle(opt.key)}
-                style={{ marginRight: 6 }}
-              />
-              {opt.label}
-              <span style={{ color: '#888', marginLeft: 6 }}>{opt.key}</span>
-            </label>
-          ))}
+          {group.options.map((opt) => {
+            const isOn = selected.includes(opt.key)
+              || (opt.checkedAliases?.some((a) => selected.includes(a)) ?? false);
+            return (
+              <label key={opt.key} style={{ display: 'block', fontSize: 12, marginBottom: 6, paddingLeft: 4 }}>
+                <input
+                  type="checkbox"
+                  checked={isOn}
+                  onChange={() => onToggle(opt.key, opt.checkedAliases)}
+                  style={{ marginRight: 6 }}
+                />
+                {opt.label}
+                <span style={{ color: '#888', marginLeft: 6 }}>{opt.key}</span>
+              </label>
+            );
+          })}
         </div>
       ))}
     </div>
@@ -180,9 +206,18 @@ export default function PlatformStoresPage() {
     return () => { cancelled = true; };
   }, [loadStores, loadProducts]);
 
-  const toggleInList = (list: string[], key: string) => (
-    list.includes(key) ? list.filter(k => k !== key) : [...list, key]
-  );
+  /**
+   * 切换功能勾选：
+   * - 旧 plan 里残留的 `aliases`（如 `admin.inventory.tracking.page` / `cashier.inventory.restock.tab`）
+   *   也算"已勾选"，关闭时一并清掉，避免合并后 plan 里还留着幽灵 key。
+   * - 启用时只写入主 key（新存的数据干干净净的）。
+   */
+  const toggleInList = (list: string[], key: string, aliases?: string[]) => {
+    const all = [key, ...(aliases || [])];
+    const isOn = all.some((k) => list.includes(k));
+    if (isOn) return list.filter((k) => !all.includes(k));
+    return [...list, key];
+  };
 
   const isAdsAddon = (addon: FeatureAddonRow): boolean => (
     addon.features.includes('platform.postOrderAds.manage.action') ||
@@ -513,7 +548,7 @@ export default function PlatformStoresPage() {
                     <input className="input" style={{ width: '100%', marginBottom: 8 }} placeholder="Code（如 pro-base）" value={newPlanCode} onChange={e => setNewPlanCode(e.target.value)} />
                     <FeatureCheckboxList
                       selected={newPlanFeatures}
-                      onToggle={(key) => setNewPlanFeatures((prev) => toggleInList(prev, key))}
+                      onToggle={(key, aliases) => setNewPlanFeatures((prev) => toggleInList(prev, key, aliases))}
                       maxHeight={180}
                     />
                     <button className="btn btn-primary" type="submit">创建 Plan</button>
@@ -533,7 +568,7 @@ export default function PlatformStoresPage() {
                     <input className="input" style={{ width: '100%', marginBottom: 8 }} placeholder="Code（如 vat-export）" value={newAddonCode} onChange={e => setNewAddonCode(e.target.value)} />
                     <FeatureCheckboxList
                       selected={newAddonFeatures}
-                      onToggle={(key) => setNewAddonFeatures((prev) => toggleInList(prev, key))}
+                      onToggle={(key, aliases) => setNewAddonFeatures((prev) => toggleInList(prev, key, aliases))}
                       maxHeight={180}
                     />
                     <button className="btn btn-primary" type="submit">创建 Add-on</button>
@@ -821,7 +856,7 @@ export default function PlatformStoresPage() {
             </label>
             <FeatureCheckboxList
               selected={editPlanFeatures}
-              onToggle={(key) => setEditPlanFeatures((prev) => toggleInList(prev, key))}
+              onToggle={(key, aliases) => setEditPlanFeatures((prev) => toggleInList(prev, key, aliases))}
               maxHeight={280}
             />
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>

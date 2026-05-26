@@ -1,10 +1,19 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../../context/AuthContext';
 import { apiFetch } from '../../api/client';
 
 interface MenuItem {
-  _id: string; isSoldOut?: boolean; soldOutUntil?: string;
+  _id: string;
+  categoryId: string;
+  isSoldOut?: boolean;
+  soldOutUntil?: string;
+  translations: { locale: string; name: string }[];
+}
+
+interface Category {
+  _id: string;
+  sortOrder: number;
   translations: { locale: string; name: string }[];
 }
 
@@ -13,17 +22,59 @@ export default function InventoryManager() {
   const { token, hasFeature } = useAuth();
   const canSetRestoreTime = hasFeature('admin.inventory.restoreTime.action');
   const [items, setItems] = useState<MenuItem[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [showModal, setShowModal] = useState<string | null>(null); // item id
   const [restoreMode, setRestoreMode] = useState<'quick' | 'custom'>('quick');
   const [customDate, setCustomDate] = useState('');
   const [customTime, setCustomTime] = useState('');
 
   const fetchItems = useCallback(async () => {
-    const res = await apiFetch('/api/menu/items?ownOptionGroups=1', { headers: { Authorization: `Bearer ${token}` } });
-    if (res.ok) setItems(await res.json());
+    const [itemsRes, catsRes] = await Promise.all([
+      apiFetch('/api/menu/items?ownOptionGroups=1', { headers: { Authorization: `Bearer ${token}` } }),
+      apiFetch('/api/menu/categories', { headers: { Authorization: `Bearer ${token}` } }),
+    ]);
+    if (itemsRes.ok) setItems(await itemsRes.json());
+    if (catsRes.ok) {
+      const cats: Category[] = await catsRes.json();
+      cats.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+      setCategories(cats);
+    }
   }, [token]);
 
   useEffect(() => { fetchItems(); }, [fetchItems]);
+
+  /** 按菜品目录 sortOrder 分组；目录已删但 item 仍存在 → 归到「其它」尾部 */
+  const groups = useMemo(() => {
+    const byCat = new Map<string, MenuItem[]>();
+    for (const it of items) {
+      const key = it.categoryId || '__uncategorized__';
+      const arr = byCat.get(key) || [];
+      arr.push(it);
+      byCat.set(key, arr);
+    }
+    const sortedGroups: Array<{ id: string; name: string; nameEn: string; items: MenuItem[] }> = [];
+    for (const cat of categories) {
+      const list = byCat.get(cat._id);
+      if (!list || list.length === 0) continue;
+      sortedGroups.push({
+        id: cat._id,
+        name: cat.translations.find(tr => tr.locale === 'zh-CN')?.name || cat.translations[0]?.name || '',
+        nameEn: cat.translations.find(tr => tr.locale === 'en-US')?.name || '',
+        items: list,
+      });
+    }
+    const orphans = byCat.get('__uncategorized__');
+    if (orphans && orphans.length > 0) {
+      sortedGroups.push({ id: '__uncategorized__', name: t('admin.uncategorized', { defaultValue: '其它' }), nameEn: '', items: orphans });
+    }
+    /** 目录顺序里漏掉的 categoryId（脏数据） */
+    const seen = new Set(categories.map(c => c._id));
+    for (const [cid, list] of byCat) {
+      if (cid === '__uncategorized__' || seen.has(cid)) continue;
+      sortedGroups.push({ id: cid, name: t('admin.uncategorized', { defaultValue: '其它' }), nameEn: '', items: list });
+    }
+    return sortedGroups;
+  }, [items, categories, t]);
 
   const markSoldOut = async (id: string, soldOutUntil: string | null) => {
     await apiFetch(`/api/menu/items/${id}/sold-out`, {
@@ -80,49 +131,69 @@ export default function InventoryManager() {
     return `${mins}m`;
   };
 
+  const renderItemCard = (item: MenuItem) => {
+    const name = item.translations.find(t2 => t2.locale === 'zh-CN')?.name || item.translations[0]?.name || '';
+    const nameEn = item.translations.find(t2 => t2.locale === 'en-US')?.name || '';
+    return (
+      <div key={item._id} className="card" style={{
+        padding: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        opacity: item.isSoldOut ? 0.6 : 1,
+      }}>
+        <div>
+          <div style={{ fontWeight: 600, fontSize: 14 }}>{name}</div>
+          {nameEn && <div style={{ fontSize: 11, color: 'var(--text-light)' }}>{nameEn}</div>}
+          <span className="badge" style={{
+            marginTop: 4,
+            background: item.isSoldOut ? 'var(--red-light)' : 'var(--green-light)',
+            color: item.isSoldOut ? 'var(--red-primary)' : 'var(--green)',
+          }}>
+            {item.isSoldOut ? t('customer.soldOut') : '在售'}
+          </span>
+          {item.isSoldOut && item.soldOutUntil && (
+            <div style={{ fontSize: 11, color: 'var(--text-light)', marginTop: 2 }}>
+              ⏰ {formatUntil(item.soldOutUntil)}
+            </div>
+          )}
+        </div>
+        {item.isSoldOut ? (
+          <button className="btn btn-primary" style={{ fontSize: 12, padding: '8px 14px' }}
+            onClick={() => restoreSupply(item._id)}>
+            恢复供应
+          </button>
+        ) : (
+          <button className="btn btn-outline" style={{ fontSize: 12, padding: '8px 14px' }}
+            onClick={() => openSoldOutModal(item._id)}>
+            标记售罄
+          </button>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div>
       <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 16 }}>{t('admin.inventory')}</h2>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 }}>
-        {items.map(item => {
-          const name = item.translations.find(t2 => t2.locale === 'zh-CN')?.name || item.translations[0]?.name || '';
-          const nameEn = item.translations.find(t2 => t2.locale === 'en-US')?.name || '';
-          return (
-            <div key={item._id} className="card" style={{
-              padding: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-              opacity: item.isSoldOut ? 0.6 : 1,
-            }}>
-              <div>
-                <div style={{ fontWeight: 600, fontSize: 14 }}>{name}</div>
-                {nameEn && <div style={{ fontSize: 11, color: 'var(--text-light)' }}>{nameEn}</div>}
-                <span className="badge" style={{
-                  marginTop: 4,
-                  background: item.isSoldOut ? 'var(--red-light)' : 'var(--green-light)',
-                  color: item.isSoldOut ? 'var(--red-primary)' : 'var(--green)',
-                }}>
-                  {item.isSoldOut ? t('customer.soldOut') : '在售'}
-                </span>
-                {item.isSoldOut && item.soldOutUntil && (
-                  <div style={{ fontSize: 11, color: 'var(--text-light)', marginTop: 2 }}>
-                    ⏰ {formatUntil(item.soldOutUntil)}
-                  </div>
-                )}
-              </div>
-              {item.isSoldOut ? (
-                <button className="btn btn-primary" style={{ fontSize: 12, padding: '8px 14px' }}
-                  onClick={() => restoreSupply(item._id)}>
-                  恢复供应
-                </button>
-              ) : (
-                <button className="btn btn-outline" style={{ fontSize: 12, padding: '8px 14px' }}
-                  onClick={() => openSoldOutModal(item._id)}>
-                  标记售罄
-                </button>
-              )}
-            </div>
-          );
-        })}
-      </div>
+      {groups.length === 0 && (
+        <div style={{ fontSize: 13, color: 'var(--text-light)' }}>{t('common.noData', { defaultValue: '暂无数据' })}</div>
+      )}
+      {groups.map(group => (
+        <section key={group.id} style={{ marginBottom: 22 }}>
+          <div style={{
+            display: 'flex', alignItems: 'baseline', gap: 8,
+            padding: '6px 0 8px', marginBottom: 10,
+            borderBottom: '1px solid var(--border)',
+          }}>
+            <h3 style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>{group.name}</h3>
+            {group.nameEn && <span style={{ fontSize: 11, color: 'var(--text-light)' }}>{group.nameEn}</span>}
+            <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-light)' }}>
+              {group.items.length}
+            </span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 }}>
+            {group.items.map(renderItemCard)}
+          </div>
+        </section>
+      ))}
 
       {/* Sold Out Time Modal */}
       {canSetRestoreTime && showModal && (

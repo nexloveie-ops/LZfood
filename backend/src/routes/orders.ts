@@ -29,6 +29,13 @@ import {
   parseAdHocOptionsFromItemPayload,
   type AdHocOptionInput,
 } from '../utils/cashierAdHocOptions';
+import {
+  aggregateServingsByMenuItem,
+  deductStockForOrderCreation,
+  diffServings,
+  writeSaleTxns,
+  type OrderItemForInventory,
+} from '../utils/inventoryService';
 
 function isStaffCashierOrOwner(req: Request): boolean {
   const u = req.user;
@@ -48,6 +55,7 @@ function orderModels() {
     DailyOrderCounter: mongoose.Model<any>;
     SystemConfig: mongoose.Model<any>;
     CustomerProfile: mongoose.Model<any>;
+    InventoryTxn: mongoose.Model<any>;
   };
 }
 
@@ -494,29 +502,82 @@ export function createOrdersRouter(io: SocketIOServer): Router {
         orderData.phoneCardPaidAtPlacement = true;
       }
 
-      const order = await Order.create(orderData);
+      /** 库存追踪：在订单写入前先做原子扣减；后续任何抛错都要把扣减回滚 */
+      const inventoryServings = aggregateServingsByMenuItem(
+        items as OrderItemForInventory[],
+      );
+      const inventoryDeduction = await deductStockForOrderCreation(
+        req.storeId!,
+        inventoryServings,
+        menuItems as unknown as Parameters<typeof deductStockForOrderCreation>[2],
+      );
 
-      if ((order as { phoneCardPaidAtPlacement?: boolean }).phoneCardPaidAtPlacement) {
-        try {
-          const { Checkout } = getModels() as { Checkout: mongoose.Model<any> };
-          const totalAmount = computeOrderPayableTotalEuro(order);
-          await Checkout.create({
-            storeId: req.storeId,
-            type: 'seat',
-            totalAmount,
-            paymentMethod: 'card',
-            cardAmount: totalAmount,
-            orderIds: [order._id],
-          });
-        } catch (checkoutErr) {
-          await Order.findOneAndDelete({ _id: order._id, storeId: req.storeId });
-          throw checkoutErr;
+      let order: any;
+      try {
+        order = await Order.create(orderData);
+
+        if ((order as { phoneCardPaidAtPlacement?: boolean }).phoneCardPaidAtPlacement) {
+          try {
+            const { Checkout } = getModels() as { Checkout: mongoose.Model<any> };
+            const totalAmount = computeOrderPayableTotalEuro(order);
+            await Checkout.create({
+              storeId: req.storeId,
+              type: 'seat',
+              totalAmount,
+              paymentMethod: 'card',
+              cardAmount: totalAmount,
+              orderIds: [order._id],
+            });
+          } catch (checkoutErr) {
+            await Order.findOneAndDelete({ _id: order._id, storeId: req.storeId });
+            throw checkoutErr;
+          }
         }
+      } catch (writeErr) {
+        if (inventoryDeduction.demands.length > 0) {
+          const { MenuItem: MI } = orderModels();
+          for (const d of inventoryDeduction.demands) {
+            try {
+              await MI.updateOne(
+                { _id: d.menuItemId, storeId: req.storeId },
+                { $inc: { 'inventory.currentQty': d.baseQty } },
+              );
+            } catch {
+              /* best-effort rollback */
+            }
+          }
+        }
+        throw writeErr;
+      }
+
+      if (inventoryDeduction.demands.length > 0) {
+        void writeSaleTxns(
+          req.storeId!,
+          order._id as mongoose.Types.ObjectId,
+          inventoryDeduction.demands,
+          inventoryDeduction.snapshots,
+        );
       }
 
       io.to(storeIoRoom(req.storeId!)).emit('order:new', order);
 
-      res.status(201).json(order);
+      /** 给收银本地缓存做就地 patch：返回订单同时附带本次扣减后的最新库存快照 */
+      const inventoryUpdates = inventoryDeduction.demands.length === 0
+        ? []
+        : inventoryDeduction.demands.map((d) => {
+            const snap = inventoryDeduction.snapshots.get(d.menuItemId);
+            return {
+              menuItemId: d.menuItemId,
+              currentQty: snap?.qtyAfter ?? 0,
+              perServing: d.perServing,
+              baseUnit: d.baseUnit,
+            };
+          });
+      const responseBody: Record<string, unknown> = {
+        ...(typeof order.toObject === 'function' ? order.toObject() : order),
+      };
+      if (inventoryUpdates.length > 0) responseBody.inventoryUpdates = inventoryUpdates;
+      res.status(201).json(responseBody);
     } catch (err) {
       next(err);
     }
@@ -1302,15 +1363,69 @@ export function createOrdersRouter(io: SocketIOServer): Router {
         );
       }
 
-      const updated = await Order.findOneAndUpdate(
-        { _id: id, storeId: req.storeId },
-        { $set: { items: orderItems } },
-        { new: true },
+      /** 库存追踪：仅对新增加的份数做扣减（同 menuItemId 的累计差额） */
+      const deltaServings = diffServings(
+        order.items as OrderItemForInventory[],
+        orderItems as unknown as OrderItemForInventory[],
       );
+      const inventoryDelta = await deductStockForOrderCreation(
+        req.storeId!,
+        deltaServings,
+        menuItems as unknown as Parameters<typeof deductStockForOrderCreation>[2],
+      );
+
+      let updated: any;
+      try {
+        updated = await Order.findOneAndUpdate(
+          { _id: id, storeId: req.storeId },
+          { $set: { items: orderItems } },
+          { new: true },
+        );
+      } catch (writeErr) {
+        for (const d of inventoryDelta.demands) {
+          try {
+            const { MenuItem: MI } = orderModels();
+            await MI.updateOne(
+              { _id: d.menuItemId, storeId: req.storeId },
+              { $inc: { 'inventory.currentQty': d.baseQty } },
+            );
+          } catch {
+            /* best-effort */
+          }
+        }
+        throw writeErr;
+      }
+
+      if (inventoryDelta.demands.length > 0) {
+        void writeSaleTxns(
+          req.storeId!,
+          order._id as mongoose.Types.ObjectId,
+          inventoryDelta.demands,
+          inventoryDelta.snapshots,
+        );
+      }
 
       io.to(storeIoRoom(req.storeId!)).emit('order:updated', updated);
 
-      res.json(updated);
+      /** 同 POST：返回本次新增扣减后的最新库存，给前端就地 patch */
+      const inventoryUpdates = inventoryDelta.demands.length === 0
+        ? []
+        : inventoryDelta.demands.map((d) => {
+            const snap = inventoryDelta.snapshots.get(d.menuItemId);
+            return {
+              menuItemId: d.menuItemId,
+              currentQty: snap?.qtyAfter ?? 0,
+              perServing: d.perServing,
+              baseUnit: d.baseUnit,
+            };
+          });
+      const responseBody: Record<string, unknown> = {
+        ...(updated && typeof (updated as { toObject?: () => unknown }).toObject === 'function'
+          ? ((updated as { toObject: () => Record<string, unknown> }).toObject())
+          : (updated as unknown as Record<string, unknown>)),
+      };
+      if (inventoryUpdates.length > 0) responseBody.inventoryUpdates = inventoryUpdates;
+      res.json(responseBody);
     } catch (err) {
       next(err);
     }

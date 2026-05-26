@@ -11,7 +11,8 @@ import { apiFetch } from '../api/client';
 import './cashier-shell.css';
 
 export default function CashierLayout() {
-  const { user, logout, token } = useAuth();
+  const { user, logout, token, hasFeature } = useAuth();
+  const canRestockTab = hasFeature('inventory.tracking');
   const { storeSlug } = useParams<{ storeSlug: string }>();
   const navigate = useNavigate();
   const { t } = useTranslation();
@@ -168,6 +169,11 @@ export default function CashierLayout() {
         <NavLink to="inventory" className={tabClass}>
           {t('admin.inventory', '库存')}
         </NavLink>
+        {canRestockTab && (
+          <NavLink to="restock" className={tabClass}>
+            📦 {t('cashier.restockTab', '进货')}
+          </NavLink>
+        )}
       </nav>
 
       <main className="cashier-saas-content">
