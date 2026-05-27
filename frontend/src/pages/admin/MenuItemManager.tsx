@@ -1,10 +1,10 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../../context/AuthContext';
 import { apiFetch } from '../../api/client';
 
 interface Translation { locale: string; name: string; description?: string; }
-interface Category { _id: string; translations: Translation[]; }
+interface Category { _id: string; sortOrder?: number; translations: Translation[]; }
 interface AllergenData { _id: string; name: string; icon: string; translations: { locale: string; name: string }[]; }
 interface OptionChoiceData { _id?: string; extraPrice: number; originalPrice?: number; translations: { locale: string; name: string }[]; }
 interface OptionGroupData { _id?: string; required?: boolean; minSelect?: number; maxSelect?: number; translations: { locale: string; name: string }[]; choices: OptionChoiceData[]; }
@@ -69,12 +69,61 @@ export default function MenuItemManager() {
       apiFetch('/api/menu/items?ownOptionGroups=1', { headers: authHeaders }),
       apiFetch('/api/allergens', { headers: authHeaders }),
     ]);
-    if (catRes.ok) setCategories(await catRes.json());
+    if (catRes.ok) {
+      const cats: Category[] = await catRes.json();
+      cats.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+      setCategories(cats);
+    }
     if (itemRes.ok) setItems(await itemRes.json());
     if (allergenRes.ok) setAllergens(await allergenRes.json());
   }, [token]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  /**
+   * 按菜品目录 sortOrder 分组。
+   * - 目录已删但 item 仍引用旧 categoryId（脏数据） → 归到尾部「其它」分组
+   * - 没有 categoryId 的孤儿 item 同样落入「其它」
+   * - 表格列宽全局共享，所以每组用独立 `<tbody>`，组首插一行 colSpan 7 的分组标题，
+   *   保持列对齐的同时也能视觉上分隔
+   */
+  const groups = useMemo(() => {
+    const byCat = new Map<string, MenuItem[]>();
+    for (const it of items) {
+      const key = it.categoryId || '__uncategorized__';
+      const arr = byCat.get(key) || [];
+      arr.push(it);
+      byCat.set(key, arr);
+    }
+    const sortedGroups: Array<{ id: string; name: string; nameAlt: string; items: MenuItem[] }> = [];
+    const seen = new Set<string>();
+    for (const cat of categories) {
+      const list = byCat.get(cat._id);
+      if (!list || list.length === 0) continue;
+      sortedGroups.push({
+        id: cat._id,
+        name: cat.translations.find(tr => tr.locale === 'zh-CN')?.name || cat.translations[0]?.name || '',
+        nameAlt: cat.translations.find(tr => tr.locale === 'en-US')?.name || '',
+        items: list,
+      });
+      seen.add(cat._id);
+    }
+    const orphanItems: MenuItem[] = [];
+    for (const [cid, list] of byCat) {
+      if (cid === '__uncategorized__' || seen.has(cid)) continue;
+      orphanItems.push(...list);
+    }
+    const tail = [...orphanItems, ...(byCat.get('__uncategorized__') || [])];
+    if (tail.length > 0) {
+      sortedGroups.push({
+        id: '__uncategorized__',
+        name: t('admin.uncategorized', { defaultValue: '其它' }),
+        nameAlt: '',
+        items: tail,
+      });
+    }
+    return sortedGroups;
+  }, [items, categories, t]);
 
   const startEdit = (item: MenuItem | null) => {
     if (item) {
@@ -280,11 +329,6 @@ export default function MenuItemManager() {
     } catch (e) {
       alert(`AR upload error: ${e instanceof Error ? e.message : 'Network error'}`);
     }
-  };
-
-  const getCatName = (catId: string) => {
-    const cat = categories.find(c => c._id === catId);
-    return cat?.translations.find(t2 => t2.locale === 'zh-CN')?.name || '';
   };
 
   // Option group helpers
@@ -627,14 +671,13 @@ export default function MenuItemManager() {
         </div>
       )}
 
-      {/* Items table */}
+      {/* Items table grouped by category */}
       <div className="card" style={{ overflow: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: 900 }}>
           <thead>
             <tr style={{ background: 'var(--bg)', borderBottom: '2px solid var(--border)' }}>
-              <th style={{ padding: '10px 12px', textAlign: 'left' }}>照片</th>
+              <th style={{ padding: '10px 12px', textAlign: 'left', width: 64 }}>照片</th>
               <th style={{ padding: '10px 12px', textAlign: 'left' }}>名称</th>
-              <th style={{ padding: '10px 12px', textAlign: 'left' }}>分类</th>
               <th style={{ padding: '10px 12px', textAlign: 'right' }}>价格</th>
               <th style={{ padding: '10px 12px', textAlign: 'left' }}>过敏原</th>
               <th style={{ padding: '10px 12px', textAlign: 'center' }}>AR</th>
@@ -642,8 +685,29 @@ export default function MenuItemManager() {
               <th style={{ padding: '10px 12px', textAlign: 'right' }}>操作</th>
             </tr>
           </thead>
-          <tbody>
-            {items.map(item => (
+          {groups.length === 0 && (
+            <tbody>
+              <tr>
+                <td colSpan={7} style={{ padding: '20px 12px', color: 'var(--text-light)', textAlign: 'center', fontSize: 12 }}>
+                  {t('common.noData', { defaultValue: '暂无数据' })}
+                </td>
+              </tr>
+            </tbody>
+          )}
+          {groups.map(group => (
+          <tbody key={group.id}>
+            <tr style={{ background: 'var(--bg)', borderTop: '2px solid var(--border)', borderBottom: '1px solid var(--border)' }}>
+              <td colSpan={7} style={{ padding: '10px 12px' }}>
+                <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>{group.name}</span>
+                {group.nameAlt && (
+                  <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--text-light)' }}>{group.nameAlt}</span>
+                )}
+                <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--text-light)', fontWeight: 500 }}>
+                  · {group.items.length}
+                </span>
+              </td>
+            </tr>
+            {group.items.map(item => (
               <React.Fragment key={item._id}>
               <tr style={{ borderBottom: showForm && editingId === item._id ? 'none' : '1px solid #f0f0f0', background: showForm && editingId === item._id ? '#FFF5F5' : undefined }}>
                 <td style={{ padding: '8px 12px' }}>
@@ -657,7 +721,6 @@ export default function MenuItemManager() {
                   <div style={{ fontSize: 11, color: 'var(--text-light)' }}>{item.translations.find(t2 => t2.locale === 'en-US')?.name}</div>
                   {item.optionGroups && item.optionGroups.length > 0 && (<div style={{ fontSize: 10, color: 'var(--text-light)', marginTop: 2 }}>⚙ {item.optionGroups.length} {t('admin.optionGroups').toLowerCase()}</div>)}
                 </td>
-                <td style={{ padding: '8px 12px', color: 'var(--text-secondary)' }}>{getCatName(item.categoryId)}</td>
                 <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 700, color: 'var(--red-primary)' }}>€{item.price}</td>
                 <td style={{ padding: '8px 12px' }}>{(item.allergenIds || []).map(aid => { const a = allergens.find(al => al._id === aid); return a ? <span key={aid} title={a.translations.find(t2 => t2.locale === 'zh-CN')?.name || a.name} style={{ marginRight: 2 }}>{a.icon}</span> : null; })}</td>
                 <td style={{ padding: '8px 12px', textAlign: 'center' }}>
@@ -677,7 +740,7 @@ export default function MenuItemManager() {
                 </td>
               </tr>
               {showForm && editingId === item._id && (
-                <tr><td colSpan={8} style={{ padding: 16, background: 'var(--bg)', borderBottom: '2px solid var(--red-primary)' }}>
+                <tr><td colSpan={7} style={{ padding: 16, background: 'var(--bg)', borderBottom: '2px solid var(--red-primary)' }}>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                     <div><label style={{ fontSize: 12, color: 'var(--text-light)', display: 'block', marginBottom: 4 }}>分类</label><select className="input" value={form.categoryId} onChange={e => setForm({ ...form, categoryId: e.target.value })}>{categories.map(c => <option key={c._id} value={c._id}>{c.translations.find(t2 => t2.locale === 'zh-CN')?.name}</option>)}</select></div>
                     <div><label style={{ fontSize: 12, color: 'var(--text-light)', display: 'block', marginBottom: 4 }}>价格</label><input className="input" type="number" value={form.price} onChange={e => setForm({ ...form, price: Number(e.target.value) })} /></div>
@@ -700,6 +763,7 @@ export default function MenuItemManager() {
               </React.Fragment>
             ))}
           </tbody>
+          ))}
         </table>
       </div>
     </div>
