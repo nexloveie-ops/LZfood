@@ -86,6 +86,7 @@ export default function RawMaterials() {
   const [actionUnitCode, setActionUnitCode] = useState<string>('');
   const [actionSource, setActionSource] = useState<RestockSource>('');
   const [actionSupplierNote, setActionSupplierNote] = useState<string>('');
+  const [backfillingId, setBackfillingId] = useState<string | null>(null);
 
   const jsonHeaders = useMemo(
     () => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }),
@@ -199,6 +200,32 @@ export default function RawMaterials() {
     } finally { setBusy(false); }
   };
 
+  const runBackfill = async (row: SummaryRow) => {
+    if (!confirm(t('admin.rawMaterialBackfillConfirm'))) return;
+    setBackfillingId(row.rawMaterialId);
+    setBusy(true);
+    try {
+      const res = await apiFetch(`/api/raw-materials/${row.rawMaterialId}/backfill`, {
+        method: 'POST',
+        headers: authHeaders,
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        alert(data?.error?.message || t('cashier.invOpFailed'));
+        return;
+      }
+      const data = (await res.json()) as { writtenTxns?: number; scannedOrders?: number };
+      alert(t('admin.rawMaterialBackfillDone', {
+        n: data.writtenTxns ?? 0,
+        m: data.scannedOrders ?? 0,
+      }));
+      await fetchAll();
+    } finally {
+      setBackfillingId(null);
+      setBusy(false);
+    }
+  };
+
   const openAction = (kind: ActionKind, row: SummaryRow) => {
     setAction({ kind, row });
     setActionQty(1);
@@ -294,14 +321,24 @@ export default function RawMaterials() {
                   const { primary, secondary } = pickNames(row.translations, lang, row.name);
                   return (
                     <div key={row.rawMaterialId} className="card" style={{ padding: 12, background: tn.bg, border: `1px solid ${tn.bd}` }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+                        <div style={{ minWidth: 0, flex: 1 }}>
                           <div style={{ fontWeight: 700, fontSize: 15 }}>{primary}</div>
                           {secondary && <div style={{ fontSize: 11, color: 'var(--text-light)', marginTop: 1 }}>{secondary}</div>}
                         </div>
-                        <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: tn.fg, color: '#fff' }}>
-                          {row.color.toUpperCase()}
-                        </span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                          <button
+                            className="btn btn-ghost"
+                            style={{ fontSize: 12, padding: '4px 8px', color: '#C62828' }}
+                            onClick={() => deleteRow(row.rawMaterialId)}
+                            disabled={busy}
+                          >
+                            🗑 {t('admin.rawMaterialDelete')}
+                          </button>
+                          <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: tn.fg, color: '#fff' }}>
+                            {row.color.toUpperCase()}
+                          </span>
+                        </div>
                       </div>
                       <div style={{ fontSize: 22, fontWeight: 700, color: tn.fg, marginTop: 6 }}>
                         {row.currentQty} {row.baseUnit}
@@ -333,13 +370,16 @@ export default function RawMaterials() {
                           onClick={() => openAction('adjust', row)}>
                           ⚙️ {t('admin.invAdjust')}
                         </button>
+                        <button className="btn btn-ghost" style={{ fontSize: 12, padding: '6px 10px' }}
+                          onClick={() => runBackfill(row)}
+                          disabled={busy && backfillingId === row.rawMaterialId}>
+                          {backfillingId === row.rawMaterialId
+                            ? t('admin.rawMaterialBackfillRunning')
+                            : `📊 ${t('admin.rawMaterialBackfill')}`}
+                        </button>
                         <button className="btn btn-ghost" style={{ fontSize: 12, padding: '6px 10px', marginLeft: 'auto' }}
                           onClick={() => openEdit(row.rawMaterialId)}>
                           ✏️ {t('admin.rawMaterialEdit')}
-                        </button>
-                        <button className="btn btn-ghost" style={{ fontSize: 12, padding: '6px 10px', color: '#C62828' }}
-                          onClick={() => deleteRow(row.rawMaterialId)}>
-                          🗑 {t('admin.rawMaterialDelete')}
                         </button>
                       </div>
                     </div>

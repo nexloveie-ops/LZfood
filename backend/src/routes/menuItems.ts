@@ -12,37 +12,17 @@ import { uploadFile } from '../storage';
 import { mergeTemplateOptionGroupsForItems } from '../utils/optionGroupTemplateApply';
 import { normalizeNestedOptionGroups, validateOptionGroups } from '../utils/optionGroups';
 import { resolveStoreEffectiveFeatures, FeatureKeys } from '../utils/featureCatalog';
-import { autoBackfillForFreshLinks } from './rawMaterials';
+import { backfillRawMaterialsOnBoMChange } from './rawMaterials';
+import {
+  collectLinkedRawMaterialIds,
+  rawMaterialIdsNeedingBackfillOnBoMChange,
+} from '../utils/rawMaterialBoMBackfill';
 
 function menuModels() {
   return getModels() as {
     MenuItem: mongoose.Model<any>;
     MenuCategory: mongoose.Model<any>;
   };
-}
-
-/**
- * 收集本次保存涉及到的所有 rawMaterialId（菜品本体 consumption + 各 OptionChoice consumption）。
- * 用于触发新建关联的自动回填。
- */
-function collectLinkedRawMaterialIds(
-  itemConsumption: { rawMaterialId: mongoose.Types.ObjectId | string }[] | undefined,
-  normalizedGroups: unknown[] | undefined,
-): string[] {
-  const out = new Set<string>();
-  for (const c of itemConsumption || []) {
-    const rid = String(c.rawMaterialId);
-    if (mongoose.Types.ObjectId.isValid(rid)) out.add(rid);
-  }
-  for (const g of (normalizedGroups as Array<{ choices?: Array<{ consumption?: Array<{ rawMaterialId?: unknown }> }> }>) || []) {
-    for (const c of g.choices || []) {
-      for (const x of c.consumption || []) {
-        const rid = String(x.rawMaterialId ?? '');
-        if (mongoose.Types.ObjectId.isValid(rid)) out.add(rid);
-      }
-    }
-  }
-  return [...out];
 }
 
 /**
@@ -222,7 +202,7 @@ router.post(
 
       const linkedRids = collectLinkedRawMaterialIds(normalizedConsumption, normalizedOptionGroups);
       if (linkedRids.length > 0) {
-        await autoBackfillForFreshLinks(req.storeId!, linkedRids);
+        await backfillRawMaterialsOnBoMChange(req.storeId!, linkedRids);
       }
 
       res.status(201).json(item);
@@ -403,6 +383,32 @@ router.put(
         throw createAppError('VALIDATION_ERROR', 'At least one field must be provided for update');
       }
 
+      const bomFieldsTouched = consumption !== undefined || optionGroups !== undefined;
+      let backfillRawMaterialIds: string[] = [];
+      if (bomFieldsTouched) {
+        const curForBom = (await MenuItem.findOne({ _id: id, storeId: req.storeId })
+          .select('consumption optionGroups')
+          .lean()) as {
+          consumption?: { rawMaterialId?: unknown; qty?: unknown }[];
+          optionGroups?: unknown[];
+        } | null;
+        if (!curForBom) {
+          throw createAppError('NOT_FOUND', 'Menu item not found');
+        }
+        const nextConsumption = consumption !== undefined
+          ? (updateData.consumption as { rawMaterialId?: unknown; qty?: unknown }[])
+          : curForBom.consumption;
+        const nextOptionGroups = normalizedOptionGroups !== undefined
+          ? normalizedOptionGroups
+          : curForBom.optionGroups;
+        backfillRawMaterialIds = rawMaterialIdsNeedingBackfillOnBoMChange(
+          curForBom.consumption,
+          curForBom.optionGroups,
+          nextConsumption,
+          nextOptionGroups,
+        );
+      }
+
       const updated = await MenuItem.findOneAndUpdate({ _id: id, storeId: req.storeId }, updateData, {
         new: true,
         runValidators: true,
@@ -412,12 +418,8 @@ router.put(
         throw createAppError('NOT_FOUND', 'Menu item not found');
       }
 
-      const linkedRids = collectLinkedRawMaterialIds(
-        updateData.consumption as { rawMaterialId: mongoose.Types.ObjectId | string }[] | undefined,
-        updateData.optionGroups as unknown[] | undefined,
-      );
-      if (linkedRids.length > 0) {
-        await autoBackfillForFreshLinks(req.storeId!, linkedRids);
+      if (backfillRawMaterialIds.length > 0) {
+        await backfillRawMaterialsOnBoMChange(req.storeId!, backfillRawMaterialIds);
       }
 
       res.json(updated);
@@ -447,6 +449,14 @@ router.delete(
       const deleted = await MenuItem.findOneAndDelete({ _id: id, storeId: req.storeId });
       if (!deleted) {
         throw createAppError('NOT_FOUND', 'Menu item not found');
+      }
+
+      const linkedRids = collectLinkedRawMaterialIds(
+        deleted.consumption as { rawMaterialId?: unknown; qty?: unknown }[] | undefined,
+        deleted.optionGroups as unknown[] | undefined,
+      );
+      if (linkedRids.length > 0) {
+        await backfillRawMaterialsOnBoMChange(req.storeId!, linkedRids);
       }
 
       res.json({ message: 'Menu item deleted successfully' });

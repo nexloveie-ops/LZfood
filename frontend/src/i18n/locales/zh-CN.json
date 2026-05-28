@@ -470,6 +470,7 @@
     "rawMaterialDailyUsage": "日均消耗",
     "rawMaterialNoUsageYet": "暂无消耗记录",
     "rawMaterialBackfill": "回填历史",
+    "rawMaterialBackfillConfirm": "按当前 BoM 重算过去 14 天的消耗流水，用于更新日均与补货阈值。确定继续？",
     "rawMaterialBackfillRunning": "正在回填...",
     "rawMaterialBackfillDone": "已回填 {{n}} 条流水（扫描了 {{m}} 笔订单）",
     "trackingModeOff": "不追踪",

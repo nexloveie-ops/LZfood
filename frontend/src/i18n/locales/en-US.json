@@ -470,6 +470,7 @@
     "rawMaterialDailyUsage": "Daily usage",
     "rawMaterialNoUsageYet": "No usage history yet",
     "rawMaterialBackfill": "Backfill history",
+    "rawMaterialBackfillConfirm": "Recalculate the last 14 days of usage from the current BoM to update daily average and reorder threshold. Continue?",
     "rawMaterialBackfillRunning": "Backfilling...",
     "rawMaterialBackfillDone": "Wrote {{n}} backfill txns (scanned {{m}} orders)",
     "trackingModeOff": "Off",

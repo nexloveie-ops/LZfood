@@ -568,37 +568,30 @@ router.get('/:id/daily-consumption', ...requireAuthSameStore, async (req, res, n
 });
 
 /**
- * 导出给 menuItems.ts 在保存 BoM 时调用：对「本次首次出现的 rawMaterialId」自动触发一次回填。
- *
- * 调用方传入「本次保存关联到的 rawMaterialId 集合」；本函数只为其中 `backfillCompletedAt` 为空的
- * 那些原料同步执行回填，其余跳过（避免每次保存都重扫订单）。
- *
- * 同步阻塞，调用方按需展示 UI toast。
+ * 菜品 BoM 关联变化时重跑指定原材料的 14 天回填（幂等：先删旧 backfill 流水再写）。
+ * 调用方应只在 BoM 实际变更时传入 rawMaterialId，避免无关保存重扫订单。
  */
-export async function autoBackfillForFreshLinks(
+export async function backfillRawMaterialsOnBoMChange(
   storeId: mongoose.Types.ObjectId,
   rawMaterialIds: string[],
 ): Promise<{ backfilled: string[] }> {
   if (rawMaterialIds.length === 0) return { backfilled: [] };
-  const { RawMaterial } = rmModels();
   const ids = [...new Set(rawMaterialIds.filter((s) => mongoose.Types.ObjectId.isValid(s)))]
     .map((s) => new mongoose.Types.ObjectId(s));
   if (ids.length === 0) return { backfilled: [] };
-  const fresh = (await RawMaterial.find({
-    storeId,
-    _id: { $in: ids },
-    backfillCompletedAt: { $exists: false },
-  }).select('_id').lean()) as Array<{ _id: mongoose.Types.ObjectId }>;
   const backfilled: string[] = [];
-  for (const f of fresh) {
+  for (const id of ids) {
     try {
-      await backfillRawMaterialConsumption(storeId, f._id);
-      backfilled.push(f._id.toString());
+      await backfillRawMaterialConsumption(storeId, id);
+      backfilled.push(id.toString());
     } catch (err) {
-      console.error('[rawMaterials] autoBackfillForFreshLinks failed', f._id.toString(), err);
+      console.error('[rawMaterials] backfillRawMaterialsOnBoMChange failed', id.toString(), err);
     }
   }
   return { backfilled };
 }
+
+/** @deprecated 使用 backfillRawMaterialsOnBoMChange */
+export const autoBackfillForFreshLinks = backfillRawMaterialsOnBoMChange;
 
 export default router;
