@@ -6,6 +6,7 @@ import {
   cashierMenuSessionCacheKey,
   patchCashierMenuInventoryQty,
 } from '../../utils/cashierMenuSessionCache';
+import RawMaterialCashierPanel from './RawMaterialCashierPanel';
 
 interface SummaryRow {
   menuItemId: string;
@@ -198,6 +199,8 @@ export default function RestockPage() {
           {busy ? '…' : t('cashier.refresh')}
         </button>
       </div>
+      <RawMaterialCashierPanel />
+
       {summary.length === 0 ? (
         <div style={{ fontSize: 13, color: 'var(--text-light)' }}>{t('cashier.invNoTrackedItems')}</div>
       ) : (

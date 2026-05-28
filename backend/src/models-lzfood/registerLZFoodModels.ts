@@ -9,6 +9,7 @@ import { CouponSchema } from '../models/Coupon';
 import { OptionGroupTemplateSchema } from '../models/OptionGroupTemplate';
 import { OptionGroupTemplateRuleSchema } from '../models/OptionGroupTemplateRule';
 import { InventoryTxnSchema } from '../models/InventoryTxn';
+import { RawMaterialSchema } from '../models/RawMaterial';
 import mongoose from 'mongoose';
 import { StoreSchema } from './Store';
 import { AdminAuditLogSchema } from './AdminAuditLog';
@@ -84,6 +85,7 @@ export type LZFoodModels = {
   PortalRegistrationOtp: Model<unknown>;
   PortalPasswordResetOtp: Model<unknown>;
   InventoryTxn: Model<unknown>;
+  RawMaterial: Model<unknown>;
 };
 
 let cached: LZFoodModels | null = null;
@@ -138,6 +140,7 @@ export function registerLZFoodModels(conn: Connection): LZFoodModels {
     'portal_password_reset_otps',
   );
   const InventoryTxn = m('InventoryTxn', withStoreId(InventoryTxnSchema), 'inventory_txns');
+  const RawMaterial = m('RawMaterial', withStoreId(RawMaterialSchema), 'raw_materials');
 
   cached = {
     Store,
@@ -165,6 +168,7 @@ export function registerLZFoodModels(conn: Connection): LZFoodModels {
     PortalRegistrationOtp,
     PortalPasswordResetOtp,
     InventoryTxn,
+    RawMaterial,
   };
   return cached;
 }

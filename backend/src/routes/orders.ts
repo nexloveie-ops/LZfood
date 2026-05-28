@@ -32,8 +32,12 @@ import {
 import {
   aggregateServingsByMenuItem,
   deductStockForOrderCreation,
+  deductRawMaterialsForOrderCreation,
+  deductRawMaterialsFromDemand,
   diffServings,
+  diffRawMaterialDemand,
   writeSaleTxns,
+  writeRawMaterialSaleTxns,
   type OrderItemForInventory,
 } from '../utils/inventoryService';
 
@@ -512,6 +516,30 @@ export function createOrdersRouter(io: SocketIOServer): Router {
         menuItems as unknown as Parameters<typeof deductStockForOrderCreation>[2],
       );
 
+      /** B 模式（原材料 BoM）扣减：A 模式成功后进入。失败时回滚 A + B */
+      let rawDeduction: Awaited<ReturnType<typeof deductRawMaterialsForOrderCreation>>
+        = { demand: new Map(), snapshots: new Map() };
+      try {
+        rawDeduction = await deductRawMaterialsForOrderCreation(
+          req.storeId!,
+          items as unknown as Parameters<typeof deductRawMaterialsForOrderCreation>[1],
+          menuItems as unknown as Parameters<typeof deductRawMaterialsForOrderCreation>[2],
+        );
+      } catch (rawErr) {
+        if (inventoryDeduction.demands.length > 0) {
+          const { MenuItem: MI } = orderModels();
+          for (const d of inventoryDeduction.demands) {
+            try {
+              await MI.updateOne(
+                { _id: d.menuItemId, storeId: req.storeId },
+                { $inc: { 'inventory.currentQty': d.baseQty } },
+              );
+            } catch { /* best-effort rollback */ }
+          }
+        }
+        throw rawErr;
+      }
+
       let order: any;
       try {
         order = await Order.create(orderData);
@@ -547,6 +575,17 @@ export function createOrdersRouter(io: SocketIOServer): Router {
             }
           }
         }
+        if (rawDeduction.demand.size > 0) {
+          const { RawMaterial: RM } = getModels() as { RawMaterial: mongoose.Model<any> };
+          for (const [rid, qty] of rawDeduction.demand) {
+            try {
+              await RM.updateOne(
+                { _id: rid, storeId: req.storeId },
+                { $inc: { currentQty: qty } },
+              );
+            } catch { /* best-effort */ }
+          }
+        }
         throw writeErr;
       }
 
@@ -556,6 +595,14 @@ export function createOrdersRouter(io: SocketIOServer): Router {
           order._id as mongoose.Types.ObjectId,
           inventoryDeduction.demands,
           inventoryDeduction.snapshots,
+        );
+      }
+      if (rawDeduction.demand.size > 0) {
+        void writeRawMaterialSaleTxns(
+          req.storeId!,
+          order._id as mongoose.Types.ObjectId,
+          rawDeduction.demand,
+          rawDeduction.snapshots,
         );
       }
 
@@ -1374,6 +1421,29 @@ export function createOrdersRouter(io: SocketIOServer): Router {
         menuItems as unknown as Parameters<typeof deductStockForOrderCreation>[2],
       );
 
+      /** B 模式增量扣减：先算 BoM 差额，再走原子扣减；失败回滚 A 模式扣减 */
+      const rawDemandDelta = diffRawMaterialDemand(
+        order.items as unknown as Parameters<typeof diffRawMaterialDemand>[0],
+        orderItems as unknown as Parameters<typeof diffRawMaterialDemand>[1],
+        menuItems as unknown as Parameters<typeof diffRawMaterialDemand>[2],
+      );
+      let rawDelta: Awaited<ReturnType<typeof deductRawMaterialsFromDemand>>
+        = { demand: new Map(), snapshots: new Map() };
+      try {
+        rawDelta = await deductRawMaterialsFromDemand(req.storeId!, rawDemandDelta);
+      } catch (rawErr) {
+        for (const d of inventoryDelta.demands) {
+          try {
+            const { MenuItem: MI } = orderModels();
+            await MI.updateOne(
+              { _id: d.menuItemId, storeId: req.storeId },
+              { $inc: { 'inventory.currentQty': d.baseQty } },
+            );
+          } catch { /* best-effort */ }
+        }
+        throw rawErr;
+      }
+
       let updated: any;
       try {
         updated = await Order.findOneAndUpdate(
@@ -1393,6 +1463,17 @@ export function createOrdersRouter(io: SocketIOServer): Router {
             /* best-effort */
           }
         }
+        if (rawDelta.demand.size > 0) {
+          const { RawMaterial: RM } = getModels() as { RawMaterial: mongoose.Model<any> };
+          for (const [rid, qty] of rawDelta.demand) {
+            try {
+              await RM.updateOne(
+                { _id: rid, storeId: req.storeId },
+                { $inc: { currentQty: qty } },
+              );
+            } catch { /* best-effort */ }
+          }
+        }
         throw writeErr;
       }
 
@@ -1402,6 +1483,14 @@ export function createOrdersRouter(io: SocketIOServer): Router {
           order._id as mongoose.Types.ObjectId,
           inventoryDelta.demands,
           inventoryDelta.snapshots,
+        );
+      }
+      if (rawDelta.demand.size > 0) {
+        void writeRawMaterialSaleTxns(
+          req.storeId!,
+          order._id as mongoose.Types.ObjectId,
+          rawDelta.demand,
+          rawDelta.snapshots,
         );
       }
 

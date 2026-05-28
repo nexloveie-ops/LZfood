@@ -228,6 +228,30 @@ export default function MemberManager() {
     fetchMembers();
   };
 
+  const doDeleteMember = async (m: MemberRow) => {
+    const ok = window.confirm(
+      t('admin.memberDeleteConfirm', '确认删除该会员？此操作用于误注册清理，且不可恢复。'),
+    );
+    if (!ok) return;
+    setMsg('');
+    setMsgOk(false);
+    const res = await apiFetch(`/api/admin/members/${m._id}`, {
+      method: 'DELETE',
+      headers: authH,
+    });
+    const d = await res.json().catch(() => null);
+    if (!res.ok) {
+      setMsg(d?.error?.message || t('admin.memberDeleteFailed', '删除失败'));
+      setMsgOk(false);
+      return;
+    }
+    if (selected?._id === m._id) setSelected(null);
+    if (ledgerMember?._id === m._id) setLedgerMember(null);
+    setMsg(t('admin.memberDeleteOk', '会员已删除'));
+    setMsgOk(true);
+    fetchMembers();
+  };
+
   const doRetryWalletRefund = async () => {
     const id = retryCheckoutId.trim();
     if (!id || !mongooseObjectIdOk(id)) {
@@ -340,22 +364,35 @@ export default function MemberManager() {
                   <td style={{ padding: '10px 12px' }}>{m.displayName || '—'}</td>
                   <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 700 }}>€{Number(m.creditBalance).toFixed(2)}</td>
                   <td style={{ padding: '10px 12px' }}>
-                    <button
-                      type="button"
-                      className="btn btn-outline"
-                      style={{ fontSize: 12, padding: '4px 10px' }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setSelected(m);
-                        setRechargeMode('amount');
-                        setRechargeAmount('');
-                        setRechargeTarget('');
-                        setRechargeNote('');
-                        setMsg('');
-                      }}
-                    >
-                      {t('admin.memberRecharge', '充值')}
-                    </button>
+                    <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                      <button
+                        type="button"
+                        className="btn btn-outline"
+                        style={{ fontSize: 12, padding: '4px 10px' }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelected(m);
+                          setRechargeMode('amount');
+                          setRechargeAmount('');
+                          setRechargeTarget('');
+                          setRechargeNote('');
+                          setMsg('');
+                        }}
+                      >
+                        {t('admin.memberRecharge', '充值')}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-outline"
+                        style={{ fontSize: 12, padding: '4px 10px', color: 'var(--red-primary)', borderColor: 'var(--red-primary)' }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void doDeleteMember(m);
+                        }}
+                      >
+                        {t('admin.memberDelete', '删除')}
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}

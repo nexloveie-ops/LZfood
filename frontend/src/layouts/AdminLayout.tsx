@@ -15,6 +15,7 @@ const sidebarItems = [
   { path: 'option-group-templates', icon: '🧩', key: 'admin.optionGroupTemplatesNav', featureKey: 'admin.optionGroupTemplates.page' },
   { path: 'inventory', icon: '📦', key: 'admin.inventory' },
   { path: 'advanced-inventory', icon: '📊', key: 'admin.advancedInventory', featureKey: 'inventory.tracking' },
+  { path: 'raw-materials', icon: '🥩', key: 'admin.rawMaterials', featureKey: 'inventory.tracking' },
   { path: 'allergens', icon: '⚠️', key: 'admin.allergens' },
   { path: 'i18n', icon: '🌐', key: 'admin.i18nEditor' },
   { path: 'qr-codes', icon: '📱', key: 'admin.qrCodes' },

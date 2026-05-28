@@ -2,7 +2,15 @@ import mongoose from 'mongoose';
 import { createAppError } from '../middleware/errorHandler';
 
 export type LeanTranslation = { locale: string; name: string };
-export type LeanChoice = { _id?: mongoose.Types.ObjectId; extraPrice?: number; originalPrice?: number; translations: LeanTranslation[] };
+export type LeanConsumption = { rawMaterialId: mongoose.Types.ObjectId | string; qty: number };
+export type LeanChoice = {
+  _id?: mongoose.Types.ObjectId;
+  extraPrice?: number;
+  originalPrice?: number;
+  translations: LeanTranslation[];
+  /** BoM：选中本选项时每份额外消耗的原材料；与菜品本身的 consumption 叠加 */
+  consumption?: LeanConsumption[];
+};
 export type LeanOptionGroup = {
   _id?: mongoose.Types.ObjectId;
   required?: boolean;
@@ -101,6 +109,30 @@ export function validateOptionGroups(optionGroups: unknown): asserts optionGroup
       if (c.originalPrice != null && typeof c.originalPrice !== 'number') {
         throw createAppError('VALIDATION_ERROR', `optionGroups[${gi}].choices[${ci}]: originalPrice must be a number`);
       }
+      if (c.consumption !== undefined) {
+        if (!Array.isArray(c.consumption)) {
+          throw createAppError('VALIDATION_ERROR', `optionGroups[${gi}].choices[${ci}]: consumption must be an array`);
+        }
+        const seenRid = new Set<string>();
+        for (let xi = 0; xi < c.consumption.length; xi++) {
+          const entry = c.consumption[xi];
+          if (!entry || typeof entry !== 'object') {
+            throw createAppError('VALIDATION_ERROR', `optionGroups[${gi}].choices[${ci}].consumption[${xi}] is invalid`);
+          }
+          const rid = String((entry as { rawMaterialId?: unknown }).rawMaterialId ?? '');
+          const qty = Math.floor(Number((entry as { qty?: unknown }).qty));
+          if (!mongoose.Types.ObjectId.isValid(rid)) {
+            throw createAppError('VALIDATION_ERROR', `optionGroups[${gi}].choices[${ci}].consumption[${xi}].rawMaterialId 无效`);
+          }
+          if (!Number.isFinite(qty) || qty < 1) {
+            throw createAppError('VALIDATION_ERROR', `optionGroups[${gi}].choices[${ci}].consumption[${xi}].qty 必须为 ≥1 的整数`);
+          }
+          if (seenRid.has(rid)) {
+            throw createAppError('VALIDATION_ERROR', `optionGroups[${gi}].choices[${ci}].consumption 中 rawMaterialId 重复：${rid}`);
+          }
+          seenRid.add(rid);
+        }
+      }
     }
     if (g.minSelect != null && typeof g.minSelect !== 'number') {
       throw createAppError('VALIDATION_ERROR', `optionGroups[${gi}]: minSelect must be a number`);
@@ -149,8 +181,19 @@ export function cloneOptionGroupsPreservingSubdocIds(groups: LeanOptionGroup[]):
       extraPrice: typeof c.extraPrice === 'number' ? c.extraPrice : 0,
       originalPrice: c.originalPrice,
       translations: (c.translations || []).map((t) => ({ locale: t.locale, name: t.name })),
+      consumption: cloneConsumption(c.consumption),
     })),
   }));
+}
+
+function cloneConsumption(raw: LeanConsumption[] | undefined): LeanConsumption[] | undefined {
+  if (!Array.isArray(raw) || raw.length === 0) return undefined;
+  return raw
+    .filter((entry) => mongoose.Types.ObjectId.isValid(String(entry?.rawMaterialId)) && Number(entry?.qty) >= 1)
+    .map((entry) => ({
+      rawMaterialId: new mongoose.Types.ObjectId(String(entry.rawMaterialId)),
+      qty: Math.floor(Number(entry.qty)),
+    }));
 }
 
 /** @deprecated Prefer cloneOptionGroupsPreservingSubdocIds for merged menus. */
@@ -167,6 +210,7 @@ export function cloneOptionGroupsWithNewIds(groups: LeanOptionGroup[]): LeanOpti
       extraPrice: typeof c.extraPrice === 'number' ? c.extraPrice : 0,
       originalPrice: c.originalPrice,
       translations: (c.translations || []).map((t) => ({ locale: t.locale, name: t.name })),
+      consumption: cloneConsumption(c.consumption),
     })),
   }));
 }

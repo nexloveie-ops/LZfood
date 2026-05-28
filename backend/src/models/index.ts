@@ -12,3 +12,4 @@ export { CouponSchema } from './Coupon';
 export { OptionGroupTemplateSchema } from './OptionGroupTemplate';
 export { OptionGroupTemplateRuleSchema } from './OptionGroupTemplateRule';
 export { InventoryTxnSchema } from './InventoryTxn';
+export { RawMaterialSchema } from './RawMaterial';

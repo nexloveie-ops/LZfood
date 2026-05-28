@@ -14,19 +14,8 @@ function trimOptPart(s?: string): string {
   return String(s || '').trim();
 }
 
-const AD_HOC_DEFAULT_GROUP_ZH = '加料';
-const AD_HOC_DEFAULT_GROUP_EN = 'Extra';
-
-function isDefaultAdHocGroup(group?: string): boolean {
-  const g = trimOptPart(group);
-  return g === AD_HOC_DEFAULT_GROUP_ZH || g === AD_HOC_DEFAULT_GROUP_EN;
-}
-
-function joinGroupChoice(group?: string, choice?: string): string {
-  const g = trimOptPart(group);
-  const c = trimOptPart(choice);
-  if (g && c) return `${g}: ${c}`;
-  return g || c;
+function choiceOnlyLabel(choice?: string, groupFallback?: string): string {
+  return trimOptPart(choice) || trimOptPart(groupFallback);
 }
 
 export function receiptOptionExtraEuro(raw: unknown): number {
@@ -50,20 +39,14 @@ export function receiptOptionExtraSuffix(raw: unknown): string {
   return ` +€${ep.toFixed(2)}`;
 }
 
-/** 中文行：groupName: choiceName（临时加料默认组名不展示） */
+/** 中文行：仅展示选项内容，不展示组名 */
 export function receiptOptionDisplayLabel(o: ReceiptOptionSnapshot): string {
-  if (isDefaultAdHocGroup(o.groupName) && trimOptPart(o.choiceName)) {
-    return trimOptPart(o.choiceName);
-  }
-  return joinGroupChoice(o.groupName, o.choiceName);
+  return choiceOnlyLabel(o.choiceName, o.groupName);
 }
 
-/** 英文行：groupNameEn: choiceNameEn */
+/** 英文行：仅展示选项内容，不展示组名 */
 export function receiptOptionDisplayLabelEn(o: ReceiptOptionSnapshot): string {
-  if (isDefaultAdHocGroup(o.groupNameEn) && trimOptPart(o.choiceNameEn)) {
-    return trimOptPart(o.choiceNameEn);
-  }
-  return joinGroupChoice(o.groupNameEn, o.choiceNameEn);
+  return choiceOnlyLabel(o.choiceNameEn, o.groupNameEn);
 }
 
 /** 小票双语：中文主行 + 英文副行（与 itemName / itemNameEn 一致） */

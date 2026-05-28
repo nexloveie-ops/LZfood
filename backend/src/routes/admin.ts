@@ -48,6 +48,7 @@ function adminModels() {
     Member: mongoose.Model<any>;
     MemberWalletTxn: mongoose.Model<any>;
     MemberTopUpCard: mongoose.Model<any>;
+    CustomerProfile: mongoose.Model<any>;
   };
 }
 
@@ -589,6 +590,72 @@ router.post(
       });
 
       res.json({ ok: true, creditBalance: balanceAfter, creditedEuro: amount });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// DELETE /api/admin/members/:memberId — 手动删除误注册会员（软删除）
+router.delete(
+  '/members/:memberId',
+  ...requireAuthSameStore,
+  requirePermission('config:*'),
+  requireFeature(FeatureKeys.CashierMemberWallet),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { Member, MemberWalletTxn, CustomerProfile } = adminModels();
+      const rawMid = req.params.memberId;
+      const memberId = typeof rawMid === 'string' ? rawMid : rawMid[0];
+      if (!mongoose.Types.ObjectId.isValid(memberId)) {
+        throw createAppError('VALIDATION_ERROR', 'Invalid member ID');
+      }
+      const memberOid = new mongoose.Types.ObjectId(memberId);
+      const member = (await Member.findOne({
+        _id: memberOid,
+        storeId: req.storeId,
+      }).lean()) as {
+        _id: mongoose.Types.ObjectId;
+        phone?: string;
+        displayName?: string;
+        creditBalance?: number;
+        status?: string;
+      } | null;
+      if (!member || member.status === 'deleted') {
+        throw createAppError('NOT_FOUND', '会员不存在');
+      }
+      const balance = Number(member.creditBalance) || 0;
+      if (balance > 0.001) {
+        throw createAppError('VALIDATION_ERROR', '该会员仍有储值余额，无法删除');
+      }
+      const txnCount = await MemberWalletTxn.countDocuments({ storeId: req.storeId, memberId: memberOid });
+      if (txnCount > 0) {
+        throw createAppError('VALIDATION_ERROR', '该会员已有储值流水，无法删除');
+      }
+
+      const oldPhone = String(member.phone || '').trim();
+      const oldName = String(member.displayName || '').trim();
+      const deletedPhone = oldPhone
+        ? `${oldPhone}#deleted:${memberOid.toString().slice(-6)}`
+        : `deleted:${memberOid.toString().slice(-6)}`;
+
+      await Member.updateOne(
+        { _id: memberOid, storeId: req.storeId },
+        {
+          $set: {
+            status: 'deleted',
+            phone: deletedPhone,
+            displayName: oldName ? `${oldName} [deleted]` : '[deleted]',
+          },
+        },
+      );
+
+      await CustomerProfile.updateMany(
+        { storeId: req.storeId, memberId: memberOid },
+        { $unset: { memberId: 1 } },
+      ).catch(() => {});
+
+      res.json({ ok: true });
     } catch (err) {
       next(err);
     }

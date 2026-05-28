@@ -33,6 +33,7 @@ import MenuItemManager from './pages/admin/MenuItemManager';
 import OptionGroupTemplates from './pages/admin/OptionGroupTemplates';
 import InventoryManager from './pages/admin/InventoryManager';
 import AdvancedInventory from './pages/admin/AdvancedInventory';
+import RawMaterials from './pages/admin/RawMaterials';
 import AllergenManager from './pages/admin/AllergenManager';
 import I18nEditor from './pages/admin/I18nEditor';
 import QRCodeManager from './pages/admin/QRCodeManager';
@@ -180,6 +181,7 @@ export default function App() {
               <Route path="option-group-templates" element={<RequireFeature featureKey="admin.optionGroupTemplates.page"><OptionGroupTemplates /></RequireFeature>} />
               <Route path="inventory" element={<InventoryManager />} />
               <Route path="advanced-inventory" element={<RequireFeature featureKey="inventory.tracking"><AdvancedInventory /></RequireFeature>} />
+              <Route path="raw-materials" element={<RequireFeature featureKey="inventory.tracking"><RawMaterials /></RequireFeature>} />
               <Route path="allergens" element={<AllergenManager />} />
               <Route path="i18n" element={<I18nEditor />} />
               <Route path="qr-codes" element={<QRCodeManager />} />

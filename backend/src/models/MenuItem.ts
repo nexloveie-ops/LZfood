@@ -6,6 +6,20 @@ const ItemTranslationSchema = new mongoose.Schema({
   description: { type: String, default: '' },
 }, { _id: false });
 
+/**
+ * BoM 消耗条目：选项 / 菜品销售一份时，需要扣减的「原材料 × 数量（按 RawMaterial.baseUnit）」。
+ *
+ * 例：双拼饭的「烧鸭」选项 → { rawMaterialId: <鸭子>, qty: 125 }（克）。
+ * qty 不允许 ≤ 0；前端编辑时直接过滤掉空行。
+ */
+const ConsumptionSchema = new mongoose.Schema(
+  {
+    rawMaterialId: { type: mongoose.Schema.Types.ObjectId, ref: 'RawMaterial', required: true },
+    qty: { type: Number, required: true, min: 1 },
+  },
+  { _id: false },
+);
+
 const OptionChoiceSchema = new mongoose.Schema({
   extraPrice: { type: Number, default: 0 },
   originalPrice: { type: Number },
@@ -13,6 +27,8 @@ const OptionChoiceSchema = new mongoose.Schema({
     locale: { type: String, required: true },
     name: { type: String, required: true },
   }],
+  /** 选中本选项时，每一份额外消耗的原材料明细（与 MenuItem.consumption 叠加） */
+  consumption: { type: [ConsumptionSchema], default: [] },
 }, { _id: true });
 
 const OptionGroupSchema = new mongoose.Schema({
@@ -75,9 +91,18 @@ const MenuItemSchema = new mongoose.Schema({
   allergenIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Allergen' }],
   translations: [ItemTranslationSchema],
   optionGroups: [OptionGroupSchema],
-  /** 是否启用高级库存追踪（默认 false，启用前所有行为与旧版一致） */
+  /**
+   * A 模式：是否启用「菜品本身即库存单位」追踪。
+   * 与 `consumption.length > 0`（B 模式）互斥，保存路径强制校验。
+   */
   inventoryTracked: { type: Boolean, default: false, index: true },
   inventory: { type: InventorySubdocSchema, default: undefined },
+  /**
+   * B 模式：本菜品销售一份时，消耗的原材料明细（按 RawMaterial.baseUnit 计）。
+   * 不区分选项；选项各自的 consumption 在 OptionChoice 子文档里。
+   * 仅当 `inventoryTracked === false` 时允许非空。
+   */
+  consumption: { type: [ConsumptionSchema], default: [] },
 }, { timestamps: true });
 
 export { MenuItemSchema, ItemTranslationSchema };

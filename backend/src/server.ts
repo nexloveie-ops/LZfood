@@ -19,6 +19,7 @@ import { createCheckoutRouter } from './routes/checkout';
 import adminRouter from './routes/admin';
 import optionGroupTemplatesRouter from './routes/optionGroupTemplates';
 import inventoryRouter from './routes/inventory';
+import rawMaterialsRouter from './routes/rawMaterials';
 import reportsRouter from './routes/reports';
 import offersRouter from './routes/offers';
 import { createPaymentsRouter } from './routes/payments';
@@ -125,6 +126,9 @@ app.use('/api/admin/option-group-templates', optionGroupTemplatesRouter);
 
 // Inventory tracking (gated by feature flag; admin + cashier shared)
 app.use('/api/inventory', inventoryRouter);
+
+// Raw materials (BoM) – same feature gate as inventory tracking
+app.use('/api/raw-materials', rawMaterialsRouter);
 
 // Reports routes
 app.use('/api/reports', reportsRouter);

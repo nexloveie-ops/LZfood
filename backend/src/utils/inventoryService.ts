@@ -240,3 +240,289 @@ export function diffServings(
   }
   return out;
 }
+
+// ============================================================================
+// B 模式：BoM 解耦的原材料扣减
+// ============================================================================
+
+export type Consumption = { rawMaterialId: mongoose.Types.ObjectId | string; qty: number };
+
+export type ChoiceForBom = {
+  translations?: { locale: string; name: string }[];
+  consumption?: Consumption[];
+};
+
+export type OptionGroupForBom = {
+  translations?: { locale: string; name: string }[];
+  choices?: ChoiceForBom[];
+};
+
+export type MenuItemForBom = {
+  _id: mongoose.Types.ObjectId;
+  consumption?: Consumption[];
+  optionGroups?: OptionGroupForBom[];
+};
+
+export type OrderItemForBom = OrderItemForInventory & {
+  selectedOptions?: { groupName?: string; choiceName?: string }[];
+};
+
+export type RawMaterialForCheck = {
+  _id: mongoose.Types.ObjectId;
+  currentQty?: number;
+  baseUnit?: string;
+  enabled?: boolean;
+  translations?: { locale: string; name: string }[];
+};
+
+export interface RawMaterialDemand {
+  rawMaterialId: string;
+  baseQty: number;
+}
+
+/**
+ * 在一个 MenuItem 的 optionGroups 里按 group/choice 名字（任一 locale 翻译命中即可）找到 BoM。
+ * 订单 line 的 `selectedOptions[]` 只快照了名字，所以这里只能按名匹配；保存 BoM 时确保每个 group 内
+ * choice 名字唯一即可（前端 schema 验证已要求）。
+ */
+function findChoiceConsumption(
+  item: MenuItemForBom,
+  groupName: string,
+  choiceName: string,
+): Consumption[] {
+  const groups = item.optionGroups || [];
+  for (const g of groups) {
+    const gNames = (g.translations || []).map((t) => t.name);
+    if (!gNames.includes(groupName)) continue;
+    for (const c of g.choices || []) {
+      const cNames = (c.translations || []).map((t) => t.name);
+      if (cNames.includes(choiceName)) return c.consumption || [];
+    }
+  }
+  return [];
+}
+
+/**
+ * 把订单 items 按 BoM 解析成「原材料需求」。
+ *
+ * 与 `aggregateServingsByMenuItem` 不同：这里不能按 menuItemId 合并行，因为同一个菜品下不同
+ * `selectedOptions` 会消耗不同的原材料；逐行解析后再按 rawMaterialId 求和。
+ */
+export function aggregateRawMaterialDemand(
+  items: OrderItemForBom[],
+  menuItems: MenuItemForBom[],
+): Map<string, number> {
+  const byId = new Map(menuItems.map((m) => [m._id.toString(), m]));
+  const out = new Map<string, number>();
+
+  for (const line of items) {
+    if (line.lineKind === 'delivery_fee') continue;
+    if (line.refunded) continue;
+    const qty = Math.max(0, Math.floor(Number(line.quantity) || 0));
+    if (qty <= 0) continue;
+    const item = byId.get(String(line.menuItemId));
+    if (!item) continue;
+
+    /** 菜品本体 BoM */
+    for (const c of item.consumption || []) {
+      const rid = String(c.rawMaterialId);
+      const add = qty * Math.max(0, Math.floor(Number(c.qty) || 0));
+      if (add > 0) out.set(rid, (out.get(rid) || 0) + add);
+    }
+
+    /** 每个选中选项的 BoM（按名查 choice） */
+    for (const sel of line.selectedOptions || []) {
+      if (!sel.groupName || !sel.choiceName) continue;
+      const cons = findChoiceConsumption(item, sel.groupName, sel.choiceName);
+      for (const c of cons) {
+        const rid = String(c.rawMaterialId);
+        const add = qty * Math.max(0, Math.floor(Number(c.qty) || 0));
+        if (add > 0) out.set(rid, (out.get(rid) || 0) + add);
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * 预检：原材料够不够卖；返回不足项。
+ */
+export function findInsufficientRawMaterials(
+  demand: Map<string, number>,
+  rawMaterials: RawMaterialForCheck[],
+): { rawMaterialId: string; needed: number; available: number; baseUnit: string; name: string }[] {
+  const byId = new Map(rawMaterials.map((r) => [r._id.toString(), r]));
+  const bad: ReturnType<typeof findInsufficientRawMaterials> = [];
+  for (const [rid, need] of demand) {
+    const r = byId.get(rid);
+    if (!r) {
+      bad.push({ rawMaterialId: rid, needed: need, available: 0, baseUnit: '', name: rid });
+      continue;
+    }
+    if (r.enabled === false) continue;
+    const avail = Math.max(0, Math.floor(Number(r.currentQty) || 0));
+    if (avail < need) {
+      bad.push({
+        rawMaterialId: rid,
+        needed: need,
+        available: avail,
+        baseUnit: String(r.baseUnit || ''),
+        name: r.translations?.[0]?.name ?? rid,
+      });
+    }
+  }
+  return bad;
+}
+
+/**
+ * 原子扣减 RawMaterial.currentQty。失败时回滚已成功项并抛 ITEM_OUT_OF_STOCK。
+ * 注意：已禁用 (enabled === false) 的原材料跳过扣减（也跳过预检），允许「软停用」原料不阻塞下单。
+ */
+export async function atomicallyDeductRawMaterials(
+  storeId: mongoose.Types.ObjectId,
+  demand: Map<string, number>,
+  rawMaterials: RawMaterialForCheck[],
+): Promise<Map<string, { qtyBefore: number; qtyAfter: number; baseUnit: string }>> {
+  const { RawMaterial } = getModels() as { RawMaterial: mongoose.Model<any> };
+  const byId = new Map(rawMaterials.map((r) => [r._id.toString(), r]));
+  const applied: { rid: string; qty: number }[] = [];
+  const snapshots = new Map<string, { qtyBefore: number; qtyAfter: number; baseUnit: string }>();
+
+  try {
+    for (const [rid, qty] of demand) {
+      if (qty <= 0) continue;
+      const r = byId.get(rid);
+      if (!r || r.enabled === false) continue;
+      const updated = (await RawMaterial.findOneAndUpdate(
+        { _id: rid, storeId, currentQty: { $gte: qty } },
+        { $inc: { currentQty: -qty } },
+        { new: true, lean: true },
+      )) as null | { currentQty?: number; baseUnit?: string };
+      if (!updated) {
+        throw createAppError('ITEM_OUT_OF_STOCK', '原材料库存不足，订单未提交', {
+          rawMaterialId: rid,
+          needed: qty,
+        });
+      }
+      const after = Math.max(0, Number(updated.currentQty) || 0);
+      applied.push({ rid, qty });
+      snapshots.set(rid, { qtyBefore: after + qty, qtyAfter: after, baseUnit: String(updated.baseUnit || '') });
+    }
+    return snapshots;
+  } catch (err) {
+    for (const a of applied) {
+      try {
+        await RawMaterial.updateOne(
+          { _id: a.rid, storeId },
+          { $inc: { currentQty: a.qty } },
+        );
+      } catch { /* best-effort rollback */ }
+    }
+    throw err;
+  }
+}
+
+/**
+ * 写 RawMaterial 销售流水。失败不抛错（仅审计）。
+ */
+export async function writeRawMaterialSaleTxns(
+  storeId: mongoose.Types.ObjectId,
+  orderId: mongoose.Types.ObjectId,
+  demand: Map<string, number>,
+  snapshots: Map<string, { qtyBefore: number; qtyAfter: number; baseUnit: string }>,
+): Promise<void> {
+  const { InventoryTxn } = getModels() as { InventoryTxn: mongoose.Model<any> };
+  if (!InventoryTxn || demand.size === 0) return;
+  try {
+    const rows: Record<string, unknown>[] = [];
+    for (const [rid, qty] of demand) {
+      const snap = snapshots.get(rid);
+      if (!snap) continue;
+      rows.push({
+        storeId,
+        rawMaterialId: new mongoose.Types.ObjectId(rid),
+        type: 'sale',
+        qty: -qty,
+        qtyBefore: snap.qtyBefore,
+        qtyAfter: snap.qtyAfter,
+        baseUnitSnapshot: snap.baseUnit,
+        orderId,
+      });
+    }
+    if (rows.length === 0) return;
+    await InventoryTxn.insertMany(rows, { ordered: false });
+  } catch (err) {
+    console.error('[inventoryService] writeRawMaterialSaleTxns failed', err);
+  }
+}
+
+/**
+ * 整合调用：用于 POST /orders 与 PUT /orders/:id/items 的扣减环节（A 模式之后接着调用）。
+ *
+ * 返回 demand + snapshots；调用方在订单写入成功后再调 `writeRawMaterialSaleTxns`。
+ * 若 demand 为空（无 BoM 配置），返回空集，不查 RawMaterial。
+ */
+export async function deductRawMaterialsForOrderCreation(
+  storeId: mongoose.Types.ObjectId,
+  items: OrderItemForBom[],
+  menuItems: MenuItemForBom[],
+): Promise<{
+  demand: Map<string, number>;
+  snapshots: Map<string, { qtyBefore: number; qtyAfter: number; baseUnit: string }>;
+}> {
+  const demand = aggregateRawMaterialDemand(items, menuItems);
+  if (demand.size === 0) return { demand, snapshots: new Map() };
+
+  const { RawMaterial } = getModels() as { RawMaterial: mongoose.Model<any> };
+  const ids = [...demand.keys()].map((s) => new mongoose.Types.ObjectId(s));
+  const rawMaterials = (await RawMaterial.find({ _id: { $in: ids }, storeId }).lean()) as unknown as RawMaterialForCheck[];
+
+  const insufficient = findInsufficientRawMaterials(demand, rawMaterials);
+  if (insufficient.length > 0) {
+    throw createAppError('ITEM_OUT_OF_STOCK', '原材料库存不足，订单未提交', { insufficient });
+  }
+  const snapshots = await atomicallyDeductRawMaterials(storeId, demand, rawMaterials);
+  return { demand, snapshots };
+}
+
+/**
+ * 与 `deductRawMaterialsForOrderCreation` 同义，但接受外部已聚合好的 demand。
+ * 用于 dine_in 增量加菜（差额 demand 已由 `diffRawMaterialDemand` 算出）。
+ */
+export async function deductRawMaterialsFromDemand(
+  storeId: mongoose.Types.ObjectId,
+  demand: Map<string, number>,
+): Promise<{
+  demand: Map<string, number>;
+  snapshots: Map<string, { qtyBefore: number; qtyAfter: number; baseUnit: string }>;
+}> {
+  if (demand.size === 0) return { demand, snapshots: new Map() };
+  const { RawMaterial } = getModels() as { RawMaterial: mongoose.Model<any> };
+  const ids = [...demand.keys()].map((s) => new mongoose.Types.ObjectId(s));
+  const rawMaterials = (await RawMaterial.find({ _id: { $in: ids }, storeId }).lean()) as unknown as RawMaterialForCheck[];
+  const insufficient = findInsufficientRawMaterials(demand, rawMaterials);
+  if (insufficient.length > 0) {
+    throw createAppError('ITEM_OUT_OF_STOCK', '原材料库存不足，订单未提交', { insufficient });
+  }
+  const snapshots = await atomicallyDeductRawMaterials(storeId, demand, rawMaterials);
+  return { demand, snapshots };
+}
+
+/**
+ * dine_in 增量加菜：按 BoM 算 newItems 相对 oldItems 的正向差额需求。
+ */
+export function diffRawMaterialDemand(
+  oldItems: OrderItemForBom[],
+  newItems: OrderItemForBom[],
+  menuItems: MenuItemForBom[],
+): Map<string, number> {
+  const oldDemand = aggregateRawMaterialDemand(oldItems, menuItems);
+  const newDemand = aggregateRawMaterialDemand(newItems, menuItems);
+  const out = new Map<string, number>();
+  for (const [rid, n] of newDemand) {
+    const o = oldDemand.get(rid) ?? 0;
+    const delta = n - o;
+    if (delta > 0) out.set(rid, delta);
+  }
+  return out;
+}

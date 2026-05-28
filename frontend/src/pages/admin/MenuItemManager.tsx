@@ -6,7 +6,8 @@ import { apiFetch } from '../../api/client';
 interface Translation { locale: string; name: string; description?: string; }
 interface Category { _id: string; sortOrder?: number; translations: Translation[]; }
 interface AllergenData { _id: string; name: string; icon: string; translations: { locale: string; name: string }[]; }
-interface OptionChoiceData { _id?: string; extraPrice: number; originalPrice?: number; translations: { locale: string; name: string }[]; }
+interface BoMEntryData { rawMaterialId: string; qty: number; }
+interface OptionChoiceData { _id?: string; extraPrice: number; originalPrice?: number; translations: { locale: string; name: string }[]; consumption?: BoMEntryData[]; }
 interface OptionGroupData { _id?: string; required?: boolean; minSelect?: number; maxSelect?: number; translations: { locale: string; name: string }[]; choices: OptionChoiceData[]; }
 interface InventoryPurchaseUnit { code: string; label: string; factorToBase: number; }
 interface InventorySubdoc {
@@ -24,9 +25,18 @@ interface MenuItem {
   optionGroups?: OptionGroupData[];
   inventoryTracked?: boolean;
   inventory?: InventorySubdoc;
+  consumption?: BoMEntryData[];
 }
 
-interface FormOptionChoice { _id?: string; nameZh: string; nameEn: string; extraPrice: number; originalPrice: number; }
+interface RawMaterialOption {
+  _id: string;
+  baseUnit: string;
+  translations: { locale: string; name: string }[];
+}
+
+type TrackingMode = 'off' | 'finished' | 'raw';
+
+interface FormOptionChoice { _id?: string; nameZh: string; nameEn: string; extraPrice: number; originalPrice: number; consumption: BoMEntryData[]; }
 interface FormOptionGroup { _id?: string; nameZh: string; nameEn: string; required: boolean; minSelect: number; maxSelect: number; choices: FormOptionChoice[]; }
 interface FormInventoryUnit { code: string; label: string; factorToBase: number; }
 
@@ -46,6 +56,8 @@ const emptyForm = {
   invPerServing: 1,
   invPurchaseUnits: [] as FormInventoryUnit[],
   invReorderFrequencyDays: 3,
+  trackingMode: 'off' as TrackingMode,
+  itemConsumption: [] as BoMEntryData[],
 };
 
 export default function MenuItemManager() {
@@ -59,16 +71,22 @@ export default function MenuItemManager() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [editingDailySales, setEditingDailySales] = useState<{ daily: number; basis: 'history' | 'estimate' | 'mixed'; windowDays: number } | null>(null);
+  const [rawMaterials, setRawMaterials] = useState<RawMaterialOption[]>([]);
 
   const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
   const authHeaders = { Authorization: `Bearer ${token}` };
 
   const fetchData = useCallback(async () => {
-    const [catRes, itemRes, allergenRes] = await Promise.all([
+    const requests: Promise<Response>[] = [
       apiFetch('/api/menu/categories', { headers: authHeaders }),
       apiFetch('/api/menu/items?ownOptionGroups=1', { headers: authHeaders }),
       apiFetch('/api/allergens', { headers: authHeaders }),
-    ]);
+    ];
+    if (canTrackInventory) {
+      requests.push(apiFetch('/api/raw-materials', { headers: authHeaders }));
+    }
+    const responses = await Promise.all(requests);
+    const [catRes, itemRes, allergenRes, rmRes] = responses;
     if (catRes.ok) {
       const cats: Category[] = await catRes.json();
       cats.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
@@ -76,7 +94,15 @@ export default function MenuItemManager() {
     }
     if (itemRes.ok) setItems(await itemRes.json());
     if (allergenRes.ok) setAllergens(await allergenRes.json());
-  }, [token]);
+    if (rmRes?.ok) {
+      const rms = (await rmRes.json()) as Array<{ _id: string; baseUnit?: string; translations?: { locale: string; name: string }[]; enabled?: boolean }>;
+      setRawMaterials(
+        rms
+          .filter((r) => r.enabled !== false)
+          .map((r) => ({ _id: r._id, baseUnit: r.baseUnit || '', translations: r.translations || [] })),
+      );
+    }
+  }, [token, canTrackInventory]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -147,10 +173,29 @@ export default function MenuItemManager() {
             extraPrice: typeof c.extraPrice === 'number' && Number.isFinite(c.extraPrice) ? c.extraPrice : 0,
             originalPrice:
               typeof c.originalPrice === 'number' && Number.isFinite(c.originalPrice) ? c.originalPrice : 0,
+            consumption: (c.consumption || [])
+              .filter((x) => x && typeof x === 'object')
+              .map((x) => ({
+                rawMaterialId: String((x as { rawMaterialId?: unknown }).rawMaterialId ?? ''),
+                qty: Math.max(1, Math.floor(Number((x as { qty?: unknown }).qty) || 0)),
+              }))
+              .filter((x) => x.rawMaterialId && x.qty >= 1),
           })),
         };
       });
       const inv = item.inventory || {};
+      const itemConsumption: BoMEntryData[] = (item.consumption || [])
+        .filter((x) => x && typeof x === 'object')
+        .map((x) => ({
+          rawMaterialId: String(x.rawMaterialId || ''),
+          qty: Math.max(1, Math.floor(Number(x.qty) || 0)),
+        }))
+        .filter((x) => x.rawMaterialId && x.qty >= 1);
+      const initialMode: TrackingMode = item.inventoryTracked
+        ? 'finished'
+        : (itemConsumption.length > 0 || optionGroups.some((g) => g.choices.some((c) => c.consumption.length > 0)))
+          ? 'raw'
+          : 'off';
       setForm({
         categoryId: item.categoryId,
         price: item.price,
@@ -171,6 +216,8 @@ export default function MenuItemManager() {
           factorToBase: Math.max(1, Math.floor(Number(u.factorToBase) || 1)),
         })),
         invReorderFrequencyDays: Math.max(1, Math.floor(Number(inv.reorderFrequencyDays) || 3)),
+        trackingMode: initialMode,
+        itemConsumption,
       });
       setEditingId(item._id);
       setEditingDailySales(null);
@@ -221,7 +268,8 @@ export default function MenuItemManager() {
         }
       }
     }
-    if (canTrackInventory && editingId && form.inventoryTracked) {
+    const trackFinished = canTrackInventory && editingId && form.trackingMode === 'finished';
+    if (trackFinished) {
       const seenCodes = new Set<string>();
       for (let pi = 0; pi < form.invPurchaseUnits.length; pi++) {
         const u = form.invPurchaseUnits[pi];
@@ -234,11 +282,22 @@ export default function MenuItemManager() {
         seenCodes.add(u.code);
       }
     }
+    /** A/B 互斥前端预校验：raw 模式禁止 inventoryTracked，finished 模式禁止所有 consumption 非空 */
+    const anyChoiceConsumption = form.optionGroups.some((g) => g.choices.some((c) => c.consumption.length > 0));
+    if (form.trackingMode === 'finished' && (form.itemConsumption.length > 0 || anyChoiceConsumption)) {
+      alert(t('admin.bomMutexError', { defaultValue: 'A 模式与 B 模式互斥；请先清空 BoM 配置后再启用成品库存追踪' }));
+      return;
+    }
+
+    const cleanBom = (rows: BoMEntryData[]): BoMEntryData[] => rows
+      .map((r) => ({ rawMaterialId: r.rawMaterialId.trim(), qty: Math.floor(Number(r.qty) || 0) }))
+      .filter((r) => r.rawMaterialId && r.qty >= 1);
+
     const inventoryPayload =
       canTrackInventory && editingId
         ? {
-            inventoryTracked: form.inventoryTracked,
-            inventory: form.inventoryTracked
+            inventoryTracked: trackFinished,
+            inventory: trackFinished
               ? {
                   baseUnit: form.invBaseUnit.trim(),
                   perServing: Math.max(1, Math.floor(form.invPerServing)),
@@ -250,6 +309,7 @@ export default function MenuItemManager() {
                   reorderFrequencyDays: Math.max(1, Math.floor(form.invReorderFrequencyDays)),
                 }
               : undefined,
+            consumption: form.trackingMode === 'raw' ? cleanBom(form.itemConsumption) : [],
           }
         : {};
     const body = {
@@ -282,6 +342,7 @@ export default function MenuItemManager() {
             { locale: 'zh-CN', name: c.nameZh },
             { locale: 'en-US', name: c.nameEn },
           ],
+          consumption: canTrackInventory ? cleanBom(c.consumption || []) : undefined,
         })),
       })),
     };
@@ -335,7 +396,7 @@ export default function MenuItemManager() {
   const addOptionGroup = () => {
     setForm(prev => ({
       ...prev,
-      optionGroups: [...prev.optionGroups, { nameZh: '', nameEn: '', required: false, minSelect: 0, maxSelect: 0, choices: [{ nameZh: '', nameEn: '', extraPrice: 0, originalPrice: 0 }] }],
+      optionGroups: [...prev.optionGroups, { nameZh: '', nameEn: '', required: false, minSelect: 0, maxSelect: 0, choices: [{ nameZh: '', nameEn: '', extraPrice: 0, originalPrice: 0, consumption: [] }] }],
     }));
   };
 
@@ -354,7 +415,7 @@ export default function MenuItemManager() {
     setForm(prev => ({
       ...prev,
       optionGroups: prev.optionGroups.map((g, i) =>
-        i === gi ? { ...g, choices: [...g.choices, { nameZh: '', nameEn: '', extraPrice: 0, originalPrice: 0 }] } : g
+        i === gi ? { ...g, choices: [...g.choices, { nameZh: '', nameEn: '', extraPrice: 0, originalPrice: 0, consumption: [] }] } : g
       ),
     }));
   };
@@ -392,6 +453,77 @@ export default function MenuItemManager() {
     invPurchaseUnits: prev.invPurchaseUnits.map((u, i) => i === idx ? { ...u, [field]: value } : u),
   }));
 
+  const updateItemBom = (idx: number, patch: Partial<BoMEntryData>) =>
+    setForm((prev) => ({
+      ...prev,
+      itemConsumption: prev.itemConsumption.map((row, i) => (i === idx ? { ...row, ...patch } : row)),
+    }));
+  const addItemBom = () =>
+    setForm((prev) => ({ ...prev, itemConsumption: [...prev.itemConsumption, { rawMaterialId: '', qty: 1 }] }));
+  const removeItemBom = (idx: number) =>
+    setForm((prev) => ({ ...prev, itemConsumption: prev.itemConsumption.filter((_, i) => i !== idx) }));
+
+  const updateChoiceBom = (gi: number, ci: number, idx: number, patch: Partial<BoMEntryData>) =>
+    setForm((prev) => ({
+      ...prev,
+      optionGroups: prev.optionGroups.map((g, i) =>
+        i !== gi ? g : {
+          ...g,
+          choices: g.choices.map((c, j) =>
+            j !== ci ? c : { ...c, consumption: c.consumption.map((row, k) => (k === idx ? { ...row, ...patch } : row)) },
+          ),
+        }),
+    }));
+  const addChoiceBom = (gi: number, ci: number) =>
+    setForm((prev) => ({
+      ...prev,
+      optionGroups: prev.optionGroups.map((g, i) =>
+        i !== gi ? g : {
+          ...g,
+          choices: g.choices.map((c, j) => (j !== ci ? c : { ...c, consumption: [...c.consumption, { rawMaterialId: '', qty: 1 }] })),
+        }),
+    }));
+  const removeChoiceBom = (gi: number, ci: number, idx: number) =>
+    setForm((prev) => ({
+      ...prev,
+      optionGroups: prev.optionGroups.map((g, i) =>
+        i !== gi ? g : {
+          ...g,
+          choices: g.choices.map((c, j) => (j !== ci ? c : { ...c, consumption: c.consumption.filter((_, k) => k !== idx) })),
+        }),
+    }));
+
+  const rmName = (rid: string): string => {
+    const r = rawMaterials.find((x) => x._id === rid);
+    if (!r) return rid;
+    const zh = r.translations.find((tr) => tr.locale === 'zh-CN')?.name;
+    const en = r.translations.find((tr) => tr.locale === 'en-US')?.name;
+    return zh || en || r.translations[0]?.name || rid;
+  };
+
+  const renderBomRow = (
+    row: BoMEntryData,
+    onChange: (patch: Partial<BoMEntryData>) => void,
+    onRemove: () => void,
+  ): React.ReactElement => {
+    const r = rawMaterials.find((x) => x._id === row.rawMaterialId);
+    return (
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 100px 40px auto', gap: 6, alignItems: 'center', marginBottom: 4 }}>
+        <select className="input" style={{ fontSize: 12 }} value={row.rawMaterialId}
+          onChange={(e) => onChange({ rawMaterialId: e.target.value })}>
+          <option value="">{t('admin.bomPickMaterial', { defaultValue: '-- 选择原材料 --' })}</option>
+          {rawMaterials.map((rm) => (
+            <option key={rm._id} value={rm._id}>{rmName(rm._id)}{rm.baseUnit ? ` (${rm.baseUnit})` : ''}</option>
+          ))}
+        </select>
+        <input className="input" type="number" min={1} style={{ fontSize: 12 }} value={row.qty}
+          onChange={(e) => onChange({ qty: Math.max(1, Math.floor(Number(e.target.value) || 1)) })} />
+        <span style={{ fontSize: 11, color: 'var(--text-light)' }}>{r?.baseUnit || ''}</span>
+        <button className="btn btn-ghost" style={{ fontSize: 14, color: 'var(--red-primary)' }} onClick={onRemove}>✕</button>
+      </div>
+    );
+  };
+
   const renderInventorySection = (cardBg: string) => {
     if (!canTrackInventory) return null;
     if (!editingId) {
@@ -403,18 +535,87 @@ export default function MenuItemManager() {
     }
     return (
       <div style={{ marginTop: 16, borderTop: '1px solid var(--border)', paddingTop: 14 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
           <label style={{ fontSize: 13, fontWeight: 700 }}>📦 {t('admin.inventoryTracking')}</label>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
-            <input
-              type="checkbox"
-              checked={form.inventoryTracked}
-              onChange={e => setForm(prev => ({ ...prev, inventoryTracked: e.target.checked }))}
-            />
-            {t('admin.enableInventoryTracking')}
-          </label>
+          <div style={{ display: 'flex', gap: 12, fontSize: 12, flexWrap: 'wrap' }}>
+            {(['off', 'finished', 'raw'] as const).map((mode) => (
+              <label key={mode} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
+                <input type="radio" name="trackingMode" checked={form.trackingMode === mode}
+                  onChange={() => setForm((prev) => ({
+                    ...prev,
+                    trackingMode: mode,
+                    inventoryTracked: mode === 'finished',
+                  }))} />
+                {mode === 'off' ? t('admin.trackingModeOff', { defaultValue: '不追踪' })
+                  : mode === 'finished' ? t('admin.trackingModeFinished', { defaultValue: 'A：成品库存' })
+                  : t('admin.trackingModeRaw', { defaultValue: 'B：原材料消耗' })}
+              </label>
+            ))}
+          </div>
         </div>
-        {form.inventoryTracked && (
+
+        {form.trackingMode === 'raw' && (
+          <div style={{ background: cardBg, borderRadius: 8, padding: 12, border: '1px solid var(--border)', marginBottom: 10 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
+              🥩 {t('admin.bomItemTitle', { defaultValue: '本菜品每份消耗' })}
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--text-light)', marginBottom: 8 }}>
+              {t('admin.bomItemHint', { defaultValue: '不区分选项；选项的消耗在选项组里单独配置。' })}
+            </div>
+            {rawMaterials.length === 0 && (
+              <div style={{ fontSize: 11, color: 'var(--red-primary)' }}>
+                {t('admin.bomNoMaterials', { defaultValue: '尚未创建任何原材料，请先到 「🥩 原材料」 页面新建。' })}
+              </div>
+            )}
+            {form.itemConsumption.map((row, idx) => renderBomRow(
+              row,
+              (patch) => updateItemBom(idx, patch),
+              () => removeItemBom(idx),
+            ))}
+            {rawMaterials.length > 0 && (
+              <button className="btn btn-ghost" style={{ fontSize: 12, marginTop: 4 }} onClick={addItemBom}>
+                + {t('admin.bomAddRow', { defaultValue: '增加一条' })}
+              </button>
+            )}
+
+            <div style={{ fontSize: 12, fontWeight: 600, marginTop: 14, marginBottom: 6 }}>
+              🧩 {t('admin.bomOptionTitle', { defaultValue: '选项消耗（按 group / choice 平铺）' })}
+            </div>
+            {form.optionGroups.length === 0 ? (
+              <div style={{ fontSize: 11, color: 'var(--text-light)' }}>
+                {t('admin.bomNoOptions', { defaultValue: '该菜品没有选项组' })}
+              </div>
+            ) : (
+              form.optionGroups.map((g, gi) => (
+                <div key={gi} style={{ marginBottom: 10, paddingLeft: 8, borderLeft: '2px solid var(--border)' }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>
+                    {g.nameZh || `选项组 #${gi + 1}`}{g.nameEn ? ` (${g.nameEn})` : ''}
+                  </div>
+                  {g.choices.map((c, ci) => (
+                    <div key={ci} style={{ marginBottom: 6, paddingLeft: 8 }}>
+                      <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 2 }}>
+                        {c.nameZh || `choice #${ci + 1}`}{c.nameEn ? ` (${c.nameEn})` : ''}
+                      </div>
+                      {c.consumption.map((row, idx) => renderBomRow(
+                        row,
+                        (patch) => updateChoiceBom(gi, ci, idx, patch),
+                        () => removeChoiceBom(gi, ci, idx),
+                      ))}
+                      {rawMaterials.length > 0 && (
+                        <button className="btn btn-ghost" style={{ fontSize: 11, marginTop: 2 }}
+                          onClick={() => addChoiceBom(gi, ci)}>
+                          + {t('admin.bomAddRow', { defaultValue: '增加一条' })}
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ))
+            )}
+          </div>
+        )}
+
+        {form.trackingMode === 'finished' && (
           <div style={{ background: cardBg, borderRadius: 8, padding: 12, border: '1px solid var(--border)' }}>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 10 }}>
               <div>

@@ -12,12 +12,72 @@ import { uploadFile } from '../storage';
 import { mergeTemplateOptionGroupsForItems } from '../utils/optionGroupTemplateApply';
 import { normalizeNestedOptionGroups, validateOptionGroups } from '../utils/optionGroups';
 import { resolveStoreEffectiveFeatures, FeatureKeys } from '../utils/featureCatalog';
+import { autoBackfillForFreshLinks } from './rawMaterials';
 
 function menuModels() {
   return getModels() as {
     MenuItem: mongoose.Model<any>;
     MenuCategory: mongoose.Model<any>;
   };
+}
+
+/**
+ * 收集本次保存涉及到的所有 rawMaterialId（菜品本体 consumption + 各 OptionChoice consumption）。
+ * 用于触发新建关联的自动回填。
+ */
+function collectLinkedRawMaterialIds(
+  itemConsumption: { rawMaterialId: mongoose.Types.ObjectId | string }[] | undefined,
+  normalizedGroups: unknown[] | undefined,
+): string[] {
+  const out = new Set<string>();
+  for (const c of itemConsumption || []) {
+    const rid = String(c.rawMaterialId);
+    if (mongoose.Types.ObjectId.isValid(rid)) out.add(rid);
+  }
+  for (const g of (normalizedGroups as Array<{ choices?: Array<{ consumption?: Array<{ rawMaterialId?: unknown }> }> }>) || []) {
+    for (const c of g.choices || []) {
+      for (const x of c.consumption || []) {
+        const rid = String(x.rawMaterialId ?? '');
+        if (mongoose.Types.ObjectId.isValid(rid)) out.add(rid);
+      }
+    }
+  }
+  return [...out];
+}
+
+/**
+ * 把 req.body.consumption（菜品级 BoM）洗成可写入 schema 的数组。
+ * - 非数组 / undefined → 返回 []
+ * - 每条要求合法 ObjectId 与 ≥1 的 qty；不合法直接抛 VALIDATION_ERROR
+ * - 同一 rawMaterialId 重复 → 抛错（前端应合并）
+ */
+function sanitizeConsumption(raw: unknown): { rawMaterialId: mongoose.Types.ObjectId; qty: number }[] {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) {
+    throw createAppError('VALIDATION_ERROR', 'consumption must be an array');
+  }
+  const out: { rawMaterialId: mongoose.Types.ObjectId; qty: number }[] = [];
+  const seen = new Set<string>();
+  for (let i = 0; i < raw.length; i++) {
+    const row = raw[i] as { rawMaterialId?: unknown; qty?: unknown } | null;
+    if (!row || typeof row !== 'object') {
+      throw createAppError('VALIDATION_ERROR', `consumption[${i}] 无效`);
+    }
+    const rid = String(row.rawMaterialId ?? '');
+    const qty = Math.floor(Number(row.qty));
+    if (!mongoose.Types.ObjectId.isValid(rid)) {
+      throw createAppError('VALIDATION_ERROR', `consumption[${i}].rawMaterialId 无效`);
+    }
+    if (!Number.isFinite(qty) || qty < 1) {
+      throw createAppError('VALIDATION_ERROR', `consumption[${i}].qty 必须为 ≥1 的整数`);
+    }
+    if (seen.has(rid)) {
+      throw createAppError('VALIDATION_ERROR', `consumption 中 rawMaterialId 重复：${rid}`);
+    }
+    seen.add(rid);
+    out.push({ rawMaterialId: new mongoose.Types.ObjectId(rid), qty });
+  }
+  return out;
 }
 
 const router = Router();
@@ -110,7 +170,7 @@ router.post(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { MenuItem, MenuCategory } = menuModels();
-      const { categoryId, price, calories, avgWaitMinutes, photoUrl, arFileUrl, isSoldOut, translations, allergenIds, optionGroups } = req.body;
+      const { categoryId, price, calories, avgWaitMinutes, photoUrl, arFileUrl, isSoldOut, translations, allergenIds, optionGroups, consumption } = req.body;
 
       if (!categoryId || price == null || !Array.isArray(translations) || translations.length === 0) {
         throw createAppError(
@@ -143,6 +203,8 @@ router.post(
         validateOptionGroups(normalizedOptionGroups);
       }
 
+      const normalizedConsumption = sanitizeConsumption(consumption);
+
       const item = await MenuItem.create({
         storeId: req.storeId,
         categoryId,
@@ -155,7 +217,13 @@ router.post(
         translations,
         allergenIds: allergenIds || [],
         optionGroups: normalizedOptionGroups ?? [],
+        consumption: normalizedConsumption,
       });
+
+      const linkedRids = collectLinkedRawMaterialIds(normalizedConsumption, normalizedOptionGroups);
+      if (linkedRids.length > 0) {
+        await autoBackfillForFreshLinks(req.storeId!, linkedRids);
+      }
 
       res.status(201).json(item);
     } catch (err) {
@@ -194,6 +262,7 @@ router.put(
         optionGroups,
         inventoryTracked,
         inventory,
+        consumption,
       } = req.body;
 
       if (categoryId !== undefined) {
@@ -300,6 +369,36 @@ router.put(
         Object.assign(updateData, setInv);
       }
 
+      if (consumption !== undefined) {
+        updateData.consumption = sanitizeConsumption(consumption);
+      }
+
+      /**
+       * A/B 模式互斥：菜品级 inventoryTracked（A 模式：菜品即库存单位）与 consumption[] 非空
+       * （B 模式：BoM 扣减原材料）二者只能取其一。校验时优先用本次提交的字段，缺失时从 DB 当前值兜底。
+       */
+      const willTrack = inventoryTracked !== undefined
+        ? !!inventoryTracked
+        : null;
+      const willConsume = consumption !== undefined
+        ? (Array.isArray(updateData.consumption) && (updateData.consumption as unknown[]).length > 0)
+        : null;
+      if (willTrack !== null || willConsume !== null) {
+        const cur = (await MenuItem.findOne({ _id: id, storeId: req.storeId }).lean()) as
+          | { inventoryTracked?: boolean; consumption?: unknown[] }
+          | null;
+        const finalTracked = willTrack !== null ? willTrack : !!cur?.inventoryTracked;
+        const finalConsumeLen = willConsume !== null
+          ? (willConsume ? 1 : 0)
+          : (Array.isArray(cur?.consumption) ? (cur?.consumption?.length ?? 0) : 0);
+        if (finalTracked && finalConsumeLen > 0) {
+          throw createAppError(
+            'VALIDATION_ERROR',
+            '不能同时启用 A 模式（成品库存）与 B 模式（BoM 原材料消耗）；二者只能选其一。',
+          );
+        }
+      }
+
       if (Object.keys(updateData).length === 0) {
         throw createAppError('VALIDATION_ERROR', 'At least one field must be provided for update');
       }
@@ -311,6 +410,14 @@ router.put(
 
       if (!updated) {
         throw createAppError('NOT_FOUND', 'Menu item not found');
+      }
+
+      const linkedRids = collectLinkedRawMaterialIds(
+        updateData.consumption as { rawMaterialId: mongoose.Types.ObjectId | string }[] | undefined,
+        updateData.optionGroups as unknown[] | undefined,
+      );
+      if (linkedRids.length > 0) {
+        await autoBackfillForFreshLinks(req.storeId!, linkedRids);
       }
 
       res.json(updated);

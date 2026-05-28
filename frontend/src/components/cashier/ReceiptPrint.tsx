@@ -151,6 +151,12 @@ function escapeReceiptHtml(s: string): string {
     .replace(/"/g, '&quot;');
 }
 
+function formatReceiptItemTitle(qty: number, name: string): string {
+  const q = Math.max(0, Number(qty) || 0);
+  if (q <= 0) return name;
+  return `${q}X ${name}`;
+}
+
 function countReceiptItemQty(receipt: ReceiptData): number {
   const partial = describeDineInPartialLines(receipt);
   if (partial) {
@@ -219,8 +225,7 @@ function buildReceiptHTML(
     .big { font-size: 22px; margin: 6px 0; letter-spacing: 2px; }
     table { width: 100%; border-collapse: collapse; margin: 8px 0; }
     td { padding: 6px 0; vertical-align: top; }
-    .qty { text-align: center; width: 40px; font-size: 18px; }
-    .amt { text-align: right; font-size: 16px; }
+    .amt { text-align: right; font-size: 16px; white-space: nowrap; }
     .item-cn { font-size: 20px; line-height: 1.25; }
     .item-en { font-size: 16px; padding-left: 4px; line-height: 1.25; }
     .opt-cn { font-size: 17px; line-height: 1.3; padding-left: 2px; }
@@ -314,16 +319,16 @@ function buildReceiptHTML(
   // Items
   html += `<table>`;
   if (partialDesc) {
-    html += `<tr><td colspan="3" style="font-size:12px;text-align:center;padding:6px 0;font-weight:bold">Partial checkout / 部分结账</td></tr>`;
+    html += `<tr><td colspan="2" style="font-size:12px;text-align:center;padding:6px 0;font-weight:bold">Partial checkout / 部分结账</td></tr>`;
     for (const L of partialDesc.lines) {
-      html += `<tr><td><div class="item-cn">${escapeReceiptHtml(L.title)}</div>`;
+      html += `<tr><td><div class="item-cn">${escapeReceiptHtml(formatReceiptItemTitle(L.qty, L.title))}</div>`;
       if (L.titleEn && L.titleEn !== L.title) html += `<div class="item-en">${escapeReceiptHtml(L.titleEn)}</div>`;
       if (L.options && L.options.length > 0) {
         for (const o of L.options) {
           html += receiptOptionPrintHtml(o, escapeReceiptHtml);
         }
       }
-      html += `</td><td class="qty">x${L.qty}</td><td class="amt">€${L.amountEuro.toFixed(2)}</td></tr>`;
+      html += `</td><td class="amt">€${L.amountEuro.toFixed(2)}</td></tr>`;
     }
   } else {
     for (let oi = 0; oi < receipt.orders.length; oi++) {
@@ -336,17 +341,17 @@ function buildReceiptHTML(
         const rowLabel = guest
           ? `— 标识 ${escapeReceiptHtml(guest)} —`
           : `— 标识（未填）· #${escapeReceiptHtml(sub)} —`;
-        html += `<tr><td colspan="3" style="font-size:11px;padding:${topPad} 0 4px;${borderTop}font-weight:700">${rowLabel}</td></tr>`;
+        html += `<tr><td colspan="2" style="font-size:11px;padding:${topPad} 0 4px;${borderTop}font-weight:700">${rowLabel}</td></tr>`;
       }
       for (const item of order.items) {
-        html += `<tr><td><div class="item-cn">${item.itemName}</div>`;
-        if (item.itemNameEn && item.itemNameEn !== item.itemName) html += `<div class="item-en">${item.itemNameEn}</div>`;
+        html += `<tr><td><div class="item-cn">${escapeReceiptHtml(formatReceiptItemTitle(item.quantity, item.itemName))}</div>`;
+        if (item.itemNameEn && item.itemNameEn !== item.itemName) html += `<div class="item-en">${escapeReceiptHtml(item.itemNameEn)}</div>`;
         if (item.selectedOptions && item.selectedOptions.length > 0) {
           for (const o of item.selectedOptions) {
             html += receiptOptionPrintHtml(o, escapeReceiptHtml);
           }
         }
-        html += `</td><td class="qty">x${item.quantity}</td><td class="amt">€${(item.unitPrice * item.quantity).toFixed(2)}</td></tr>`;
+        html += `</td><td class="amt">€${(item.unitPrice * item.quantity).toFixed(2)}</td></tr>`;
       }
     }
   }
@@ -625,13 +630,13 @@ export default function ReceiptPrint({ checkoutId, cashReceived, changeAmount, b
           {partialDescPreview.lines.map((L) => (
             <div key={L.key} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', borderBottom: '1px solid #ddd' }}>
               <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 20, lineHeight: 1.25 }}>{L.title}</div>
+                <div style={{ fontSize: 20, lineHeight: 1.25 }}>{formatReceiptItemTitle(L.qty, L.title)}</div>
                 {L.titleEn && L.titleEn !== L.title && <div style={{ fontSize: 16, lineHeight: 1.25 }}>{L.titleEn}</div>}
                 {L.options && L.options.length > 0 && L.options.map((o, oi) => (
                   <ReceiptOptionLines key={oi} o={o} />
                 ))}
               </div>
-              <div style={{ whiteSpace: 'nowrap' }}>x{L.qty} €{L.amountEuro.toFixed(2)}</div>
+              <div style={{ whiteSpace: 'nowrap' }}>€{L.amountEuro.toFixed(2)}</div>
             </div>
           ))}
         </>
@@ -660,13 +665,13 @@ export default function ReceiptPrint({ checkoutId, cashReceived, changeAmount, b
             subRows.push(
               <div key={`${order._id}-${item._id}`} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', borderBottom: '1px solid #ddd' }}>
                 <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 20, lineHeight: 1.25 }}>{item.itemName}</div>
+                  <div style={{ fontSize: 20, lineHeight: 1.25 }}>{formatReceiptItemTitle(item.quantity, item.itemName)}</div>
                   {item.itemNameEn && item.itemNameEn !== item.itemName && <div style={{ fontSize: 16, lineHeight: 1.25 }}>{item.itemNameEn}</div>}
                   {item.selectedOptions && item.selectedOptions.length > 0 && item.selectedOptions.map((o, idx) => (
                     <ReceiptOptionLines key={idx} o={o} />
                   ))}
                 </div>
-                <div style={{ whiteSpace: 'nowrap' }}>x{item.quantity} €{(item.unitPrice * item.quantity).toFixed(2)}</div>
+                <div style={{ whiteSpace: 'nowrap' }}>€{(item.unitPrice * item.quantity).toFixed(2)}</div>
               </div>,
             );
           }

@@ -14,7 +14,7 @@ describe('receiptOptionBilingualLines', () => {
         choiceName: '微辣',
         choiceNameEn: 'Mild',
       }),
-    ).toEqual({ primary: '辣度: 微辣', secondary: 'Spice: Mild' });
+    ).toEqual({ primary: '微辣', secondary: 'Mild' });
   });
 
   it('omits secondary when en matches zh', () => {
@@ -25,7 +25,7 @@ describe('receiptOptionBilingualLines', () => {
         choiceName: 'Large',
         choiceNameEn: 'Large',
       }),
-    ).toEqual({ primary: 'Size: Large' });
+    ).toEqual({ primary: 'Large' });
   });
 
   it('uses en only when zh missing', () => {
@@ -34,7 +34,7 @@ describe('receiptOptionBilingualLines', () => {
         groupNameEn: 'Spice',
         choiceNameEn: 'Hot',
       }),
-    ).toEqual({ primary: 'Spice: Hot' });
+    ).toEqual({ primary: 'Hot' });
   });
 });
 
@@ -50,14 +50,14 @@ describe('receiptOptionPrintHtml', () => {
       },
       (s) => s,
     );
-    expect(html).toContain('辣度: 微辣 +€0.50');
-    expect(html).toContain('Spice: Mild');
+    expect(html).toContain('微辣 +€0.50');
+    expect(html).toContain('Mild');
   });
 });
 
 describe('receiptOptionDisplayLabel', () => {
-  it('joins group and choice with colon', () => {
-    expect(receiptOptionDisplayLabel({ groupName: 'A', choiceName: 'B' })).toBe('A: B');
-    expect(receiptOptionDisplayLabelEn({ groupNameEn: 'A', choiceNameEn: 'B' })).toBe('A: B');
+  it('shows choice only without group name', () => {
+    expect(receiptOptionDisplayLabel({ groupName: 'A', choiceName: 'B' })).toBe('B');
+    expect(receiptOptionDisplayLabelEn({ groupNameEn: 'A', choiceNameEn: 'B' })).toBe('B');
   });
 });
