@@ -4,7 +4,6 @@ import { useAuth } from '../../context/AuthContext';
 import { apiFetch } from '../../api/client';
 import {
   buildPurchaseUnitPayload,
-  formatPurchaseUnitOption,
   splitPurchaseUnitLabels,
 } from '../../utils/purchaseUnitLabel';
 

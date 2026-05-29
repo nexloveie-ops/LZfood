@@ -1,4 +1,4 @@
-import type { TFunction } from 'i18next';
+export type TranslateFn = (key: string, opts?: Record<string, unknown>) => string;
 
 export type PurchaseUnitLike = {
   code: string;
@@ -42,7 +42,7 @@ export function resolvePurchaseUnitLocale(lang: string): 'zh-CN' | 'en-US' {
 export function purchaseUnitDisplayLabel(
   unit: PurchaseUnitLike,
   lang: string,
-  t: TFunction,
+  t: TranslateFn,
 ): string {
   const locale = resolvePurchaseUnitLocale(lang);
   const tr = unit.translations || [];
@@ -61,7 +61,7 @@ export function purchaseUnitDisplayLabel(
   return label || String(unit.code || '').trim();
 }
 
-export function baseUnitDisplayLabel(baseUnit: string, t: TFunction): string {
+export function baseUnitDisplayLabel(baseUnit: string, t: TranslateFn): string {
   const raw = String(baseUnit || '').trim();
   if (!raw) return raw;
   const key = BASE_UNIT_KEYS[raw.toLowerCase()] || BASE_UNIT_KEYS[raw];
@@ -76,7 +76,7 @@ export function formatPurchaseUnitOption(
   unit: PurchaseUnitLike,
   lang: string,
   baseUnit: string,
-  t: TFunction,
+  t: TranslateFn,
 ): string {
   const label = purchaseUnitDisplayLabel(unit, lang, t);
   const base = baseUnitDisplayLabel(baseUnit, t);
