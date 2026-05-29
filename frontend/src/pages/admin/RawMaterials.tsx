@@ -2,11 +2,17 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../../context/AuthContext';
 import { apiFetch } from '../../api/client';
+import {
+  buildPurchaseUnitPayload,
+  formatPurchaseUnitOption,
+  splitPurchaseUnitLabels,
+} from '../../utils/purchaseUnitLabel';
 
 interface PurchaseUnit {
   code: string;
   label: string;
   factorToBase: number;
+  translations?: { locale: string; label: string }[];
 }
 
 interface Translation {
@@ -31,10 +37,12 @@ interface SummaryRow {
 type ActionKind = 'init' | 'restock' | 'waste' | 'adjust';
 type RestockSource = '' | 'central_kitchen' | 'third_party' | 'self_purchase';
 
+interface FormPurchaseUnit { code: string; label: string; labelEn: string; factorToBase: number; }
+
 interface FormDraft {
   translations: Translation[];
   baseUnit: string;
-  purchaseUnits: PurchaseUnit[];
+  purchaseUnits: FormPurchaseUnit[];
   reorderFrequencyDays: number;
   enabled: boolean;
 }
@@ -146,7 +154,10 @@ export default function RawMaterials() {
       draft: {
         translations: (found.translations || []).map((t) => ({ locale: t.locale, name: t.name })),
         baseUnit: found.baseUnit,
-        purchaseUnits: (found.purchaseUnits || []).map((u) => ({ ...u })),
+        purchaseUnits: (found.purchaseUnits || []).map((u) => {
+          const { labelZh, labelEn } = splitPurchaseUnitLabels(u);
+          return { code: u.code, label: labelZh, labelEn, factorToBase: u.factorToBase };
+        }),
         reorderFrequencyDays: found.reorderFrequencyDays || 3,
         enabled: found.enabled !== false,
       },
@@ -167,7 +178,9 @@ export default function RawMaterials() {
     const body = {
       translations,
       baseUnit: draft.baseUnit.trim(),
-      purchaseUnits: draft.purchaseUnits.filter((u) => u.code.trim() && u.label.trim() && u.factorToBase >= 1),
+      purchaseUnits: draft.purchaseUnits
+        .filter((u) => u.code.trim() && (u.label.trim() || u.labelEn.trim()) && u.factorToBase >= 1)
+        .map((u) => buildPurchaseUnitPayload(u.code, u.label, u.labelEn, u.factorToBase)),
       reorderFrequencyDays: draft.reorderFrequencyDays,
       enabled: draft.enabled,
     };
@@ -447,8 +460,8 @@ function EditorModal(props: {
     copy.splice(i, 1);
     onChange({ ...draft, translations: copy });
   };
-  const addPU = () => onChange({ ...draft, purchaseUnits: [...draft.purchaseUnits, { code: '', label: '', factorToBase: 1 }] });
-  const setPU = (i: number, patch: Partial<PurchaseUnit>) => {
+  const addPU = () => onChange({ ...draft, purchaseUnits: [...draft.purchaseUnits, { code: '', label: '', labelEn: '', factorToBase: 1 }] });
+  const setPU = (i: number, patch: Partial<FormPurchaseUnit>) => {
     const copy = draft.purchaseUnits.slice();
     copy[i] = { ...copy[i], ...patch };
     onChange({ ...draft, purchaseUnits: copy });
@@ -507,6 +520,8 @@ function EditorModal(props: {
                 value={u.code} onChange={(e) => setPU(i, { code: e.target.value })} />
               <input className="input" style={{ flex: 1 }} placeholder={t('admin.invUnitLabelPlaceholder')}
                 value={u.label} onChange={(e) => setPU(i, { label: e.target.value })} />
+              <input className="input" style={{ flex: 1 }} placeholder={t('admin.invUnitLabelEnPlaceholder')}
+                value={u.labelEn} onChange={(e) => setPU(i, { labelEn: e.target.value })} />
               <input className="input" type="number" min={1} style={{ width: 110 }} placeholder={t('admin.invFactorPlaceholder')}
                 value={u.factorToBase}
                 onChange={(e) => setPU(i, { factorToBase: Math.max(1, Math.floor(Number(e.target.value) || 1)) })} />
@@ -586,7 +601,7 @@ function ActionModal(props: {
               onChange={(e) => props.setActionUnitCode(e.target.value)}>
               <option value="">--</option>
               {row.purchaseUnits.map((u) => (
-                <option key={u.code} value={u.code}>{u.label} (= {u.factorToBase} {row.baseUnit})</option>
+                <option key={u.code} value={u.code}>{formatPurchaseUnitOption(u, lang, row.baseUnit, t)}</option>
               ))}
             </select>
           </div>

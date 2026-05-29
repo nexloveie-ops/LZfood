@@ -9,10 +9,19 @@ import mongoose from 'mongoose';
  * - 数量单位约定：`currentQty` 始终以 `baseUnit` 计；`purchaseUnits` 提供 base 之上的常用整箱/整袋换算
  * - 阈值 = 历史日均消耗（来自 `InventoryTxn` 的 sale 流水累加）× `reorderFrequencyDays`，向上取整
  */
+const PurchaseUnitTranslationSchema = new mongoose.Schema(
+  {
+    locale: { type: String, required: true },
+    label: { type: String, required: true },
+  },
+  { _id: false },
+);
+
 const PurchaseUnitSchema = new mongoose.Schema(
   {
     code: { type: String, required: true, trim: true },
     label: { type: String, required: true, trim: true },
+    translations: { type: [PurchaseUnitTranslationSchema], default: [] },
     factorToBase: { type: Number, required: true, min: 1 },
   },
   { _id: false },

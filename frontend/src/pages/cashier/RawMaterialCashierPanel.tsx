@@ -2,8 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../../context/AuthContext';
 import { apiFetch } from '../../api/client';
+import { formatPurchaseUnitOption, baseUnitDisplayLabel } from '../../utils/purchaseUnitLabel';
 
-interface PurchaseUnit { code: string; label: string; factorToBase: number; }
+interface PurchaseUnit { code: string; label: string; factorToBase: number; translations?: { locale: string; label: string }[]; }
 interface Translation { locale: string; name: string; }
 
 interface SummaryRow {
@@ -222,7 +223,7 @@ export default function RawMaterialCashierPanel() {
                 <select className="input" value={unitCode} onChange={(e) => setUnitCode(e.target.value)} style={{ width: '100%' }}>
                   {action.row.purchaseUnits.map((u) => (
                     <option key={u.code} value={u.code}>
-                      {u.label} (= {u.factorToBase} {action.row.baseUnit})
+                      {formatPurchaseUnitOption(u, lang, action.row.baseUnit, t)}
                     </option>
                   ))}
                 </select>
@@ -242,7 +243,7 @@ export default function RawMaterialCashierPanel() {
                 const baseDelta = qty * u.factorToBase;
                 return (
                   <div style={{ fontSize: 11, color: 'var(--text-light)', marginTop: 4 }}>
-                    +{baseDelta} {action.row.baseUnit}
+                    +{baseDelta} {baseUnitDisplayLabel(action.row.baseUnit, t)}
                   </div>
                 );
               })()}

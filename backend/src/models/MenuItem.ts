@@ -48,10 +48,20 @@ const OptionGroupSchema = new mongoose.Schema({
  * 进货单位换算：例如 1 箱 = 10 袋；1 袋 = 24 个（baseUnit）。
  * factorToBase 表示「该单位 → baseUnit」的换算系数（必须为正整数）。
  */
+const PurchaseUnitTranslationSchema = new mongoose.Schema(
+  {
+    locale: { type: String, required: true },
+    label: { type: String, required: true },
+  },
+  { _id: false },
+);
+
 const PurchaseUnitSchema = new mongoose.Schema(
   {
     code: { type: String, required: true, trim: true },
+    /** 兼容旧数据；展示优先用 translations */
     label: { type: String, required: true, trim: true },
+    translations: { type: [PurchaseUnitTranslationSchema], default: [] },
     factorToBase: { type: Number, required: true, min: 1 },
   },
   { _id: false },

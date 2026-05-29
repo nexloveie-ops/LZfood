@@ -2,6 +2,11 @@ import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../../context/AuthContext';
 import { apiFetch } from '../../api/client';
+import {
+  buildPurchaseUnitPayload,
+  formatPurchaseUnitOption,
+  splitPurchaseUnitLabels,
+} from '../../utils/purchaseUnitLabel';
 
 interface Translation { locale: string; name: string; description?: string; }
 interface Category { _id: string; sortOrder?: number; translations: Translation[]; }
@@ -9,7 +14,7 @@ interface AllergenData { _id: string; name: string; icon: string; translations: 
 interface BoMEntryData { rawMaterialId: string; qty: number; }
 interface OptionChoiceData { _id?: string; extraPrice: number; originalPrice?: number; translations: { locale: string; name: string }[]; consumption?: BoMEntryData[]; }
 interface OptionGroupData { _id?: string; required?: boolean; minSelect?: number; maxSelect?: number; translations: { locale: string; name: string }[]; choices: OptionChoiceData[]; }
-interface InventoryPurchaseUnit { code: string; label: string; factorToBase: number; }
+interface InventoryPurchaseUnit { code: string; label: string; factorToBase: number; translations?: { locale: string; label: string }[]; }
 interface InventorySubdoc {
   baseUnit?: string;
   perServing?: number;
@@ -38,7 +43,7 @@ type TrackingMode = 'off' | 'finished' | 'raw';
 
 interface FormOptionChoice { _id?: string; nameZh: string; nameEn: string; extraPrice: number; originalPrice: number; consumption: BoMEntryData[]; }
 interface FormOptionGroup { _id?: string; nameZh: string; nameEn: string; required: boolean; minSelect: number; maxSelect: number; choices: FormOptionChoice[]; }
-interface FormInventoryUnit { code: string; label: string; factorToBase: number; }
+interface FormInventoryUnit { code: string; label: string; labelEn: string; factorToBase: number; }
 
 const emptyForm = {
   categoryId: '',
@@ -210,11 +215,15 @@ export default function MenuItemManager() {
         inventoryTracked: !!item.inventoryTracked,
         invBaseUnit: inv.baseUnit || '',
         invPerServing: Math.max(1, Math.floor(Number(inv.perServing) || 1)),
-        invPurchaseUnits: (inv.purchaseUnits || []).map((u) => ({
-          code: String(u.code || ''),
-          label: String(u.label || ''),
-          factorToBase: Math.max(1, Math.floor(Number(u.factorToBase) || 1)),
-        })),
+        invPurchaseUnits: (inv.purchaseUnits || []).map((u) => {
+          const { labelZh, labelEn } = splitPurchaseUnitLabels(u);
+          return {
+            code: String(u.code || ''),
+            label: labelZh,
+            labelEn,
+            factorToBase: Math.max(1, Math.floor(Number(u.factorToBase) || 1)),
+          };
+        }),
         invReorderFrequencyDays: Math.max(1, Math.floor(Number(inv.reorderFrequencyDays) || 3)),
         trackingMode: initialMode,
         itemConsumption,
@@ -274,7 +283,7 @@ export default function MenuItemManager() {
       for (let pi = 0; pi < form.invPurchaseUnits.length; pi++) {
         const u = form.invPurchaseUnits[pi];
         if (!u.code.trim()) { alert(`进货单位 #${pi + 1} 代码必填`); return; }
-        if (!u.label.trim()) { alert(`进货单位 #${pi + 1} 名称必填`); return; }
+        if (!u.label.trim() && !u.labelEn.trim()) { alert(`进货单位 #${pi + 1} 中/英文名称至少填一项`); return; }
         if (!Number.isFinite(u.factorToBase) || u.factorToBase < 1) {
           alert(`进货单位 #${pi + 1} 换算系数必须为 ≥1 的整数`); return;
         }
@@ -301,11 +310,12 @@ export default function MenuItemManager() {
               ? {
                   baseUnit: form.invBaseUnit.trim(),
                   perServing: Math.max(1, Math.floor(form.invPerServing)),
-                  purchaseUnits: form.invPurchaseUnits.map((u) => ({
-                    code: u.code.trim(),
-                    label: u.label.trim(),
-                    factorToBase: Math.max(1, Math.floor(u.factorToBase)),
-                  })),
+                  purchaseUnits: form.invPurchaseUnits.map((u) => buildPurchaseUnitPayload(
+                    u.code,
+                    u.label,
+                    u.labelEn,
+                    Math.max(1, Math.floor(u.factorToBase)),
+                  )),
                   reorderFrequencyDays: Math.max(1, Math.floor(form.invReorderFrequencyDays)),
                 }
               : undefined,
@@ -442,7 +452,7 @@ export default function MenuItemManager() {
 
   const addPurchaseUnit = () => setForm(prev => ({
     ...prev,
-    invPurchaseUnits: [...prev.invPurchaseUnits, { code: '', label: '', factorToBase: 1 }],
+    invPurchaseUnits: [...prev.invPurchaseUnits, { code: '', label: '', labelEn: '', factorToBase: 1 }],
   }));
   const removePurchaseUnit = (idx: number) => setForm(prev => ({
     ...prev,
@@ -668,11 +678,13 @@ export default function MenuItemManager() {
               <div style={{ fontSize: 11, color: 'var(--text-light)', padding: '6px 0' }}>{t('admin.invNoPurchaseUnits')}</div>
             )}
             {form.invPurchaseUnits.map((u, idx) => (
-              <div key={idx} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr auto', gap: 6, marginBottom: 4 }}>
+              <div key={idx} style={{ display: 'grid', gridTemplateColumns: '0.9fr 1fr 1fr 0.8fr auto', gap: 6, marginBottom: 4 }}>
                 <input className="input" placeholder="code (e.g. case)" value={u.code}
                   onChange={e => updatePurchaseUnit(idx, 'code', e.target.value)} style={{ fontSize: 12 }} />
                 <input className="input" placeholder={t('admin.invUnitLabelPlaceholder')} value={u.label}
                   onChange={e => updatePurchaseUnit(idx, 'label', e.target.value)} style={{ fontSize: 12 }} />
+                <input className="input" placeholder={t('admin.invUnitLabelEnPlaceholder')} value={u.labelEn}
+                  onChange={e => updatePurchaseUnit(idx, 'labelEn', e.target.value)} style={{ fontSize: 12 }} />
                 <input className="input" type="number" min={1} placeholder={t('admin.invFactorPlaceholder')} value={u.factorToBase}
                   onChange={e => updatePurchaseUnit(idx, 'factorToBase', Math.max(1, Math.floor(Number(e.target.value) || 1)))} style={{ fontSize: 12 }} />
                 <button className="btn btn-ghost" style={{ fontSize: 14, color: 'var(--red-primary)' }} onClick={() => removePurchaseUnit(idx)}>✕</button>

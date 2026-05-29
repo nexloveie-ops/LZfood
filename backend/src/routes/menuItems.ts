@@ -17,6 +17,7 @@ import {
   collectLinkedRawMaterialIds,
   rawMaterialIdsNeedingBackfillOnBoMChange,
 } from '../utils/rawMaterialBoMBackfill';
+import { sanitizePurchaseUnits, enrichPurchaseUnitsForResponse } from '../utils/purchaseUnits';
 
 function menuModels() {
   return getModels() as {
@@ -118,10 +119,27 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
           optionGroups: normalizeNestedOptionGroups((item as { optionGroups?: unknown }).optionGroups),
         }))
       : await mergeTemplateOptionGroupsForItems(req.storeId!, items);
-    const baseItems = baseItemsUnknown as unknown as Array<{ translations: Array<{ locale: string; name?: string }> }>;
+    const baseItems = baseItemsUnknown as unknown as Array<{
+      translations: Array<{ locale: string; name?: string }>;
+      inventory?: { purchaseUnits?: unknown };
+    }>;
+
+    const withPurchaseUnitLabels = baseItems.map((item) => {
+      const inv = item.inventory;
+      if (!inv?.purchaseUnits) return item;
+      return {
+        ...item,
+        inventory: {
+          ...inv,
+          purchaseUnits: enrichPurchaseUnitsForResponse(
+            sanitizePurchaseUnits(inv.purchaseUnits),
+          ),
+        },
+      };
+    });
 
     if (lang) {
-      const filtered = baseItems.map((item) => {
+      const filtered = withPurchaseUnitLabels.map((item) => {
         const translation = item.translations.find(
           (t: { locale: string }) => t.locale === lang
         );
@@ -132,7 +150,7 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
       });
       res.json(filtered);
     } else {
-      res.json(baseItems);
+      res.json(withPurchaseUnitLabels);
     }
   } catch (err) {
     next(err);
@@ -327,24 +345,7 @@ router.put(
           setInv['inventory.estimatedDailySales'] = n;
         }
         if (Array.isArray(inv.purchaseUnits)) {
-          const seen = new Set<string>();
-          const arr = inv.purchaseUnits.map((u, idx) => {
-            const row = u as Record<string, unknown>;
-            const code = String(row.code ?? '').trim();
-            const label = String(row.label ?? '').trim();
-            const factor = Math.floor(Number(row.factorToBase));
-            if (!code) throw createAppError('VALIDATION_ERROR', `purchaseUnits[${idx}].code 必填`);
-            if (!label) throw createAppError('VALIDATION_ERROR', `purchaseUnits[${idx}].label 必填`);
-            if (!Number.isFinite(factor) || factor < 1) {
-              throw createAppError('VALIDATION_ERROR', `purchaseUnits[${idx}].factorToBase 必须为 ≥1 的整数`);
-            }
-            if (seen.has(code)) {
-              throw createAppError('VALIDATION_ERROR', `purchaseUnits 中 code 重复：${code}`);
-            }
-            seen.add(code);
-            return { code, label, factorToBase: factor };
-          });
-          setInv['inventory.purchaseUnits'] = arr;
+          setInv['inventory.purchaseUnits'] = sanitizePurchaseUnits(inv.purchaseUnits);
         }
         Object.assign(updateData, setInv);
       }

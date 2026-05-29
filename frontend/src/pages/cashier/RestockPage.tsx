@@ -6,6 +6,7 @@ import {
   cashierMenuSessionCacheKey,
   patchCashierMenuInventoryQty,
 } from '../../utils/cashierMenuSessionCache';
+import { formatPurchaseUnitOption, baseUnitDisplayLabel } from '../../utils/purchaseUnitLabel';
 import RawMaterialCashierPanel from './RawMaterialCashierPanel';
 
 interface SummaryRow {
@@ -23,7 +24,7 @@ interface SummaryRow {
   color: 'red' | 'orange' | 'green';
 }
 
-interface PurchaseUnitFromItem { code: string; label: string; factorToBase: number; }
+interface PurchaseUnitFromItem { code: string; label: string; factorToBase: number; translations?: { locale: string; label: string }[]; }
 interface MenuItemLite {
   _id: string;
   inventoryTracked?: boolean;
@@ -302,7 +303,7 @@ export default function RestockPage() {
                 <select className="input" value={unitCode} onChange={e => setUnitCode(e.target.value)} style={{ width: '100%' }}>
                   {(itemById.get(active.row.menuItemId)?.inventory?.purchaseUnits || []).map((u) => (
                     <option key={u.code} value={u.code}>
-                      {u.label} (= {u.factorToBase} {active.row.baseUnit})
+                      {formatPurchaseUnitOption(u, lang, active.row.baseUnit, t)}
                     </option>
                   ))}
                 </select>
@@ -324,7 +325,7 @@ export default function RestockPage() {
                     const addBase = qty * u.factorToBase;
                     const ps = Math.max(1, active.row.perServing || 1);
                     const addServings = Math.floor(addBase / ps);
-                    return `≈ +${addServings} ${t('cashier.invServings')} (+${addBase} ${active.row.baseUnit})`;
+                    return `≈ +${addServings} ${t('cashier.invServings')} (+${addBase} ${baseUnitDisplayLabel(active.row.baseUnit, t)})`;
                   })()}
                 </div>
               )}

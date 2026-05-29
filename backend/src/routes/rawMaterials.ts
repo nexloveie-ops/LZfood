@@ -6,6 +6,7 @@ import { requireAuthSameStore } from '../middleware/authForStore';
 import { Role } from '../middleware/permissions';
 import { FeatureKeys, resolveStoreEffectiveFeatures } from '../utils/featureCatalog';
 import { aggregateRawMaterialDemand } from '../utils/inventoryService';
+import { sanitizePurchaseUnits, enrichPurchaseUnitsForResponse, type SanitizedPurchaseUnit } from '../utils/purchaseUnits';
 
 const router = Router();
 
@@ -65,22 +66,6 @@ function sanitizeTranslations(raw: unknown): { locale: string; name: string }[] 
     if (!locale || !name || seen.has(locale)) continue;
     seen.add(locale);
     out.push({ locale, name });
-  }
-  return out;
-}
-
-function sanitizePurchaseUnits(raw: unknown): { code: string; label: string; factorToBase: number }[] {
-  if (!Array.isArray(raw)) return [];
-  const out: { code: string; label: string; factorToBase: number }[] = [];
-  const seen = new Set<string>();
-  for (const u of raw) {
-    if (!u || typeof u !== 'object') continue;
-    const code = String((u as { code?: unknown }).code ?? '').trim();
-    const label = String((u as { label?: unknown }).label ?? '').trim();
-    const factor = Math.floor(Number((u as { factorToBase?: unknown }).factorToBase ?? 0));
-    if (!code || !label || !Number.isFinite(factor) || factor < 1 || seen.has(code)) continue;
-    seen.add(code);
-    out.push({ code, label, factorToBase: factor });
   }
   return out;
 }
@@ -159,7 +144,7 @@ router.get('/summary', ...requireAuthSameStore, async (req, res, next) => {
           translations: r.translations || [],
           name: r.translations?.[0]?.name || '',
           baseUnit: r.baseUnit || '',
-          purchaseUnits: r.purchaseUnits || [],
+          purchaseUnits: enrichPurchaseUnitsForResponse(r.purchaseUnits as SanitizedPurchaseUnit[]),
           currentQty: cur,
           reorderFrequencyDays: freq,
           dailyConsumption: Number(daily.toFixed(2)),
@@ -183,7 +168,13 @@ router.get('/', ...requireAuthSameStore, async (req, res, next) => {
     ensureRole(req, [Role.OWNER, Role.CASHIER]);
     const { RawMaterial } = rmModels();
     const rows = await RawMaterial.find({ storeId: req.storeId }).sort({ createdAt: -1 }).lean();
-    res.json(rows);
+    const enriched = rows.map((row) => ({
+      ...row,
+      purchaseUnits: enrichPurchaseUnitsForResponse(
+        (row as { purchaseUnits?: SanitizedPurchaseUnit[] }).purchaseUnits,
+      ),
+    }));
+    res.json(enriched);
   } catch (err) { next(err); }
 });
 
