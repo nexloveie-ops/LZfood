@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
+import { flushSync } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../../context/AuthContext';
 import { apiFetch } from '../../api/client';
@@ -78,6 +79,17 @@ export default function MenuItemManager() {
   const [showForm, setShowForm] = useState(false);
   const [editingDailySales, setEditingDailySales] = useState<{ daily: number; basis: 'history' | 'estimate' | 'mixed'; windowDays: number } | null>(null);
   const [rawMaterials, setRawMaterials] = useState<RawMaterialOption[]>([]);
+  const bomFlushersRef = useRef(new Set<() => number>());
+  const formSnapshotRef = useRef(form);
+
+  useEffect(() => {
+    formSnapshotRef.current = form;
+  }, [form]);
+
+  const registerBomFlush = useCallback((fn: () => number) => {
+    bomFlushersRef.current.add(fn);
+    return () => { bomFlushersRef.current.delete(fn); };
+  }, []);
 
   const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
   const authHeaders = { Authorization: `Bearer ${token}` };
@@ -255,12 +267,16 @@ export default function MenuItemManager() {
   };
 
   const handleSave = async () => {
-    for (let gi = 0; gi < form.optionGroups.length; gi++) {
-      if (!form.optionGroups[gi].choices?.length) {
+    flushSync(() => {
+      for (const flush of bomFlushersRef.current) flush();
+    });
+    const saveForm = formSnapshotRef.current;
+    for (let gi = 0; gi < saveForm.optionGroups.length; gi++) {
+      if (!saveForm.optionGroups[gi].choices?.length) {
         alert(`选项组 #${gi + 1} 须至少包含一个选项`);
         return;
       }
-      const g = form.optionGroups[gi];
+      const g = saveForm.optionGroups[gi];
       if (!g.required) {
         const minS = Math.max(0, Math.floor(Number(g.minSelect) || 0));
         const maxS = Math.max(0, Math.floor(Number(g.maxSelect) || 0));
@@ -293,8 +309,8 @@ export default function MenuItemManager() {
       }
     }
     /** A/B 互斥前端预校验：raw 模式禁止 inventoryTracked，finished 模式禁止所有 consumption 非空 */
-    const anyChoiceConsumption = form.optionGroups.some((g) => g.choices.some((c) => c.consumption.length > 0));
-    if (form.trackingMode === 'finished' && (form.itemConsumption.length > 0 || anyChoiceConsumption)) {
+    const anyChoiceConsumption = saveForm.optionGroups.some((g) => g.choices.some((c) => c.consumption.length > 0));
+    if (saveForm.trackingMode === 'finished' && (saveForm.itemConsumption.length > 0 || anyChoiceConsumption)) {
       alert(t('admin.bomMutexError', { defaultValue: 'A 模式与 B 模式互斥；请先清空 BoM 配置后再启用成品库存追踪' }));
       return;
     }
@@ -320,19 +336,19 @@ export default function MenuItemManager() {
                   reorderFrequencyDays: Math.max(1, Math.floor(form.invReorderFrequencyDays)),
                 }
               : undefined,
-            consumption: form.trackingMode === 'raw' ? cleanBom(form.itemConsumption) : [],
+            consumption: saveForm.trackingMode === 'raw' ? cleanBom(saveForm.itemConsumption) : [],
           }
         : {};
     const body = {
-      categoryId: form.categoryId, price: form.price,
-      calories: form.calories, avgWaitMinutes: form.avgWaitMinutes,
-      allergenIds: form.allergenIds,
+      categoryId: saveForm.categoryId, price: saveForm.price,
+      calories: saveForm.calories, avgWaitMinutes: saveForm.avgWaitMinutes,
+      allergenIds: saveForm.allergenIds,
       translations: [
-        { locale: 'zh-CN', name: form.nameZh, description: form.descZh },
-        { locale: 'en-US', name: form.nameEn, description: form.descEn },
+        { locale: 'zh-CN', name: saveForm.nameZh, description: saveForm.descZh },
+        { locale: 'en-US', name: saveForm.nameEn, description: saveForm.descEn },
       ],
       ...inventoryPayload,
-      optionGroups: form.optionGroups.map(g => ({
+      optionGroups: saveForm.optionGroups.map(g => ({
         ...(g._id ? { _id: g._id } : {}),
         required: g.required,
         ...(!g.required
@@ -465,26 +481,34 @@ export default function MenuItemManager() {
   }));
 
   const updateItemBom = (idx: number, patch: Partial<BoMEntryData>) =>
-    setForm((prev) => ({
-      ...prev,
-      itemConsumption: prev.itemConsumption.map((row, i) => (i === idx ? { ...row, ...patch } : row)),
-    }));
+    setForm((prev) => {
+      const next = {
+        ...prev,
+        itemConsumption: prev.itemConsumption.map((row, i) => (i === idx ? { ...row, ...patch } : row)),
+      };
+      formSnapshotRef.current = next;
+      return next;
+    });
   const addItemBom = () =>
     setForm((prev) => ({ ...prev, itemConsumption: [...prev.itemConsumption, { rawMaterialId: '', qty: 1 }] }));
   const removeItemBom = (idx: number) =>
     setForm((prev) => ({ ...prev, itemConsumption: prev.itemConsumption.filter((_, i) => i !== idx) }));
 
   const updateChoiceBom = (gi: number, ci: number, idx: number, patch: Partial<BoMEntryData>) =>
-    setForm((prev) => ({
-      ...prev,
-      optionGroups: prev.optionGroups.map((g, i) =>
-        i !== gi ? g : {
-          ...g,
-          choices: g.choices.map((c, j) =>
-            j !== ci ? c : { ...c, consumption: c.consumption.map((row, k) => (k === idx ? { ...row, ...patch } : row)) },
-          ),
-        }),
-    }));
+    setForm((prev) => {
+      const next = {
+        ...prev,
+        optionGroups: prev.optionGroups.map((g, i) =>
+          i !== gi ? g : {
+            ...g,
+            choices: g.choices.map((c, j) =>
+              j !== ci ? c : { ...c, consumption: c.consumption.map((row, k) => (k === idx ? { ...row, ...patch } : row)) },
+            ),
+          }),
+      };
+      formSnapshotRef.current = next;
+      return next;
+    });
   const addChoiceBom = (gi: number, ci: number) =>
     setForm((prev) => ({
       ...prev,
@@ -527,7 +551,12 @@ export default function MenuItemManager() {
             <option key={rm._id} value={rm._id}>{rmName(rm._id)}{rm.baseUnit ? ` (${rm.baseUnit})` : ''}</option>
           ))}
         </select>
-        <BomQtyInput value={row.qty} style={{ fontSize: 12 }} onCommit={(qty) => onChange({ qty })} />
+        <BomQtyInput
+          value={row.qty}
+          style={{ fontSize: 12 }}
+          registerFlush={registerBomFlush}
+          onCommit={(qty) => onChange({ qty })}
+        />
         <span style={{ fontSize: 11, color: 'var(--text-light)' }}>{r?.baseUnit || ''}</span>
         <button className="btn btn-ghost" style={{ fontSize: 14, color: 'var(--red-primary)' }} onClick={onRemove}>✕</button>
       </div>
