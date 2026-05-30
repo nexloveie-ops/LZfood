@@ -7,9 +7,16 @@ import {
   type CSSProperties,
   type ForwardedRef,
 } from 'react';
-import { commitConsumptionQtyDraft, isConsumptionQtyDraft } from '../../utils/consumptionQty';
+import { commitConsumptionQtyDraft, CONSUMPTION_QTY_MIN, isConsumptionQtyDraft } from '../../utils/consumptionQty';
 
 const COMPLETE_QTY = /^\d+(\.\d{1,2})?$/;
+
+/** 输入过程中可自动同步到 form；单独的「0」或「12.」等中间态不同步 */
+function shouldAutoCommitBomQty(draft: string): boolean {
+  if (!COMPLETE_QTY.test(draft)) return false;
+  if (draft === '0' || draft.endsWith('.')) return false;
+  return Number(draft) >= CONSUMPTION_QTY_MIN;
+}
 
 export type BomQtyInputHandle = {
   flush: () => number;
@@ -71,7 +78,7 @@ const BomQtyInput = forwardRef(function BomQtyInput(
         if (!isConsumptionQtyDraft(next)) return;
         setDraft(next);
         draftRef.current = next;
-        if (COMPLETE_QTY.test(next)) commit(next);
+        if (shouldAutoCommitBomQty(next)) commit(next);
       }}
       onBlur={() => {
         focusedRef.current = false;
