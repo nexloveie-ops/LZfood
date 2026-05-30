@@ -7,6 +7,8 @@ import { Role } from '../middleware/permissions';
 import { FeatureKeys, resolveStoreEffectiveFeatures } from '../utils/featureCatalog';
 import { aggregateRawMaterialDemand } from '../utils/inventoryService';
 import { sanitizePurchaseUnits, enrichPurchaseUnitsForResponse, type SanitizedPurchaseUnit } from '../utils/purchaseUnits';
+import { sumSaleConsumptionForDaily } from '../utils/rawMaterialDailyConsumption';
+import { roundConsumptionQty } from '../utils/consumptionQty';
 
 const router = Router();
 
@@ -55,6 +57,17 @@ function intOrThrow(raw: unknown, name: string, opts?: { min?: number; allowZero
   return n;
 }
 
+/** 基础单位库存数量：最多 2 位小数 */
+function baseQtyOrThrow(raw: unknown, name: string, opts?: { min?: number }): number {
+  const qty = roundConsumptionQty(raw);
+  if (!Number.isFinite(qty)) {
+    throw createAppError('VALIDATION_ERROR', `${name} 必须为数字（最多 2 位小数）`);
+  }
+  const min = opts?.min ?? 0;
+  if (qty < min) throw createAppError('VALIDATION_ERROR', `${name} 不能小于 ${min}`);
+  return qty;
+}
+
 function sanitizeTranslations(raw: unknown): { locale: string; name: string }[] {
   if (!Array.isArray(raw)) return [];
   const out: { locale: string; name: string }[] = [];
@@ -93,6 +106,7 @@ async function loadRawMaterialOrThrow(
  *
  * 注：与 MenuItem 不同——MenuItem 通过聚合 Order.items 计算份数，再 ×perServing；
  * RawMaterial 直接读 InventoryTxn 中带 rawMaterialId 的 sale 流水累加 |qty|。
+ * 同一 orderId 若既有 live 又有 backfill，只计 backfill，避免双计。
  */
 async function computeRawMaterialDaily(
   storeId: mongoose.Types.ObjectId,
@@ -101,11 +115,17 @@ async function computeRawMaterialDaily(
   const { InventoryTxn } = rmModels();
   const windowDays = 14;
   const since = new Date(Date.now() - windowDays * 24 * 3600 * 1000);
-  const rows = await InventoryTxn.aggregate([
-    { $match: { storeId, rawMaterialId, type: 'sale', createdAt: { $gte: since } } },
-    { $group: { _id: null, totalQty: { $sum: '$qty' } } },
-  ]);
-  const totalQty = Math.abs(Number(rows?.[0]?.totalQty || 0));
+  const txns = await InventoryTxn.find({
+    storeId,
+    rawMaterialId,
+    type: 'sale',
+    createdAt: { $gte: since },
+  })
+    .select('qty note orderId')
+    .lean();
+  const totalQty = sumSaleConsumptionForDaily(
+    txns as unknown as { qty: number; note?: string; orderId?: unknown }[],
+  );
   if (totalQty > 0) {
     return { daily: totalQty / windowDays, sampledDays: windowDays, basis: 'history' };
   }
@@ -270,7 +290,7 @@ router.post('/:id/init', ...requireAuthSameStore, async (req, res, next) => {
   try {
     ensureRole(req, [Role.OWNER, Role.CASHIER]);
     const id = ensureObjectId(req.params.id, '原材料 ID');
-    const qty = intOrThrow(req.body?.qty, 'qty', { allowZero: true });
+    const qty = baseQtyOrThrow(req.body?.qty, 'qty', { min: 0 });
     const note = String(req.body?.note ?? '').trim().slice(0, 200);
 
     const doc = await loadRawMaterialOrThrow(req.storeId!, id);
@@ -452,13 +472,12 @@ router.get('/:id/txns', ...requireAuthSameStore, async (req, res, next) => {
  *
  * - 仅写流水，不修改 `currentQty`（回填目的是为了让阈值算法有历史样本，而非「补还」库存）
  * - 已写过的回填会基于 `backfillCompletedAt` 防重复触发，但**幂等不是 schema 强约束**——
- *   如果想强幂等，应在写入前先 `deleteMany({ rawMaterialId, type: 'sale', note: 'backfill' })`
- *   再写新的（下面就是这么做的）
+ *   写入前先清 note=backfill，并对将写入回填的订单删除对应 live sale，避免与实时扣减双计
  */
 async function backfillRawMaterialConsumption(
   storeId: mongoose.Types.ObjectId,
   rawMaterialId: mongoose.Types.ObjectId,
-): Promise<{ scannedOrders: number; writtenTxns: number; totalQty: number }> {
+): Promise<{ scannedOrders: number; writtenTxns: number; totalQty: number; removedLiveTxns: number }> {
   const { Order, MenuItem, InventoryTxn, RawMaterial } = rmModels();
   const since = new Date(Date.now() - 14 * 24 * 3600 * 1000);
 
@@ -480,7 +499,7 @@ async function backfillRawMaterialConsumption(
   const valid = orders.filter((o) => !/hide/i.test(o.status || ''));
   if (valid.length === 0) {
     await RawMaterial.updateOne({ _id: rawMaterialId, storeId }, { $set: { backfillCompletedAt: new Date() } });
-    return { scannedOrders: 0, writtenTxns: 0, totalQty: 0 };
+    return { scannedOrders: 0, writtenTxns: 0, totalQty: 0, removedLiveTxns: 0 };
   }
 
   /** 把所有出现过的 menuItemId 一次性 fetch（含 optionGroups 与 consumption） */
@@ -518,11 +537,27 @@ async function backfillRawMaterialConsumption(
       createdAt: o.createdAt,
     });
   }
+
+  let removedLiveTxns = 0;
+  const backfillOrderIds = rows
+    .map((r) => r.orderId)
+    .filter((id): id is mongoose.Types.ObjectId => id instanceof mongoose.Types.ObjectId);
+  if (backfillOrderIds.length > 0) {
+    const del = await InventoryTxn.deleteMany({
+      storeId,
+      rawMaterialId,
+      type: 'sale',
+      orderId: { $in: backfillOrderIds },
+      note: { $ne: 'backfill' },
+    });
+    removedLiveTxns = del.deletedCount ?? 0;
+  }
+
   if (rows.length > 0) {
     await InventoryTxn.insertMany(rows, { ordered: false });
   }
   await RawMaterial.updateOne({ _id: rawMaterialId, storeId }, { $set: { backfillCompletedAt: new Date() } });
-  return { scannedOrders: valid.length, writtenTxns: rows.length, totalQty };
+  return { scannedOrders: valid.length, writtenTxns: rows.length, totalQty, removedLiveTxns };
 }
 
 /**

@@ -15,7 +15,7 @@ const ItemTranslationSchema = new mongoose.Schema({
 const ConsumptionSchema = new mongoose.Schema(
   {
     rawMaterialId: { type: mongoose.Schema.Types.ObjectId, ref: 'RawMaterial', required: true },
-    qty: { type: Number, required: true, min: 1 },
+    qty: { type: Number, required: true, min: 0.01 },
   },
   { _id: false },
 );

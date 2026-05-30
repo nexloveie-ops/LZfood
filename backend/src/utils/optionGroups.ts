@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import { createAppError } from '../middleware/errorHandler';
+import { isValidConsumptionQty, roundConsumptionQty } from './consumptionQty';
 
 export type LeanTranslation = { locale: string; name: string };
 export type LeanConsumption = { rawMaterialId: mongoose.Types.ObjectId | string; qty: number };
@@ -120,12 +121,12 @@ export function validateOptionGroups(optionGroups: unknown): asserts optionGroup
             throw createAppError('VALIDATION_ERROR', `optionGroups[${gi}].choices[${ci}].consumption[${xi}] is invalid`);
           }
           const rid = String((entry as { rawMaterialId?: unknown }).rawMaterialId ?? '');
-          const qty = Math.floor(Number((entry as { qty?: unknown }).qty));
+          const qty = roundConsumptionQty((entry as { qty?: unknown }).qty);
           if (!mongoose.Types.ObjectId.isValid(rid)) {
             throw createAppError('VALIDATION_ERROR', `optionGroups[${gi}].choices[${ci}].consumption[${xi}].rawMaterialId 无效`);
           }
-          if (!Number.isFinite(qty) || qty < 1) {
-            throw createAppError('VALIDATION_ERROR', `optionGroups[${gi}].choices[${ci}].consumption[${xi}].qty 必须为 ≥1 的整数`);
+          if (!isValidConsumptionQty(qty)) {
+            throw createAppError('VALIDATION_ERROR', `optionGroups[${gi}].choices[${ci}].consumption[${xi}].qty 必须为 ≥0.01 的数字（最多 2 位小数）`);
           }
           if (seenRid.has(rid)) {
             throw createAppError('VALIDATION_ERROR', `optionGroups[${gi}].choices[${ci}].consumption 中 rawMaterialId 重复：${rid}`);
@@ -189,10 +190,10 @@ export function cloneOptionGroupsPreservingSubdocIds(groups: LeanOptionGroup[]):
 function cloneConsumption(raw: LeanConsumption[] | undefined): LeanConsumption[] | undefined {
   if (!Array.isArray(raw) || raw.length === 0) return undefined;
   return raw
-    .filter((entry) => mongoose.Types.ObjectId.isValid(String(entry?.rawMaterialId)) && Number(entry?.qty) >= 1)
+    .filter((entry) => mongoose.Types.ObjectId.isValid(String(entry?.rawMaterialId)) && isValidConsumptionQty(roundConsumptionQty(entry?.qty)))
     .map((entry) => ({
       rawMaterialId: new mongoose.Types.ObjectId(String(entry.rawMaterialId)),
-      qty: Math.floor(Number(entry.qty)),
+      qty: roundConsumptionQty(entry.qty),
     }));
 }
 

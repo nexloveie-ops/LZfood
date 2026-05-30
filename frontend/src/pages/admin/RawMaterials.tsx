@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../../context/AuthContext';
 import { apiFetch } from '../../api/client';
@@ -7,6 +7,7 @@ import {
   formatPurchaseUnitOption,
   splitPurchaseUnitLabels,
 } from '../../utils/purchaseUnitLabel';
+import InventoryQtyInput, { type InventoryQtyInputHandle } from '../../components/admin/InventoryQtyInput';
 
 interface PurchaseUnit {
   code: string;
@@ -241,7 +242,7 @@ export default function RawMaterials() {
 
   const openAction = (kind: ActionKind, row: SummaryRow) => {
     setAction({ kind, row });
-    setActionQty(1);
+    setActionQty(kind === 'init' ? row.currentQty : 1);
     setActionDelta(0);
     setActionNote('');
     setActionUnitCode(row.purchaseUnits?.[0]?.code || '');
@@ -250,15 +251,16 @@ export default function RawMaterials() {
   };
   const closeAction = () => setAction(null);
 
-  const submitAction = async () => {
+  const submitAction = async (initQtyOverride?: number) => {
     if (!action) return;
     const { kind, row } = action;
     let url = '';
     let body: Record<string, unknown> = {};
     if (kind === 'init') {
-      if (actionQty < 0) { alert(t('cashier.invQtyMustBePositive')); return; }
+      const qty = initQtyOverride ?? actionQty;
+      if (qty < 0) { alert(t('cashier.invQtyMustBePositive')); return; }
       url = `/api/raw-materials/${row.rawMaterialId}/init`;
-      body = { qty: actionQty, note: actionNote };
+      body = { qty, note: actionNote };
     } else if (kind === 'restock') {
       if (actionQty <= 0) { alert(t('cashier.invQtyMustBePositive')); return; }
       if (!actionUnitCode) { alert(t('cashier.invSelectUnit')); return; }
@@ -563,11 +565,12 @@ function ActionModal(props: {
   actionSource: RestockSource; setActionSource: (s: RestockSource) => void;
   actionSupplierNote: string; setActionSupplierNote: (s: string) => void;
   onClose: () => void;
-  onSubmit: () => void;
+  onSubmit: (initQtyOverride?: number) => void;
   busy: boolean;
   t: TFunc;
 }) {
   const { kind, row, lang, t } = props;
+  const initQtyRef = useRef<InventoryQtyInputHandle | null>(null);
   const { primary } = pickNames(row.translations, lang, row.name);
   const isRestock = kind === 'restock';
   const isAdjust = kind === 'adjust';
@@ -612,9 +615,13 @@ function ActionModal(props: {
             <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 4 }}>
               {isInit ? t('cashier.invInitQtyLabel') : t('cashier.invQtyLabel')}
             </label>
-            <input className="input" type="number" min={isInit ? 0 : 1}
-              value={props.actionQty}
-              onChange={(e) => props.setActionQty(Math.max(isInit ? 0 : 1, Math.floor(Number(e.target.value) || 0)))} />
+            {isInit ? (
+              <InventoryQtyInput ref={initQtyRef} value={props.actionQty} onCommit={props.setActionQty} />
+            ) : (
+              <input className="input" type="number" min={1}
+                value={props.actionQty}
+                onChange={(e) => props.setActionQty(Math.max(1, Math.floor(Number(e.target.value) || 0)))} />
+            )}
             {isRestock && unit && (
               <div style={{ fontSize: 11, color: 'var(--text-light)', marginTop: 4 }}>
                 +{restockBaseDelta} {row.baseUnit}
@@ -670,7 +677,12 @@ function ActionModal(props: {
 
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
           <button className="btn btn-ghost" onClick={props.onClose}>✕</button>
-          <button className="btn btn-primary" onClick={props.onSubmit} disabled={props.busy}>
+          <button className="btn btn-primary"
+            onClick={() => {
+              const initQty = isInit ? initQtyRef.current?.flush() : undefined;
+              props.onSubmit(initQty);
+            }}
+            disabled={props.busy}>
             {props.busy ? '…' : t('admin.rawMaterialSave')}
           </button>
         </div>

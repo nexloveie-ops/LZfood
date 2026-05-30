@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../../context/AuthContext';
 import { apiFetch } from '../../api/client';
 import { formatPurchaseUnitOption, baseUnitDisplayLabel } from '../../utils/purchaseUnitLabel';
+import InventoryQtyInput, { type InventoryQtyInputHandle } from '../../components/admin/InventoryQtyInput';
 
 interface PurchaseUnit { code: string; label: string; factorToBase: number; translations?: { locale: string; label: string }[]; }
 interface Translation { locale: string; name: string; }
@@ -57,6 +58,7 @@ export default function RawMaterialCashierPanel() {
   const [unitCode, setUnitCode] = useState<string>('');
   const [source, setSource] = useState<RestockSource>('');
   const [supplierNote, setSupplierNote] = useState<string>('');
+  const initQtyRef = useRef<InventoryQtyInputHandle | null>(null);
 
   const jsonHeaders = useMemo(() => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }), [token]);
   const authHeaders = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
@@ -97,7 +99,7 @@ export default function RawMaterialCashierPanel() {
 
   const openAction = (kind: ActionKind, row: SummaryRow) => {
     setAction({ kind, row });
-    setQty(1);
+    setQty(kind === 'init' ? row.currentQty : 1);
     setNote('');
     setUnitCode(row.purchaseUnits?.[0]?.code || '');
     setSource('');
@@ -121,8 +123,9 @@ export default function RawMaterialCashierPanel() {
       url = `/api/raw-materials/${row.rawMaterialId}/waste`;
       body = { qty, note };
     } else {
+      const initQty = kind === 'init' ? (initQtyRef.current?.flush() ?? qty) : qty;
       url = `/api/raw-materials/${row.rawMaterialId}/init`;
-      body = { qty, note };
+      body = { qty: initQty, note };
     }
     setBusy(true);
     try {
@@ -233,10 +236,14 @@ export default function RawMaterialCashierPanel() {
               <label style={{ fontSize: 12, color: 'var(--text-light)', display: 'block', marginBottom: 4 }}>
                 {action.kind === 'init' ? t('cashier.invInitQtyLabel') : t('cashier.invQtyLabel')}
               </label>
-              <input className="input" type="number" min={action.kind === 'init' ? 0 : 1}
-                value={qty}
-                onChange={(e) => setQty(Math.max(action.kind === 'init' ? 0 : 1, Math.floor(Number(e.target.value) || 0)))}
-                style={{ width: '100%' }} />
+              {action.kind === 'init' ? (
+                <InventoryQtyInput ref={initQtyRef} value={qty} onCommit={setQty} style={{ width: '100%' }} />
+              ) : (
+                <input className="input" type="number" min={1}
+                  value={qty}
+                  onChange={(e) => setQty(Math.max(1, Math.floor(Number(e.target.value) || 0)))}
+                  style={{ width: '100%' }} />
+              )}
               {action.kind === 'restock' && unitCode && (() => {
                 const u = action.row.purchaseUnits.find((u2) => u2.code === unitCode);
                 if (!u) return null;
@@ -281,7 +288,8 @@ export default function RawMaterialCashierPanel() {
               <textarea className="input" rows={2} value={note} onChange={(e) => setNote(e.target.value)} style={{ width: '100%' }} />
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
-              <button className="btn btn-primary" onClick={submit} disabled={busy} style={{ flex: 1 }}>
+              <button className="btn btn-primary"
+                onClick={submit} disabled={busy} style={{ flex: 1 }}>
                 {busy ? '…' : t('common.confirm')}
               </button>
               <button className="btn btn-outline" onClick={close} style={{ flex: 1 }}>{t('common.cancel')}</button>

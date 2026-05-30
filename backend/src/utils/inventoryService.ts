@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import { getModels } from '../getModels';
 import { createAppError } from '../middleware/errorHandler';
+import { roundConsumptionQty } from './consumptionQty';
 
 /**
  * 库存追踪共享业务逻辑（订单流程 + 收银/管理 API 共用）。
@@ -326,8 +327,8 @@ export function aggregateRawMaterialDemand(
     /** 菜品本体 BoM */
     for (const c of item.consumption || []) {
       const rid = String(c.rawMaterialId);
-      const add = qty * Math.max(0, Math.floor(Number(c.qty) || 0));
-      if (add > 0) out.set(rid, (out.get(rid) || 0) + add);
+      const add = roundConsumptionQty(qty * Math.max(0, roundConsumptionQty(c.qty) || 0));
+      if (add > 0) out.set(rid, roundConsumptionQty((out.get(rid) || 0) + add));
     }
 
     /** 每个选中选项的 BoM（按名查 choice） */
@@ -336,8 +337,8 @@ export function aggregateRawMaterialDemand(
       const cons = findChoiceConsumption(item, sel.groupName, sel.choiceName);
       for (const c of cons) {
         const rid = String(c.rawMaterialId);
-        const add = qty * Math.max(0, Math.floor(Number(c.qty) || 0));
-        if (add > 0) out.set(rid, (out.get(rid) || 0) + add);
+        const add = roundConsumptionQty(qty * Math.max(0, roundConsumptionQty(c.qty) || 0));
+        if (add > 0) out.set(rid, roundConsumptionQty((out.get(rid) || 0) + add));
       }
     }
   }
@@ -360,8 +361,9 @@ export function findInsufficientRawMaterials(
       continue;
     }
     if (r.enabled === false) continue;
-    const avail = Math.max(0, Math.floor(Number(r.currentQty) || 0));
-    if (avail < need) {
+    const avail = Math.max(0, roundConsumptionQty(r.currentQty) || 0);
+    const needRounded = roundConsumptionQty(need) || 0;
+    if (avail < needRounded) {
       bad.push({
         rawMaterialId: rid,
         needed: need,

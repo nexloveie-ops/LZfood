@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { roundConsumptionQty } from './consumptionQty';
 
 type ConsumptionRow = { rawMaterialId?: unknown; qty?: unknown };
 type ChoiceRow = { translations?: { locale?: string; name?: string }[]; consumption?: ConsumptionRow[] };
@@ -49,7 +50,7 @@ export function bomLinkSignature(
   const parts: string[] = [];
   for (const c of itemConsumption || []) {
     const rid = String(c.rawMaterialId ?? '');
-    const qty = Math.max(0, Math.floor(Number(c.qty) || 0));
+    const qty = Math.max(0, roundConsumptionQty(c.qty) || 0);
     if (!mongoose.Types.ObjectId.isValid(rid) || qty <= 0) continue;
     parts.push(`i:${rid}:${qty}`);
   }
@@ -59,7 +60,7 @@ export function bomLinkSignature(
       const ck = choiceKey(ch);
       for (const x of ch.consumption || []) {
         const rid = String(x.rawMaterialId ?? '');
-        const qty = Math.max(0, Math.floor(Number(x.qty) || 0));
+        const qty = Math.max(0, roundConsumptionQty(x.qty) || 0);
         if (!mongoose.Types.ObjectId.isValid(rid) || qty <= 0) continue;
         parts.push(`o:${gk}:${ck}:${rid}:${qty}`);
       }

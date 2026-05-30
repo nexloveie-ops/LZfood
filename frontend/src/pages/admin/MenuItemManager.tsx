@@ -6,6 +6,8 @@ import {
   buildPurchaseUnitPayload,
   splitPurchaseUnitLabels,
 } from '../../utils/purchaseUnitLabel';
+import { CONSUMPTION_QTY_MIN, roundConsumptionQty } from '../../utils/consumptionQty';
+import BomQtyInput from '../../components/admin/BomQtyInput';
 
 interface Translation { locale: string; name: string; description?: string; }
 interface Category { _id: string; sortOrder?: number; translations: Translation[]; }
@@ -181,9 +183,9 @@ export default function MenuItemManager() {
               .filter((x) => x && typeof x === 'object')
               .map((x) => ({
                 rawMaterialId: String((x as { rawMaterialId?: unknown }).rawMaterialId ?? ''),
-                qty: Math.max(1, Math.floor(Number((x as { qty?: unknown }).qty) || 0)),
+                qty: roundConsumptionQty((x as { qty?: unknown }).qty),
               }))
-              .filter((x) => x.rawMaterialId && x.qty >= 1),
+              .filter((x) => x.rawMaterialId && Number.isFinite(x.qty) && x.qty >= CONSUMPTION_QTY_MIN),
           })),
         };
       });
@@ -192,9 +194,9 @@ export default function MenuItemManager() {
         .filter((x) => x && typeof x === 'object')
         .map((x) => ({
           rawMaterialId: String(x.rawMaterialId || ''),
-          qty: Math.max(1, Math.floor(Number(x.qty) || 0)),
+          qty: roundConsumptionQty(x.qty),
         }))
-        .filter((x) => x.rawMaterialId && x.qty >= 1);
+        .filter((x) => x.rawMaterialId && Number.isFinite(x.qty) && x.qty >= CONSUMPTION_QTY_MIN);
       const initialMode: TrackingMode = item.inventoryTracked
         ? 'finished'
         : (itemConsumption.length > 0 || optionGroups.some((g) => g.choices.some((c) => c.consumption.length > 0)))
@@ -298,8 +300,8 @@ export default function MenuItemManager() {
     }
 
     const cleanBom = (rows: BoMEntryData[]): BoMEntryData[] => rows
-      .map((r) => ({ rawMaterialId: r.rawMaterialId.trim(), qty: Math.floor(Number(r.qty) || 0) }))
-      .filter((r) => r.rawMaterialId && r.qty >= 1);
+      .map((r) => ({ rawMaterialId: r.rawMaterialId.trim(), qty: roundConsumptionQty(r.qty) }))
+      .filter((r) => r.rawMaterialId && Number.isFinite(r.qty) && r.qty >= CONSUMPTION_QTY_MIN);
 
     const inventoryPayload =
       canTrackInventory && editingId
@@ -525,8 +527,7 @@ export default function MenuItemManager() {
             <option key={rm._id} value={rm._id}>{rmName(rm._id)}{rm.baseUnit ? ` (${rm.baseUnit})` : ''}</option>
           ))}
         </select>
-        <input className="input" type="number" min={1} style={{ fontSize: 12 }} value={row.qty}
-          onChange={(e) => onChange({ qty: Math.max(1, Math.floor(Number(e.target.value) || 1)) })} />
+        <BomQtyInput value={row.qty} style={{ fontSize: 12 }} onCommit={(qty) => onChange({ qty })} />
         <span style={{ fontSize: 11, color: 'var(--text-light)' }}>{r?.baseUnit || ''}</span>
         <button className="btn btn-ghost" style={{ fontSize: 14, color: 'var(--red-primary)' }} onClick={onRemove}>✕</button>
       </div>

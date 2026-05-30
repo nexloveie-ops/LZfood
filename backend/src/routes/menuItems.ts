@@ -18,6 +18,7 @@ import {
   rawMaterialIdsNeedingBackfillOnBoMChange,
 } from '../utils/rawMaterialBoMBackfill';
 import { sanitizePurchaseUnits, enrichPurchaseUnitsForResponse } from '../utils/purchaseUnits';
+import { isValidConsumptionQty, roundConsumptionQty } from '../utils/consumptionQty';
 
 function menuModels() {
   return getModels() as {
@@ -29,7 +30,7 @@ function menuModels() {
 /**
  * 把 req.body.consumption（菜品级 BoM）洗成可写入 schema 的数组。
  * - 非数组 / undefined → 返回 []
- * - 每条要求合法 ObjectId 与 ≥1 的 qty；不合法直接抛 VALIDATION_ERROR
+ * - 每条要求合法 ObjectId 与 ≥0.01 的 qty（最多 2 位小数）；不合法直接抛 VALIDATION_ERROR
  * - 同一 rawMaterialId 重复 → 抛错（前端应合并）
  */
 function sanitizeConsumption(raw: unknown): { rawMaterialId: mongoose.Types.ObjectId; qty: number }[] {
@@ -45,12 +46,12 @@ function sanitizeConsumption(raw: unknown): { rawMaterialId: mongoose.Types.Obje
       throw createAppError('VALIDATION_ERROR', `consumption[${i}] 无效`);
     }
     const rid = String(row.rawMaterialId ?? '');
-    const qty = Math.floor(Number(row.qty));
+    const qty = roundConsumptionQty(row.qty);
     if (!mongoose.Types.ObjectId.isValid(rid)) {
       throw createAppError('VALIDATION_ERROR', `consumption[${i}].rawMaterialId 无效`);
     }
-    if (!Number.isFinite(qty) || qty < 1) {
-      throw createAppError('VALIDATION_ERROR', `consumption[${i}].qty 必须为 ≥1 的整数`);
+    if (!isValidConsumptionQty(qty)) {
+      throw createAppError('VALIDATION_ERROR', `consumption[${i}].qty 必须为 ≥0.01 的数字（最多 2 位小数）`);
     }
     if (seen.has(rid)) {
       throw createAppError('VALIDATION_ERROR', `consumption 中 rawMaterialId 重复：${rid}`);
