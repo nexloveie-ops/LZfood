@@ -3,6 +3,10 @@ import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import type { CartItemOption } from '../../context/CartContext';
 import { getOptionalMinSelect, getOptionalMaxSelect, optionalMaxReached, optionalSelectionValid } from '../../utils/optionGroupLimits';
+import {
+  type BomAvailabilitySnapshot,
+  isModalChoiceSelectable,
+} from '../../utils/bomAvailability';
 
 interface OptionChoice {
   _id: string;
@@ -30,9 +34,17 @@ interface Props {
   onClose: () => void;
   /** customer: 底部窄 sheet；cashier: 居中宽面板，选项多列排布 */
   layout?: 'customer' | 'cashier';
+  /** BoM 库存：选选项时禁用缺料 choice */
+  menuItemId?: string;
+  bomSnapshot?: BomAvailabilitySnapshot | null;
+  /** 购物车/当前单已占用原材料（不含本 modal） */
+  reservedDemand?: Record<string, number>;
 }
 
-export default function OptionSelectModal({ itemName, price, optionGroups, onConfirm, onClose, layout = 'customer' }: Props) {
+export default function OptionSelectModal({
+  itemName, price, optionGroups, onConfirm, onClose, layout = 'customer',
+  menuItemId, bomSnapshot, reservedDemand = {},
+}: Props) {
   const { t, i18n } = useTranslation();
   const lang = i18n.language;
 
@@ -54,7 +66,27 @@ export default function OptionSelectModal({ itemName, price, optionGroups, onCon
     return optionalSelectionValid(g, n);
   });
 
+  const itemBom = menuItemId && bomSnapshot?.enabled ? bomSnapshot.items[menuItemId] : undefined;
+  const materials = bomSnapshot?.enabled ? bomSnapshot.materials : {};
+
+  const isChoiceDisabled = (groupId: string, choiceId: string, alreadySelected: boolean): boolean => {
+    if (alreadySelected) return false;
+    if (!itemBom || !bomSnapshot?.enabled) return false;
+    return !isModalChoiceSelectable(
+      optionGroups,
+      singleSelections,
+      multiSelections,
+      groupId,
+      choiceId,
+      itemBom,
+      materials,
+      reservedDemand,
+    );
+  };
+
   const toggleSingle = (groupId: string, choiceId: string) => {
+    const selected = singleSelections[groupId] === choiceId;
+    if (!selected && isChoiceDisabled(groupId, choiceId, false)) return;
     setSingleSelections(prev => {
       const next = { ...prev };
       if (next[groupId] === choiceId) delete next[groupId];
@@ -72,6 +104,7 @@ export default function OptionSelectModal({ itemName, price, optionGroups, onCon
         return { ...prev, [groupId]: current.filter((id) => id !== choiceId) };
       }
       if (optionalMaxReached(group, current.length)) return prev;
+      if (isChoiceDisabled(groupId, choiceId, false)) return prev;
       return { ...prev, [groupId]: [...current, choiceId] };
     });
   };
@@ -263,27 +296,44 @@ export default function OptionSelectModal({ itemName, price, optionGroups, onCon
                   const selected = group.required
                     ? singleSelections[group._id] === choice._id
                     : (multiSelections[group._id] || []).includes(choice._id);
+                  const disabled = isChoiceDisabled(group._id, choice._id, selected);
                   return (
-                    <div key={choice._id} onClick={() => group.required ? toggleSingle(group._id, choice._id) : toggleMulti(group._id, choice._id)}
+                    <div key={choice._id}
+                      onClick={() => {
+                        if (disabled) return;
+                        group.required ? toggleSingle(group._id, choice._id) : toggleMulti(group._id, choice._id);
+                      }}
                       style={{
                         display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-                        padding: '10px 8px', borderRadius: 10, cursor: 'pointer', transition: 'all 0.12s',
+                        padding: '10px 8px', borderRadius: 10,
+                        cursor: disabled ? 'not-allowed' : 'pointer',
+                        transition: 'all 0.12s',
                         border: selected ? '2px solid var(--red-primary)' : '1px solid var(--border, #ddd)',
-                        background: selected ? 'var(--red-light, #FFF5F5)' : 'var(--bg, #fafafa)',
+                        background: disabled
+                          ? 'var(--bg, #eee)'
+                          : selected ? 'var(--red-light, #FFF5F5)' : 'var(--bg, #fafafa)',
                         textAlign: 'center', minHeight: 52,
                         minWidth: 0,
+                        opacity: disabled ? 0.45 : 1,
                       }}>
                       <div
                         style={{
                           fontSize: 13,
                           fontWeight: selected ? 700 : 500,
                           lineHeight: 1.35,
-                          color: selected ? 'var(--red-primary)' : 'var(--text-dark)',
+                          color: disabled
+                            ? 'var(--text-light, #999)'
+                            : selected ? 'var(--red-primary)' : 'var(--text-dark)',
                           wordBreak: 'break-word',
                           textAlign: 'center',
                         }}
                       >
                         {getName(choice.translations)}
+                        {disabled && (
+                          <div style={{ fontSize: 10, marginTop: 4, color: 'var(--text-light)' }}>
+                            {t('customer.bomChoiceUnavailable', { defaultValue: '缺货' })}
+                          </div>
+                        )}
                         {((choice.extraPrice || 0) > 0
                           || (choice.originalPrice != null && choice.originalPrice > (choice.extraPrice || 0))) && (
                           <span style={{ whiteSpace: 'nowrap', fontWeight: 600, color: 'var(--red-primary)', fontSize: 12 }}>

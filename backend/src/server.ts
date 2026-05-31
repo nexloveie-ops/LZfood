@@ -13,6 +13,7 @@ import { getFileStream, USE_GCS } from './storage';
 import authRouter from './routes/auth';
 import menuCategoriesRouter from './routes/menuCategories';
 import menuItemsRouter from './routes/menuItems';
+import menuBomAvailabilityRouter from './routes/menuBomAvailability';
 import allergensRouter from './routes/allergens';
 import { createOrdersRouter } from './routes/orders';
 import { createCheckoutRouter } from './routes/checkout';
@@ -104,6 +105,7 @@ app.use('/api/menu/categories', menuCategoriesRouter);
 
 // Menu items routes
 app.use('/api/menu/items', menuItemsRouter);
+app.use('/api/menu/bom-availability', menuBomAvailabilityRouter);
 
 // Allergen routes
 app.use('/api/allergens', allergensRouter);

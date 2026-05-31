@@ -26,6 +26,12 @@ import {
   parseDeliveryFeeRulesJson,
   type DeliveryFeeTier,
 } from '../../utils/deliveryFeeRules';
+import {
+  type BomAvailabilitySnapshot,
+  computeCartRawDemand,
+  emptyBomSnapshot,
+  isItemServingBlocked,
+} from '../../utils/bomAvailability';
 
 interface Translation { locale: string; name: string; description?: string; }
 interface Category { _id: string; sortOrder: number; translations: Translation[]; }
@@ -256,48 +262,65 @@ export default function CashierOrder() {
   const [categories, setCategories] = useState<Category[]>(() => (initialMenuCache?.categories as Category[]) ?? []);
   const [menuItems, setMenuItems] = useState<MenuItem[]>(() => (initialMenuCache?.menuItems as MenuItem[]) ?? []);
   const [invSummary, setInvSummary] = useState<Map<string, InventorySummaryRow>>(new Map());
+  const [bomSnapshot, setBomSnapshot] = useState<BomAvailabilitySnapshot>(emptyBomSnapshot());
+
+  const fetchBomSnapshot = useCallback(async () => {
+    try {
+      const res = await apiFetch('/api/menu/bom-availability');
+      if (!res.ok) {
+        setBomSnapshot(emptyBomSnapshot());
+        return;
+      }
+      const data = (await res.json()) as BomAvailabilitySnapshot;
+      setBomSnapshot(data?.enabled ? data : emptyBomSnapshot());
+    } catch {
+      setBomSnapshot(emptyBomSnapshot());
+    }
+  }, []);
 
   /**
    * 就地 patch 三处缓存：menuItems state、会话缓存、invSummary（颜色 / 剩余份数同步）。
    * 由下单 / 加菜成功后的 `inventoryUpdates` 调用；任何 currentQty 变化都应走这里。
    */
   const applyInventoryUpdates = useCallback((updates: Array<{ menuItemId: string; currentQty: number; perServing?: number; baseUnit?: string }>) => {
-    if (!Array.isArray(updates) || updates.length === 0) return;
-    setMenuItems(prev => prev.map(it => {
-      const u = updates.find(x => x.menuItemId === it._id);
-      if (!u) return it;
-      return {
-        ...it,
-        inventory: {
-          ...(it.inventory || {}),
-          currentQty: Math.max(0, Math.floor(Number(u.currentQty) || 0)),
-        },
-      };
-    }));
-    setInvSummary(prev => {
-      const next = new Map(prev);
+    if (Array.isArray(updates) && updates.length > 0) {
+      setMenuItems(prev => prev.map(it => {
+        const u = updates.find(x => x.menuItemId === it._id);
+        if (!u) return it;
+        return {
+          ...it,
+          inventory: {
+            ...(it.inventory || {}),
+            currentQty: Math.max(0, Math.floor(Number(u.currentQty) || 0)),
+          },
+        };
+      }));
+      setInvSummary(prev => {
+        const next = new Map(prev);
+        for (const u of updates) {
+          const old = next.get(u.menuItemId);
+          const perServing = Math.max(1, Math.floor(Number(u.perServing ?? old?.remainingServings ? 1 : 1) || 1));
+          const cur = Math.max(0, Math.floor(Number(u.currentQty) || 0));
+          const remainingServings = Math.floor(cur / perServing);
+          let color: 'red' | 'orange' | 'green' = old?.color ?? 'green';
+          if (cur <= 0 || remainingServings <= 0) color = 'red';
+          else if (old && old.color === 'red') color = 'green';
+          next.set(u.menuItemId, {
+            menuItemId: u.menuItemId,
+            color,
+            currentQty: cur,
+            remainingServings,
+          });
+        }
+        return next;
+      });
+      const cacheKey = cashierMenuSessionCacheKey(getConfiguredStoreSlug(), lang);
       for (const u of updates) {
-        const old = next.get(u.menuItemId);
-        const perServing = Math.max(1, Math.floor(Number(u.perServing ?? old?.remainingServings ? 1 : 1) || 1));
-        const cur = Math.max(0, Math.floor(Number(u.currentQty) || 0));
-        const remainingServings = Math.floor(cur / perServing);
-        let color: 'red' | 'orange' | 'green' = old?.color ?? 'green';
-        if (cur <= 0 || remainingServings <= 0) color = 'red';
-        else if (old && old.color === 'red') color = 'green';
-        next.set(u.menuItemId, {
-          menuItemId: u.menuItemId,
-          color,
-          currentQty: cur,
-          remainingServings,
-        });
+        patchCashierMenuInventoryQty(cacheKey, u.menuItemId, u.currentQty);
       }
-      return next;
-    });
-    const cacheKey = cashierMenuSessionCacheKey(getConfiguredStoreSlug(), lang);
-    for (const u of updates) {
-      patchCashierMenuInventoryQty(cacheKey, u.menuItemId, u.currentQty);
     }
-  }, [lang]);
+    void fetchBomSnapshot();
+  }, [lang, fetchBomSnapshot]);
   const [activeCat, setActiveCat] = useState(() => initialMenuCache?.categories[0]?._id ?? '');
   const [search, setSearch] = useState('');
   const [order, setOrder] = useState<OrderLine[]>([]);
@@ -722,7 +745,8 @@ export default function CashierOrder() {
 
   useEffect(() => {
     void fetchMenu();
-  }, [fetchMenu]);
+    void fetchBomSnapshot();
+  }, [fetchMenu, fetchBomSnapshot]);
 
   useEffect(() => {
     if (!canInventoryTracking || !token) {
@@ -970,10 +994,37 @@ export default function CashierOrder() {
     return { remaining, blocked: remaining <= 0, color };
   };
 
+  const orderBomLines = useMemo(
+    () => order.map((o) => ({
+      menuItemId: o.menuItemId,
+      quantity: 1,
+      options: (o.options || [])
+        .filter((opt) => !opt.isAdHoc && opt.groupId && opt.choiceId)
+        .map((opt) => ({ groupId: opt.groupId!, choiceId: opt.choiceId! })),
+    })),
+    [order],
+  );
+
+  const orderBomDemand = useMemo(
+    () => (bomSnapshot.enabled ? computeCartRawDemand(orderBomLines, bomSnapshot) : {}),
+    [orderBomLines, bomSnapshot],
+  );
+
+  const computeBomItemBlocked = (item: MenuItem): boolean => {
+    if (!bomSnapshot.enabled) return false;
+    const itemBom = bomSnapshot.items[item._id];
+    if (!itemBom || itemBom.itemConsumption.length === 0) return false;
+    return isItemServingBlocked(itemBom, bomSnapshot.materials, orderBomDemand);
+  };
+
   const addToOrder = (item: MenuItem) => {
     if (item.isSoldOut) return;
     const av = computeInvAvailability(item);
     if (av.blocked) {
+      alert(t('cashier.invOutOfStockNotice', { defaultValue: '该菜品库存不足' }));
+      return;
+    }
+    if (computeBomItemBlocked(item)) {
       alert(t('cashier.invOutOfStockNotice', { defaultValue: '该菜品库存不足' }));
       return;
     }
@@ -1098,7 +1149,8 @@ export default function CashierOrder() {
   const renderMenuItemCard = (item: MenuItem) => {
     const qty = getItemCount(item._id);
     const av = computeInvAvailability(item);
-    const invBlocked = av.blocked;
+    const bomBlocked = computeBomItemBlocked(item);
+    const invBlocked = av.blocked || bomBlocked;
     const invBorder = av.color === 'red' ? '2px solid #C62828'
       : av.color === 'orange' ? '2px solid #E65100'
       : null;
@@ -2808,6 +2860,9 @@ export default function CashierOrder() {
           itemName={getName(optionModal.translations)}
           price={optionModal.price}
           optionGroups={optionModal.optionGroups}
+          menuItemId={optionModal._id}
+          bomSnapshot={bomSnapshot}
+          reservedDemand={orderBomDemand}
           layout="cashier"
           onConfirm={(opts) => addToOrderWithOptions(optionModal, opts)}
           onClose={() => setOptionModal(null)}

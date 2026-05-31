@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSearchParams, useNavigate, useParams } from 'react-router-dom';
 import { useCart } from '../../context/CartContext';
@@ -9,6 +9,10 @@ import { useRestaurantConfig } from '../../hooks/useRestaurantConfig';
 import { useBusinessStatus } from '../../hooks/useBusinessStatus';
 import { apiFetch } from '../../api/client';
 import BannerPlatformCredit from '../../components/customer/BannerPlatformCredit';
+import {
+  type BomAvailabilitySnapshot,
+  emptyBomSnapshot,
+} from '../../utils/bomAvailability';
 
 interface Category { _id: string; sortOrder: number; translations: { locale: string; name: string }[]; }
 interface AllergenData { _id: string; icon: string; }
@@ -37,6 +41,7 @@ export default function MenuView({ storeFrontEmbed = false }: { storeFrontEmbed?
   const canDelivery = deliveryEnabled !== false;
   const [categories, setCategories] = useState<Category[]>([]);
   const [items, setItems] = useState<MenuItemData[]>([]);
+  const [bomSnapshot, setBomSnapshot] = useState<BomAvailabilitySnapshot>(emptyBomSnapshot());
   const [allergens, setAllergens] = useState<AllergenData[]>([]);
   const [activeCategory, setActiveCategory] = useState<string>('');
   const lang = i18n.language;
@@ -111,6 +116,14 @@ export default function MenuView({ storeFrontEmbed = false }: { storeFrontEmbed?
       .then((r) => r.json())
       .then((data: unknown) => setItems(asArray<MenuItemData>(data)))
       .catch(() => {});
+    apiFetch('/api/menu/bom-availability')
+      .then((r) => (r.ok ? r.json() : emptyBomSnapshot()))
+      .then((data: unknown) => setBomSnapshot(
+        data && typeof data === 'object' && 'enabled' in (data as object)
+          ? (data as BomAvailabilitySnapshot)
+          : emptyBomSnapshot(),
+      ))
+      .catch(() => setBomSnapshot(emptyBomSnapshot()));
     apiFetch('/api/allergens')
       .then((r) => r.json())
       .then((data: unknown) => setAllergens(asArray<AllergenData>(data)))
@@ -210,6 +223,15 @@ export default function MenuView({ storeFrontEmbed = false }: { storeFrontEmbed?
 
     lastScrollY.current = y;
   }, []);
+
+  const cartBomLines = useMemo(
+    () => cartItems.map((i) => ({
+      menuItemId: i.menuItemId,
+      quantity: i.quantity,
+      options: i.options?.map((o) => ({ groupId: o.groupId, choiceId: o.choiceId })),
+    })),
+    [cartItems],
+  );
 
   // Get cart quantity for a menu item
   const getCartQty = (menuItemId: string) => cartItems.filter(ci => ci.menuItemId === menuItemId).reduce((s, ci) => s + ci.quantity, 0);
@@ -470,6 +492,8 @@ export default function MenuView({ storeFrontEmbed = false }: { storeFrontEmbed?
                     decreaseDisabled={getCartQty(item._id) > 0 && reducibleQtyForMenuItem(item._id) === 0}
                     onAdd={addItem}
                     onDecrease={handleDecrease}
+                    bomSnapshot={bomSnapshot}
+                    cartBomLines={cartBomLines}
                   />
                 )) : (
                   <div style={{ textAlign: 'center', padding: 24, color: 'var(--text-light, #999)', fontSize: 13 }}>

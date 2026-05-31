@@ -516,13 +516,26 @@ export function createOrdersRouter(io: SocketIOServer): Router {
         menuItems as unknown as Parameters<typeof deductStockForOrderCreation>[2],
       );
 
-      /** B 模式（原材料 BoM）扣减：A 模式成功后进入。失败时回滚 A + B */
+      /** B 模式（原材料 BoM）扣减：用已解析选项快照的 orderItems，与改单路径一致 */
+      const bomLinesForDeduction = orderItems
+        .filter((oi) => oi.lineKind !== 'delivery_fee')
+        .map((oi) => ({
+          menuItemId: oi.menuItemId,
+          quantity: oi.quantity,
+          lineKind: oi.lineKind,
+          selectedOptions: (oi.selectedOptions || [])
+            .filter((s) => (s as { source?: string }).source !== 'adHoc')
+            .map((s) => ({
+              groupName: s.groupName,
+              choiceName: s.choiceName,
+            })),
+        }));
       let rawDeduction: Awaited<ReturnType<typeof deductRawMaterialsForOrderCreation>>
         = { demand: new Map(), snapshots: new Map() };
       try {
         rawDeduction = await deductRawMaterialsForOrderCreation(
           req.storeId!,
-          items as unknown as Parameters<typeof deductRawMaterialsForOrderCreation>[1],
+          bomLinesForDeduction as unknown as Parameters<typeof deductRawMaterialsForOrderCreation>[1],
           menuItems as unknown as Parameters<typeof deductRawMaterialsForOrderCreation>[2],
         );
       } catch (rawErr) {

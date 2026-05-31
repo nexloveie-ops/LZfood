@@ -249,11 +249,13 @@ export function diffServings(
 export type Consumption = { rawMaterialId: mongoose.Types.ObjectId | string; qty: number };
 
 export type ChoiceForBom = {
+  _id?: mongoose.Types.ObjectId;
   translations?: { locale: string; name: string }[];
   consumption?: Consumption[];
 };
 
 export type OptionGroupForBom = {
+  _id?: mongoose.Types.ObjectId;
   translations?: { locale: string; name: string }[];
   choices?: ChoiceForBom[];
 };
@@ -265,7 +267,12 @@ export type MenuItemForBom = {
 };
 
 export type OrderItemForBom = OrderItemForInventory & {
-  selectedOptions?: { groupName?: string; choiceName?: string }[];
+  selectedOptions?: {
+    groupId?: string;
+    choiceId?: string;
+    groupName?: string;
+    choiceName?: string;
+  }[];
 };
 
 export type RawMaterialForCheck = {
@@ -281,17 +288,45 @@ export interface RawMaterialDemand {
   baseQty: number;
 }
 
+type SelectedOptForBom = {
+  groupId?: string;
+  choiceId?: string;
+  groupName?: string;
+  choiceName?: string;
+};
+
 /**
- * 在一个 MenuItem 的 optionGroups 里按 group/choice 名字（任一 locale 翻译命中即可）找到 BoM。
- * 订单 line 的 `selectedOptions[]` 只快照了名字，所以这里只能按名匹配；保存 BoM 时确保每个 group 内
- * choice 名字唯一即可（前端 schema 验证已要求）。
+ * 在 optionGroups 里解析选中项的 BoM：优先 groupId/choiceId（下单 POST body），
+ * 否则按 group/choice 名字（订单快照、改单 payload）。
  */
-function findChoiceConsumption(
+function findChoiceConsumptionForSelection(
   item: MenuItemForBom,
-  groupName: string,
-  choiceName: string,
+  sel: SelectedOptForBom,
 ): Consumption[] {
   const groups = item.optionGroups || [];
+  const choiceId = sel.choiceId ? String(sel.choiceId) : '';
+  const groupId = sel.groupId ? String(sel.groupId) : '';
+
+  if (choiceId) {
+    if (groupId) {
+      for (const g of groups) {
+        if (g._id?.toString() !== groupId) continue;
+        for (const c of g.choices || []) {
+          if (c._id?.toString() === choiceId) return c.consumption || [];
+        }
+      }
+    }
+    for (const g of groups) {
+      for (const c of g.choices || []) {
+        if (c._id?.toString() === choiceId) return c.consumption || [];
+      }
+    }
+  }
+
+  const groupName = sel.groupName ? String(sel.groupName) : '';
+  const choiceName = sel.choiceName ? String(sel.choiceName) : '';
+  if (!groupName || !choiceName) return [];
+
   for (const g of groups) {
     const gNames = (g.translations || []).map((t) => t.name);
     if (!gNames.includes(groupName)) continue;
@@ -331,10 +366,10 @@ export function aggregateRawMaterialDemand(
       if (add > 0) out.set(rid, roundConsumptionQty((out.get(rid) || 0) + add));
     }
 
-    /** 每个选中选项的 BoM（按名查 choice） */
+    /** 每个选中选项的 BoM（groupId/choiceId 或快照名） */
     for (const sel of line.selectedOptions || []) {
-      if (!sel.groupName || !sel.choiceName) continue;
-      const cons = findChoiceConsumption(item, sel.groupName, sel.choiceName);
+      const cons = findChoiceConsumptionForSelection(item, sel);
+      if (cons.length === 0) continue;
       for (const c of cons) {
         const rid = String(c.rawMaterialId);
         const add = roundConsumptionQty(qty * Math.max(0, roundConsumptionQty(c.qty) || 0));

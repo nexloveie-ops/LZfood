@@ -52,6 +52,7 @@
     "submitOrder": "Submit Order",
     "viewAR": "View in AR",
     "soldOut": "Sold Out",
+    "bomChoiceUnavailable": "Out of stock",
     "addToCart": "Add to Cart",
     "calories": "cal",
     "waitTime": "min",

@@ -3,6 +3,11 @@ import { useTranslation } from 'react-i18next';
 import ARViewer from './ARViewer';
 import OptionSelectModal, { type OptionGroup } from './OptionSelectModal';
 import type { CartItemOption } from '../../context/CartContext';
+import {
+  type BomAvailabilitySnapshot,
+  computeCartRawDemand,
+  isItemServingBlocked,
+} from '../../utils/bomAvailability';
 
 interface MenuItemCardProps {
   id: string;
@@ -24,11 +29,15 @@ interface MenuItemCardProps {
   decreaseDisabled?: boolean;
   onAdd: (id: string, names: Record<string, string>, price: number, options?: CartItemOption[]) => void;
   onDecrease?: (menuItemId: string) => void;
+  bomSnapshot?: BomAvailabilitySnapshot | null;
+  /** 购物车/当前单已占用原材料 */
+  cartBomLines?: Array<{ menuItemId: string; quantity?: number; options?: { groupId?: string; choiceId?: string }[] }>;
 }
 
 export default function MenuItemCard({
   id, name, names, description, price, calories, avgWaitMinutes,
   photoUrl, photoFetchPriority = 'auto', arFileUrl, isSoldOut, allergenIcons, optionGroups, quantity, decreaseDisabled, onAdd, onDecrease,
+  bomSnapshot, cartBomLines = [],
 }: MenuItemCardProps) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
@@ -50,9 +59,17 @@ export default function MenuItemCard({
   }, [photoUrl]);
 
   const hasOptions = optionGroups && optionGroups.length > 0;
+  const itemBom = bomSnapshot?.enabled ? bomSnapshot.items[id] : undefined;
+  const reservedDemand = bomSnapshot?.enabled
+    ? computeCartRawDemand(cartBomLines, bomSnapshot)
+    : {};
+  const bomItemBlocked = itemBom && bomSnapshot?.enabled
+    ? isItemServingBlocked(itemBom, bomSnapshot.materials, reservedDemand)
+    : false;
+  const unavailable = isSoldOut || bomItemBlocked;
 
   const handleAddClick = () => {
-    if (isSoldOut) return;
+    if (unavailable) return;
     if (hasOptions) {
       setShowOptions(true);
     } else {
@@ -73,7 +90,7 @@ export default function MenuItemCard({
         boxShadow: '0 1px 4px rgba(44,24,16,0.06)',
         border: quantity && quantity > 0 ? '2px solid var(--red-primary)' : '1px solid rgba(232,213,184,0.5)',
         position: 'relative', overflow: 'hidden',
-        opacity: isSoldOut ? 0.55 : 1,
+        opacity: unavailable ? 0.55 : 1,
         transition: 'transform 0.15s',
       }}>
         {/* Quantity badge */}
@@ -85,7 +102,7 @@ export default function MenuItemCard({
             borderBottomRightRadius: 10,
           }}>×{quantity}</span>
         )}
-        {isSoldOut && (
+        {unavailable && (
           <span style={{
             position: 'absolute', top: 10, right: 10, zIndex: 2,
             background: 'rgba(44,24,16,0.75)', color: '#F0D68A',
@@ -109,7 +126,7 @@ export default function MenuItemCard({
             alignItems: 'center',
             justifyContent: 'center',
             fontSize: 36,
-            filter: isSoldOut ? 'grayscale(60%)' : 'none',
+            filter: unavailable ? 'grayscale(60%)' : 'none',
             cursor: photoUrl ? 'zoom-in' : undefined,
           }}
         >
@@ -200,12 +217,12 @@ export default function MenuItemCard({
             </div>
             <button
               onClick={handleAddClick}
-              disabled={isSoldOut}
+              disabled={unavailable}
               style={{
                 width: 34, height: 34, borderRadius: '50%', border: 'none',
-                background: isSoldOut ? '#ccc' : 'var(--red-primary)',
-                color: '#fff', fontSize: 20, cursor: isSoldOut ? 'not-allowed' : 'pointer',
-                boxShadow: isSoldOut ? 'none' : '0 2px 8px rgba(196,30,36,0.3)',
+                background: unavailable ? '#ccc' : 'var(--red-primary)',
+                color: '#fff', fontSize: 20, cursor: unavailable ? 'not-allowed' : 'pointer',
+                boxShadow: unavailable ? 'none' : '0 2px 8px rgba(196,30,36,0.3)',
                 display: quantity && quantity > 0 ? 'none' : 'flex', alignItems: 'center', justifyContent: 'center',
                 transition: 'transform 0.15s',
               }}
@@ -226,10 +243,13 @@ export default function MenuItemCard({
                 <span style={{ width: 28, textAlign: 'center', fontSize: 14, fontWeight: 700 }}>{quantity}</span>
                 <button
                   onClick={handleAddClick}
+                  disabled={unavailable}
                   style={{
-                    width: 30, height: 30, border: 'none', background: 'var(--red-primary)',
+                    width: 30, height: 30, border: 'none',
+                    background: unavailable ? '#ccc' : 'var(--red-primary)',
                     color: '#fff', fontSize: 16, fontWeight: 700,
-                    cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    cursor: unavailable ? 'not-allowed' : 'pointer',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
                   }}
                 >+</button>
               </div>
@@ -243,6 +263,9 @@ export default function MenuItemCard({
           itemName={name}
           price={price}
           optionGroups={optionGroups!}
+          menuItemId={id}
+          bomSnapshot={bomSnapshot}
+          reservedDemand={reservedDemand}
           onConfirm={handleOptionConfirm}
           onClose={() => setShowOptions(false)}
         />
