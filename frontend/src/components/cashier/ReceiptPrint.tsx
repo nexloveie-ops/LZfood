@@ -245,13 +245,6 @@ function plainCenter(line: string): string {
   return `@C@${t}`;
 }
 
-/** Right-align via APK ESC a (amounts). */
-function plainRight(line: string): string {
-  const t = line.trim();
-  if (!t) return '';
-  return `@A@${t}`;
-}
-
 function wrapByDisplayWidth(text: string, cols: number): string[] {
   const normalized = text.replace(/\s+/g, ' ').trim();
   if (!normalized) return [];
