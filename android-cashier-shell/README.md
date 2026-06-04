@@ -58,8 +58,8 @@ Vendor SDK reference: `CitaqSDK` `PrintActivity.java`, `Command.getPrintDemoZH()
 This app uses an **embedded WebView**, not Chrome. Common on CITAQ H10-3:
 
 1. **HTTPS / certificate** — old WebView CA store may reject Let's Encrypt. v0.1.1+ calls `handler.proceed()` on SSL errors for POS compatibility.
-2. **Update WebView** — Settings → Apps → **Android System WebView** (or **Google Chrome**) → Update, then reboot.
+2. **Update WebView (not Firefox)** — The APK uses **Android System WebView**, not Firefox. Installing Firefox does **not** upgrade the in-app browser. Look in Settings → Apps for **Android System WebView** / **WebView** and update if possible, then reboot.
 3. **Menu → 刷新** — reload cashier URL.
-4. **Menu → 用浏览器打开(调试)** — only to test if the site works in Chrome; printing still requires this APK.
+4. **Menu → 用 Firefox 打开(调试)** — opens the same URL in Firefox to compare. If **Firefox works but the App is blank**, the WebView component is too old → update System WebView (sideload a newer `com.google.android.webview` APK on POS if there is no Play Store).
 
-If Chrome opens the site but WebView does not, update System WebView. If neither works, check WiFi/DNS on the device.
+If neither Firefox nor the App loads the site, check WiFi/DNS on the device.

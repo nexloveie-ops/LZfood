@@ -18,6 +18,20 @@ public class CashierWebViewClient extends WebViewClient {
 
     private static final String TAG = "LZFOODWebView";
 
+    public interface Listener {
+        void onMainFrameFinished(WebView view, String url);
+    }
+
+    private final Listener listener;
+
+    public CashierWebViewClient() {
+        this(null);
+    }
+
+    public CashierWebViewClient(Listener listener) {
+        this.listener = listener;
+    }
+
     @Override
     public void onPageStarted(WebView view, String url, Bitmap favicon) {
         Log.i(TAG, "onPageStarted: " + url);
@@ -26,6 +40,9 @@ public class CashierWebViewClient extends WebViewClient {
     @Override
     public void onPageFinished(WebView view, String url) {
         Log.i(TAG, "onPageFinished: " + url);
+        if (listener != null) {
+            listener.onMainFrameFinished(view, url);
+        }
     }
 
     @Override
@@ -59,8 +76,9 @@ public class CashierWebViewClient extends WebViewClient {
             + "<p>这不是系统浏览器，是 App 内置 WebView。</p>"
             + "<p><b>URL:</b> " + safeUrl + "</p>"
             + "<p><b>原因:</b> " + safeDesc + "</p>"
-            + "<p>建议：设置 → 应用 → Android System WebView / Chrome → 更新；"
-            + "或检查 WiFi 与 https://food.lztechserve.com 是否可访问。</p>"
+            + "<p><b>Firefox 能开、本 App 白屏</b> = 系统 WebView 太旧，跑不动现代收银页。</p>"
+            + "<p>请更新 <b>Android System WebView</b>（设置→应用，不是 Firefox），"
+            + "或安装 APKMirror 上的 webview 包 (armeabi-v7a)。</p>"
             + "</body></html>";
         view.loadDataWithBaseURL(null, html, "text/html", "UTF-8", null);
     }
