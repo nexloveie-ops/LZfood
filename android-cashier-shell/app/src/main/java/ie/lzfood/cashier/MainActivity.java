@@ -88,9 +88,15 @@ public class MainActivity extends AppCompatActivity {
             });
     }
 
+    /** Reload current page when already on site; otherwise open portal home from config. */
     private void reloadCashier() {
         blankChecked = false;
-        webView.loadUrl(startUrl);
+        String current = webView.getUrl();
+        if (current != null && (current.startsWith("http://") || current.startsWith("https://"))) {
+            webView.reload();
+        } else {
+            webView.loadUrl(startUrl);
+        }
     }
 
     private void openPrinterTest() {

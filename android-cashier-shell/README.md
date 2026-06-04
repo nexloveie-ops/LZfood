@@ -19,11 +19,19 @@ Android 5.1 **System WebView** is too old for React. Fix:
 
 When WebView is updated, full cashier + checkout print works via LZFOOD `posPrint.ts`.
 
-## URL
+## Cashier URL (config file, not “current page”)
 
-`app/src/main/res/values/strings.xml` → `cashier_start_url`
+Edit **`cashier.properties`** in this folder (copy from `cashier.properties.example`), then rebuild the APK:
 
-Default: `https://food.lztechserve.com/demo/cashier`
+```properties
+cashier.url=https://food.lztechserve.com/
+```
+
+**Recommended flow:** open [portal home](https://food.lztechserve.com/) → enter shop **slug** → login → WebView URL becomes `https://food.lztechserve.com/{slug}/cashier`.
+
+You can still set `cashier.url` to a direct cashier link (e.g. `/demo/cashier`) to skip the portal.
+
+Menu **刷新收银** reloads the **current** page (stays on cashier after login); cold start always uses `cashier.url`.
 
 ## Build
 

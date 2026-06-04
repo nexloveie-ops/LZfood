@@ -1154,108 +1154,41 @@ export default function CashierOrder() {
     const invBorder = av.color === 'red' ? '2px solid #C62828'
       : av.color === 'orange' ? '2px solid #E65100'
       : null;
+    const cardClass = [
+      'cashier-menu-card',
+      qty > 0 ? 'is-selected' : '',
+      item.isSoldOut || invBlocked ? 'is-disabled' : '',
+    ].filter(Boolean).join(' ');
+
     return (
       <div
         key={item._id}
+        className={cardClass}
         onClick={() => addToOrder(item)}
-        style={{
-          background: 'var(--bg-white)',
-          border: qty > 0
-            ? '2px solid var(--red-primary)'
-            : (invBorder || '1px solid var(--border)'),
-          borderRadius: 8,
-          padding: '10px 8px',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          textAlign: 'center',
-          cursor: item.isSoldOut || invBlocked ? 'not-allowed' : 'pointer',
-          opacity: item.isSoldOut || invBlocked ? 0.45 : 1,
-          boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
-          minHeight: 80,
-          justifyContent: 'center',
-          position: 'relative',
-          userSelect: 'none',
-        }}
+        style={qty > 0 ? undefined : invBorder ? { border: invBorder } : undefined}
       >
-        {qty > 0 && (
-          <span
-            style={{
-              position: 'absolute',
-              top: -6,
-              left: -6,
-              width: 22,
-              height: 22,
-              borderRadius: '50%',
-              background: 'var(--red-primary)',
-              color: '#fff',
-              fontSize: 12,
-              fontWeight: 700,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-          >
-            {qty}
-          </span>
-        )}
+        {qty > 0 && <span className="cashier-menu-card-qty">{qty}</span>}
         {item.isSoldOut && (
-          <span
-            style={{
-              position: 'absolute',
-              top: 4,
-              right: 4,
-              fontSize: 9,
-              padding: '1px 5px',
-              borderRadius: 3,
-              fontWeight: 600,
-              background: '#9E9E9E',
-              color: '#fff',
-            }}
-          >
-            {t('cashier.orderSoldOutBadge')}
-          </span>
+          <span className="cashier-menu-card-soldout">{t('cashier.orderSoldOutBadge')}</span>
         )}
-        <div
-          style={{
-            fontSize: 13,
-            fontWeight: 600,
-            lineHeight: 1.3,
-            marginBottom: 4,
-            display: '-webkit-box',
-            WebkitLineClamp: 2,
-            WebkitBoxOrient: 'vertical',
-            overflow: 'hidden',
-          }}
-        >
-          {getName(item.translations)}
-        </div>
-        <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--red-primary)' }}>€{item.price}</div>
+        <div className="cashier-menu-card-name">{getName(item.translations)}</div>
+        <div className="cashier-menu-card-price">€{item.price}</div>
         {item.optionGroups && item.optionGroups.length > 0 && (
-          <div style={{ fontSize: 9, color: 'var(--text-light)', marginTop: 2 }}>⚙ {t('customer.selectOptions')}</div>
+          <div className="cashier-menu-card-meta">⚙ {t('customer.selectOptions')}</div>
         )}
         {item.inventoryTracked && (
-          <div style={{
-            fontSize: 10,
-            marginTop: 4,
-            padding: '1px 6px',
-            borderRadius: 3,
-            background: av.color === 'red' ? '#FFEBEE' : av.color === 'orange' ? '#FFF3E0' : '#F1F8E9',
-            color: av.color === 'red' ? '#C62828' : av.color === 'orange' ? '#E65100' : '#2E7D32',
-            fontWeight: 600,
-          }}>
+          <div
+            className="cashier-menu-card-inv"
+            style={{
+              background: av.color === 'red' ? '#FFEBEE' : av.color === 'orange' ? '#FFF3E0' : '#F1F8E9',
+              color: av.color === 'red' ? '#C62828' : av.color === 'orange' ? '#E65100' : '#2E7D32',
+            }}
+          >
             📦 {Math.max(0, av.remaining)} {t('cashier.invServings')}
           </div>
         )}
       </div>
     );
-  };
-
-  const menuGridStyle: CSSProperties = {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))',
-    gap: 8,
-    alignContent: 'start',
   };
 
   // Bundle matching
@@ -2136,22 +2069,8 @@ export default function CashierOrder() {
                 categoryBtnRefs.current[cat._id] = el;
               }}
               type="button"
+              className={`cashier-cat-btn${isActive ? ' is-active' : ''}`}
               onClick={() => scrollToCategory(cat._id)}
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                justifyContent: 'center',
-                padding: '14px 8px',
-                border: 'none',
-                cursor: 'pointer',
-                fontSize: 13,
-                fontWeight: isActive ? 700 : 500,
-                color: isActive ? 'var(--red-primary)' : 'var(--text-secondary)',
-                background: isActive ? 'var(--red-light)' : 'transparent',
-                borderLeft: isActive ? '4px solid var(--red-primary)' : '4px solid transparent',
-                minHeight: 56,
-              }}
             >
               {getName(cat.translations)}
             </button>
@@ -2162,7 +2081,7 @@ export default function CashierOrder() {
       {/* Center: Menu Grid */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         <div style={{ padding: '10px 12px', background: 'var(--bg-white)', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
-          <input className="input" placeholder={t('cashier.searchMenuPlaceholder')} value={search} onChange={e => setSearch(e.target.value)} style={{ width: '100%', padding: '10px 14px', fontSize: 14 }} />
+          <input className="input cashier-menu-search" placeholder={t('cashier.searchMenuPlaceholder')} value={search} onChange={e => setSearch(e.target.value)} />
         </div>
         {search.trim() ? (
           <div style={{ padding: '10px 12px 6px', fontSize: 14, fontWeight: 700, background: 'var(--bg)', flexShrink: 0 }}>
@@ -2181,7 +2100,7 @@ export default function CashierOrder() {
                 {t('cashier.menuSearchEmpty')}
               </div>
             ) : (
-              <div style={menuGridStyle}>{searchFilteredItems.map((item) => renderMenuItemCard(item))}</div>
+              <div className="cashier-menu-grid">{searchFilteredItems.map((item) => renderMenuItemCard(item))}</div>
             )
           ) : menuSections.length === 0 ? (
             <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-light)', fontSize: 13 }}>
@@ -2197,20 +2116,11 @@ export default function CashierOrder() {
                 data-category-id={sec.category._id}
                 style={{ marginBottom: 16 }}
               >
-                <div
-                  style={{
-                    background: 'var(--bg)',
-                    padding: '8px 0 6px',
-                    fontSize: 14,
-                    fontWeight: 700,
-                    borderBottom: '1px solid var(--border)',
-                    marginBottom: 8,
-                  }}
-                >
+                <div className="cashier-menu-section-title">
                   {getName(sec.category.translations)}
                   <span style={{ fontWeight: 400, color: 'var(--text-light)', marginLeft: 8 }}>({sec.items.length})</span>
                 </div>
-                <div style={menuGridStyle}>{sec.items.map((item) => renderMenuItemCard(item))}</div>
+                <div className="cashier-menu-grid">{sec.items.map((item) => renderMenuItemCard(item))}</div>
               </section>
             ))
           )}

@@ -228,6 +228,140 @@
   line-height: 1.45;
 }
 
+/* Cashier order screen — larger menu tiles for POS touch */
+.cashier-menu-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+  gap: 10px;
+  align-content: start;
+}
+
+.cashier-menu-card {
+  background: var(--bg-white);
+  border-radius: 8px;
+  padding: 12px 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  min-height: 92px;
+  justify-content: center;
+  position: relative;
+  user-select: none;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  border: 1px solid var(--border);
+}
+
+.cashier-menu-card.is-selected {
+  border: 2px solid var(--red-primary);
+}
+
+.cashier-menu-card.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.cashier-menu-card:not(.is-disabled) {
+  cursor: pointer;
+}
+
+.cashier-menu-card-name {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.35;
+  margin-bottom: 6px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.cashier-menu-card-price {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--red-primary);
+}
+
+.cashier-menu-card-meta {
+  font-size: 11px;
+  color: var(--text-light);
+  margin-top: 4px;
+}
+
+.cashier-menu-card-inv {
+  font-size: 12px;
+  margin-top: 6px;
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-weight: 600;
+}
+
+.cashier-menu-card-qty {
+  position: absolute;
+  top: -6px;
+  left: -6px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--red-primary);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cashier-menu-card-soldout {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-weight: 600;
+  background: #9e9e9e;
+  color: #fff;
+}
+
+.cashier-cat-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 14px 8px;
+  border: none;
+  cursor: pointer;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: transparent;
+  border-left: 4px solid transparent;
+  min-height: 58px;
+}
+
+.cashier-cat-btn.is-active {
+  font-weight: 700;
+  color: var(--red-primary);
+  background: var(--red-light);
+  border-left-color: var(--red-primary);
+}
+
+.cashier-menu-section-title {
+  background: var(--bg);
+  padding: 8px 0 6px;
+  font-size: 16px;
+  font-weight: 700;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 8px;
+}
+
+.cashier-menu-search {
+  width: 100%;
+  padding: 10px 14px;
+  font-size: 15px;
+}
+
 @media (max-width: 720px) {
   .cashier-saas-header {
     flex-wrap: wrap;

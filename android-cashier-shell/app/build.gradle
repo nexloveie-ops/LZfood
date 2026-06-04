@@ -2,6 +2,18 @@ plugins {
     id 'com.android.application'
 }
 
+def readCashierStartUrl = {
+    def propsFile = rootProject.file('cashier.properties')
+    def fallback = 'https://food.lztechserve.com/'
+    if (!propsFile.exists()) {
+        return fallback
+    }
+    def props = new Properties()
+    propsFile.withInputStream { props.load(it) }
+    def url = props.getProperty('cashier.url', fallback)?.trim()
+    return (url != null && !url.isEmpty()) ? url : fallback
+}
+
 android {
     namespace 'ie.lzfood.cashier'
     compileSdk 34
@@ -12,6 +24,7 @@ android {
         targetSdk 22
         versionCode 13
         versionName '0.3.8'
+        resValue 'string', 'cashier_start_url', readCashierStartUrl()
     }
 
     buildTypes {

@@ -1,0 +1,3 @@
+# Copy to cashier.properties and edit before building the APK.
+# Portal home: staff enter shop slug → login → WebView navigates to /{slug}/cashier
+cashier.url=https://food.lztechserve.com/

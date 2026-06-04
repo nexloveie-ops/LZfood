@@ -23,6 +23,12 @@ public class PrinterBridge {
         return "0.3.8-80mm-48col";
     }
 
+    /** Same URL as MainActivity loads — from android-cashier-shell/cashier.properties */
+    @JavascriptInterface
+    public String getCashierUrl() {
+        return context.getResources().getString(R.string.cashier_start_url);
+    }
+
     @JavascriptInterface
     public void printText(String text, int copies) {
         EscPosPrinter.printText(text, copies, (ok, error) -> mainHandler.post(() -> {

@@ -50,7 +50,10 @@
       log('已调用 printText');
     }
     function openCashier() {
-      location.href = 'https://food.lztechserve.com/demo/cashier';
+      var url = (window.LZFOODPrinter && window.LZFOODPrinter.getCashierUrl)
+        ? window.LZFOODPrinter.getCashierUrl()
+        : 'https://food.lztechserve.com/demo/cashier';
+      location.href = url;
     }
   </script>
 </body>
