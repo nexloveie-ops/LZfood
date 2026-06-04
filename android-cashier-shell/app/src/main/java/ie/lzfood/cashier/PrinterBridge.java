@@ -20,7 +20,7 @@ public class PrinterBridge {
 
     @JavascriptInterface
     public String getVersion() {
-        return "0.3.8-80mm-48col";
+        return "0.3.9-item-qr";
     }
 
     /** Same URL as MainActivity loads — from android-cashier-shell/cashier.properties */

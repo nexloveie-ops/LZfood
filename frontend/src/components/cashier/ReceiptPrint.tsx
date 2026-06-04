@@ -302,9 +302,14 @@ function padRowLine(left: string, right: string, cols = RECEIPT_CHARS_PER_LINE):
   return `${l}\t${r}`;
 }
 
-/** Item: name left, amount right (ESC/POS, full 48-col width). */
+/** Item: bold + double-height on thermal (@I@ / @IA@ in APK). */
 function plainItemLines(qtyTitle: string, amount: number): string[] {
-  return [`@N@${qtyTitle.trim()}`, plainRight(formatPlainEuro(amount))];
+  return [`@I@${qtyTitle.trim()}`, `@IA@${formatPlainEuro(amount)}`];
+}
+
+/** ESC/POS QR payload for thermal printer (APK prints native QR, then URL as fallback text). */
+function plainQrLine(url: string): string {
+  return `@Q@${url.trim()}`;
 }
 
 function plainRow(left: string, right: string): string {
@@ -490,8 +495,8 @@ function buildReceiptPlainText(
       if (seg.type === 'text') {
         lines.push(...plainWrap(seg.value));
       } else {
-        lines.push('[QR]');
-        lines.push(...plainWrap(seg.value));
+        lines.push(plainQrLine(seg.value));
+        lines.push(...plainCenterWrap(seg.value));
       }
     }
   }

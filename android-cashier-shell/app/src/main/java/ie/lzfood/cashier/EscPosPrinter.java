@@ -7,12 +7,13 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
  * CITAQ H10-3 (80mm / 48 cols) via /dev/ttyS1.
- * Web tags: @H@ @C@ center (ESC a, no leading spaces), @A@ right, @N@ left, @T@ bold total, @D@ rule.
+ * Tags: @H@ @C@ center, @I@/@IA@ item bold+large, @A@ right, @N@ normal, @T@ total, @Q@ QR, @D@ rule.
  */
 public final class EscPosPrinter {
 
@@ -119,8 +120,20 @@ public final class EscPosPrinter {
             writeAlignedLine(buf, line.substring(3), Align.CENTER, Size.NORMAL);
             return;
         }
+        if (line.startsWith("@IA@")) {
+            writeItemLine(buf, line.substring(4), Align.RIGHT);
+            return;
+        }
+        if (line.startsWith("@I@")) {
+            writeItemLine(buf, line.substring(3), Align.LEFT);
+            return;
+        }
         if (line.startsWith("@A@")) {
             writeAlignedLine(buf, line.substring(3), Align.RIGHT, Size.NORMAL);
+            return;
+        }
+        if (line.startsWith("@Q@")) {
+            writeQrCode(buf, line.substring(3));
             return;
         }
         if (line.startsWith("@T@")) {
@@ -149,6 +162,55 @@ public final class EscPosPrinter {
      * Print plain text only — no leading/trailing spaces (H10 strips them).
      * Center/right via ESC a in GBK mode.
      */
+    /** Menu line: bold + double height (same emphasis as total row). */
+    private static void writeItemLine(ByteArrayOutputStream buf, String text, Align align) throws IOException {
+        String t = text == null ? "" : text.trim();
+        if (t.isEmpty()) {
+            buf.write('\n');
+            return;
+        }
+        resetStyle(buf);
+        buf.write(0x1B);
+        buf.write(0x61);
+        buf.write(align == Align.CENTER ? 1 : align == Align.RIGHT ? 2 : 0);
+        buf.write(0x1B);
+        buf.write(0x45);
+        buf.write(1);
+        buf.write(0x1D);
+        buf.write(0x21);
+        buf.write(0x01);
+        buf.write(t.replace('\u20AC', ' ').getBytes(GBK));
+        buf.write('\n');
+        resetStyle(buf);
+    }
+
+    /** ESC/POS QR model 2 (UTF-8), centered. Falls back to URL text from web if firmware ignores QR. */
+    private static void writeQrCode(ByteArrayOutputStream buf, String data) throws IOException {
+        String t = data == null ? "" : data.trim();
+        if (t.isEmpty()) {
+            return;
+        }
+        byte[] content = t.getBytes(StandardCharsets.UTF_8);
+        resetStyle(buf);
+        buf.write(0x1B);
+        buf.write(0x61);
+        buf.write(1);
+        buf.write(new byte[] {0x1D, 0x28, 0x6B, 0x04, 0x00, 0x31, 0x41, 0x32, 0x00});
+        buf.write(new byte[] {0x1D, 0x28, 0x6B, 0x03, 0x00, 0x31, 0x43, 0x06});
+        buf.write(new byte[] {0x1D, 0x28, 0x6B, 0x03, 0x00, 0x31, 0x45, 0x31});
+        int storeLen = content.length + 3;
+        buf.write(0x1D);
+        buf.write(0x28);
+        buf.write(0x6B);
+        buf.write(storeLen & 0xFF);
+        buf.write((storeLen >> 8) & 0xFF);
+        buf.write(new byte[] {0x31, 0x50, 0x30});
+        buf.write(content);
+        buf.write(new byte[] {0x1D, 0x28, 0x6B, 0x03, 0x00, 0x31, 0x51, 0x30});
+        buf.write('\n');
+        resetStyle(buf);
+    }
+
     private static void writeAlignedLine(
         ByteArrayOutputStream buf,
         String text,
