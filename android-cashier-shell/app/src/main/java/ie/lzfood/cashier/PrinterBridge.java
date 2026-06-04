@@ -20,7 +20,7 @@ public class PrinterBridge {
 
     @JavascriptInterface
     public String getVersion() {
-        return "0.3.7-sym-pad";
+        return "0.3.8-80mm-48col";
     }
 
     @JavascriptInterface

@@ -11,15 +11,16 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * CITAQ H10-3: /dev/ttyS1 @ 115200. Web sends pre-formatted lines; APK prints GBK as-is.
- * Tags: @H@ shop name (double width), @T@ total, @D@ divider, @N@ line (symmetric pad in text).
+ * CITAQ H10-3 (80mm / 48 cols) via /dev/ttyS1.
+ * Web tags: @H@ @C@ center (ESC a, no leading spaces), @A@ right, @N@ left, @T@ bold total, @D@ rule.
  */
 public final class EscPosPrinter {
 
     private static final String TAG = "EscPosPrinter";
     private static final String DEVICE_PATH = "/dev/ttyS1";
     private static final int BAUD = 115200;
-    private static final int LINE_COLS = 32;
+    /** 80mm thermal paper — 48 chars per line (58mm ≈ 32). */
+    private static final int LINE_COLS = 48;
 
     private static final ExecutorService EXEC = Executors.newSingleThreadExecutor();
     private static final Charset GBK;
@@ -111,7 +112,15 @@ public final class EscPosPrinter {
             return;
         }
         if (line.startsWith("@H@")) {
-            writeHeaderLine(buf, line.substring(3));
+            writeAlignedLine(buf, line.substring(3), Align.CENTER, Size.DOUBLE);
+            return;
+        }
+        if (line.startsWith("@C@")) {
+            writeAlignedLine(buf, line.substring(3), Align.CENTER, Size.NORMAL);
+            return;
+        }
+        if (line.startsWith("@A@")) {
+            writeAlignedLine(buf, line.substring(3), Align.RIGHT, Size.NORMAL);
             return;
         }
         if (line.startsWith("@T@")) {
@@ -119,82 +128,102 @@ public final class EscPosPrinter {
             return;
         }
         if (line.startsWith("@D@")) {
-            writeGbkRawLine(buf, repeatChar('-', LINE_COLS));
+            writeAlignedLine(buf, repeatChar('-', LINE_COLS), Align.LEFT, Size.NORMAL);
             return;
         }
         if (line.startsWith("@N@")) {
-            writeGbkRawLine(buf, line.substring(3));
-            return;
-        }
-        if (line.startsWith("@C@")) {
-            writeGbkRawLine(buf, line.substring(3));
+            writeAlignedLine(buf, line.substring(3), Align.LEFT, Size.NORMAL);
             return;
         }
         if (line.startsWith("@R@")) {
             writeLegacyRow(buf, line.substring(3));
             return;
         }
-        writeGbkRawLine(buf, line);
+        writeAlignedLine(buf, line, Align.LEFT, Size.NORMAL);
     }
 
+    private enum Align { LEFT, CENTER, RIGHT }
+    private enum Size { NORMAL, DOUBLE }
+
     /**
-     * Shop name: GBK line already has symmetric fullwidth pad from web.
-     * Apply double-width only to the trimmed text portion (strip edge fullwidth for sizing).
+     * Print plain text only — no leading/trailing spaces (H10 strips them).
+     * Center/right via ESC a in GBK mode.
      */
-    private static void writeHeaderLine(ByteArrayOutputStream buf, String paddedLine) throws IOException {
-        String t = paddedLine == null ? "" : paddedLine;
+    private static void writeAlignedLine(
+        ByteArrayOutputStream buf,
+        String text,
+        Align align,
+        Size size
+    ) throws IOException {
+        String t = text == null ? "" : text.trim();
         if (t.isEmpty()) {
             buf.write('\n');
             return;
         }
         resetStyle(buf);
-        buf.write(0x1D);
-        buf.write(0x21);
-        buf.write(0x11);
-        writeGbkRawLine(buf, t);
+        buf.write(0x1B);
+        buf.write(0x61);
+        buf.write(align == Align.CENTER ? 1 : align == Align.RIGHT ? 2 : 0);
+        if (size == Size.DOUBLE) {
+            buf.write(0x1D);
+            buf.write(0x21);
+            buf.write(0x11);
+        }
+        buf.write(t.replace('\u20AC', ' ').getBytes(GBK));
+        buf.write('\n');
         resetStyle(buf);
     }
 
     private static void writeTotalRow(ByteArrayOutputStream buf, String payload) throws IOException {
-        buf.write(0x1B);
-        buf.write(0x45);
-        buf.write(1);
-        buf.write(0x1D);
-        buf.write(0x21);
-        buf.write(0x01);
         for (String part : payload.split("\n", -1)) {
-            writeGbkRawLine(buf, part);
+            if (part.isEmpty()) continue;
+            resetStyle(buf);
+            buf.write(0x1B);
+            buf.write(0x45);
+            buf.write(1);
+            buf.write(0x1D);
+            buf.write(0x21);
+            buf.write(0x01);
+            int tab = part.indexOf('\t');
+            if (tab >= 0) {
+                String left = part.substring(0, tab).trim();
+                String right = part.substring(tab + 1).trim();
+                int gap = LINE_COLS - displayWidth(left) - displayWidth(right);
+                if (gap >= 1) {
+                    buf.write(left.replace('\u20AC', ' ').getBytes(GBK));
+                    buf.write(repeatChar(' ', gap).getBytes(GBK));
+                    buf.write(right.replace('\u20AC', ' ').getBytes(GBK));
+                } else {
+                    buf.write(left.replace('\u20AC', ' ').getBytes(GBK));
+                    buf.write('\n');
+                    buf.write(0x1B);
+                    buf.write(0x61);
+                    buf.write(2);
+                    buf.write(right.replace('\u20AC', ' ').getBytes(GBK));
+                }
+            } else {
+                buf.write(part.replace('\u20AC', ' ').getBytes(GBK));
+            }
+            buf.write('\n');
+            resetStyle(buf);
         }
-        buf.write(0x1B);
-        buf.write(0x45);
-        buf.write(0x00);
-        buf.write(0x1D);
-        buf.write(0x21);
-        buf.write(0x00);
     }
 
     private static void writeLegacyRow(ByteArrayOutputStream buf, String payload) throws IOException {
         int tab = payload.indexOf('\t');
         if (tab < 0) {
-            writeGbkRawLine(buf, payload);
+            writeAlignedLine(buf, payload, Align.LEFT, Size.NORMAL);
             return;
         }
         String left = payload.substring(0, tab).trim();
         String right = payload.substring(tab + 1).trim();
         int gap = LINE_COLS - displayWidth(left) - displayWidth(right);
         if (gap >= 1) {
-            writeGbkRawLine(buf, left + repeatChar(' ', gap) + right);
+            writeAlignedLine(buf, left + repeatChar(' ', gap) + right, Align.LEFT, Size.NORMAL);
         } else {
-            writeGbkRawLine(buf, left);
-            writeGbkRawLine(buf, repeatChar(' ', Math.max(0, LINE_COLS - displayWidth(right))) + right);
+            writeAlignedLine(buf, left, Align.LEFT, Size.NORMAL);
+            writeAlignedLine(buf, right, Align.RIGHT, Size.NORMAL);
         }
-    }
-
-    private static void writeGbkRawLine(ByteArrayOutputStream buf, String text) throws IOException {
-        if (text == null) return;
-        String safe = text.replace('\u20AC', ' ');
-        buf.write(safe.getBytes(GBK));
-        buf.write('\n');
     }
 
     private static void resetStyle(ByteArrayOutputStream buf) throws IOException {

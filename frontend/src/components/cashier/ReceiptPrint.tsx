@@ -201,9 +201,8 @@ function parseQRCodes(text: string): Array<{ type: 'text' | 'qr'; value: string 
   return segments;
 }
 
-/** CITAQ H10-3 built-in printer effective width (~32 cols). Using 48 over-pads → looks right-aligned. */
-const RECEIPT_CHARS_PER_LINE = 32;
-const RECEIPT_FULLWIDTH_SPACE = '\u3000';
+/** CITAQ H10-3 built-in 80mm printer: 48 columns (32 = 58mm layout, leaves right margin). */
+const RECEIPT_CHARS_PER_LINE = 48;
 
 function receiptDisplayWidth(s: string): number {
   let w = 0;
@@ -223,17 +222,6 @@ function receiptIsWideCodePoint(cp: number): boolean {
   );
 }
 
-/** Center: pad BOTH sides (leading-only padding looks right-aligned on H10). */
-function padCenterLine(text: string, cols = RECEIPT_CHARS_PER_LINE): string {
-  const t = text.trim();
-  if (!t) return '';
-  const w = receiptDisplayWidth(t);
-  const totalPad = Math.max(0, cols - w);
-  const left = Math.floor(totalPad / 2);
-  const right = totalPad - left;
-  return RECEIPT_FULLWIDTH_SPACE.repeat(left) + t + RECEIPT_FULLWIDTH_SPACE.repeat(right);
-}
-
 /** Amount suffix (never use € on serial printer). */
 function formatPlainEuro(amount: number, opts?: { negate?: boolean }): string {
   const n = Number(amount);
@@ -245,16 +233,23 @@ function plainDivider(): string {
   return '@D@';
 }
 
-/** Shop name — APK @H@ double height + symmetric pad. */
+/** Shop name — APK ESC/POS center + double height (no spaces; H10 strips them). */
 function plainHeaderCenter(line: string): string {
-  return `@H@${padCenterLine(line)}`;
+  return `@H@${line.trim()}`;
 }
 
-/** All centered lines: symmetric fullwidth pad via @N@ (do not use ESC a on H10). */
+/** Center via APK ESC a (no padding characters). */
 function plainCenter(line: string): string {
   const t = line.trim();
   if (!t) return '';
-  return `@N@${padCenterLine(t)}`;
+  return `@C@${t}`;
+}
+
+/** Right-align via APK ESC a (amounts). */
+function plainRight(line: string): string {
+  const t = line.trim();
+  if (!t) return '';
+  return `@A@${t}`;
 }
 
 function wrapByDisplayWidth(text: string, cols: number): string[] {
@@ -299,26 +294,17 @@ function plainCenterWrap(text: string): string[] {
   return wrapByDisplayWidth(text, RECEIPT_CHARS_PER_LINE).map((chunk) => plainCenter(chunk));
 }
 
-/** Right-align amount (fullwidth pad — H10 strips leading ASCII spaces). */
-function padRightLine(text: string, cols = RECEIPT_CHARS_PER_LINE): string {
-  const t = text.trim();
-  const pad = Math.max(0, cols - receiptDisplayWidth(t));
-  const fw = Math.floor(pad / 2);
-  const sp = pad - fw * 2;
-  return RECEIPT_FULLWIDTH_SPACE.repeat(fw) + ' '.repeat(sp) + t;
-}
-
 function padRowLine(left: string, right: string, cols = RECEIPT_CHARS_PER_LINE): string {
   const l = left.trim();
   const r = right.trim();
   const gap = cols - receiptDisplayWidth(l) - receiptDisplayWidth(r);
   if (gap >= 1) return `${l}${' '.repeat(gap)}${r}`;
-  return `${l}\n${padRightLine(r, cols)}`;
+  return `${l}\t${r}`;
 }
 
-/** Item: name line + amount on next line (avoids 9. / 50 wrap on narrow firmware). */
+/** Item: name left, amount right (ESC/POS, full 48-col width). */
 function plainItemLines(qtyTitle: string, amount: number): string[] {
-  return [`@N@${qtyTitle.trim()}`, `@N@${padRightLine(formatPlainEuro(amount))}`];
+  return [`@N@${qtyTitle.trim()}`, plainRight(formatPlainEuro(amount))];
 }
 
 function plainRow(left: string, right: string): string {
