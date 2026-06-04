@@ -11,8 +11,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * CITAQ H10-3: /dev/ttyS1 @ 115200. Layout is pre-formatted in LZFOOD web (48 cols, fullwidth pad).
- * Tags: @H@ shop name (ASCII double+center), @T@ total row, @D@ divider, @N@ print line as-is.
+ * CITAQ H10-3: /dev/ttyS1 @ 115200. Web sends pre-formatted lines; APK prints GBK as-is.
+ * Tags: @H@ shop name (double width), @T@ total, @D@ divider, @N@ line (symmetric pad in text).
  */
 public final class EscPosPrinter {
 
@@ -111,7 +111,7 @@ public final class EscPosPrinter {
             return;
         }
         if (line.startsWith("@H@")) {
-            writeAsciiCenter(buf, line.substring(3), true);
+            writeHeaderLine(buf, line.substring(3));
             return;
         }
         if (line.startsWith("@T@")) {
@@ -126,9 +126,8 @@ public final class EscPosPrinter {
             writeGbkRawLine(buf, line.substring(3));
             return;
         }
-        // Legacy tags from older web bundles
         if (line.startsWith("@C@")) {
-            writeAsciiCenter(buf, line.substring(3), false);
+            writeGbkRawLine(buf, line.substring(3));
             return;
         }
         if (line.startsWith("@R@")) {
@@ -138,33 +137,22 @@ public final class EscPosPrinter {
         writeGbkRawLine(buf, line);
     }
 
-    /** ASCII header: exit GBK, ESC a center + optional double size, re-enter GBK. */
-    private static void writeAsciiCenter(ByteArrayOutputStream buf, String text, boolean doubleSize)
-        throws IOException {
-        String t = text == null ? "" : text.trim();
+    /**
+     * Shop name: GBK line already has symmetric fullwidth pad from web.
+     * Apply double-width only to the trimmed text portion (strip edge fullwidth for sizing).
+     */
+    private static void writeHeaderLine(ByteArrayOutputStream buf, String paddedLine) throws IOException {
+        String t = paddedLine == null ? "" : paddedLine;
         if (t.isEmpty()) {
             buf.write('\n');
             return;
         }
-        buf.write(new byte[] {0x1C, 0x2E});
-        buf.write(0x1B);
-        buf.write(0x61);
-        buf.write(0x01);
-        if (doubleSize) {
-            buf.write(0x1D);
-            buf.write(0x21);
-            buf.write(0x11);
-        }
-        buf.write(t.getBytes(Charset.forName("US-ASCII")));
-        buf.write('\n');
+        resetStyle(buf);
         buf.write(0x1D);
         buf.write(0x21);
-        buf.write(0x00);
-        buf.write(0x1B);
-        buf.write(0x61);
-        buf.write(0x00);
-        buf.write(new byte[] {0x1B, 0x39, 0x00});
-        buf.write(new byte[] {0x1C, 0x26});
+        buf.write(0x11);
+        writeGbkRawLine(buf, t);
+        resetStyle(buf);
     }
 
     private static void writeTotalRow(ByteArrayOutputStream buf, String payload) throws IOException {
@@ -202,12 +190,23 @@ public final class EscPosPrinter {
         }
     }
 
-    /** Do not trim — leading fullwidth spaces are intentional centering. */
     private static void writeGbkRawLine(ByteArrayOutputStream buf, String text) throws IOException {
         if (text == null) return;
         String safe = text.replace('\u20AC', ' ');
         buf.write(safe.getBytes(GBK));
         buf.write('\n');
+    }
+
+    private static void resetStyle(ByteArrayOutputStream buf) throws IOException {
+        buf.write(0x1B);
+        buf.write(0x61);
+        buf.write(0x00);
+        buf.write(0x1B);
+        buf.write(0x45);
+        buf.write(0x00);
+        buf.write(0x1D);
+        buf.write(0x21);
+        buf.write(0x00);
     }
 
     private static int displayWidth(String s) {

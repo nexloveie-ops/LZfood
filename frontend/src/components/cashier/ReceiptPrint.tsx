@@ -223,12 +223,15 @@ function receiptIsWideCodePoint(cp: number): boolean {
   );
 }
 
-/** Center with fullwidth spaces — survives H10 firmware (ASCII spaces at line start are stripped). */
+/** Center: pad BOTH sides (leading-only padding looks right-aligned on H10). */
 function padCenterLine(text: string, cols = RECEIPT_CHARS_PER_LINE): string {
   const t = text.trim();
   if (!t) return '';
-  const pad = Math.max(0, Math.floor((cols - receiptDisplayWidth(t)) / 2));
-  return RECEIPT_FULLWIDTH_SPACE.repeat(pad) + t;
+  const w = receiptDisplayWidth(t);
+  const totalPad = Math.max(0, cols - w);
+  const left = Math.floor(totalPad / 2);
+  const right = totalPad - left;
+  return RECEIPT_FULLWIDTH_SPACE.repeat(left) + t + RECEIPT_FULLWIDTH_SPACE.repeat(right);
 }
 
 /** Amount suffix (never use € on serial printer). */
@@ -242,20 +245,15 @@ function plainDivider(): string {
   return '@D@';
 }
 
-/** Shop name — APK @H@: ASCII ESC/POS center + double height. */
+/** Shop name — APK @H@ double height + symmetric pad. */
 function plainHeaderCenter(line: string): string {
-  return `@H@${line.trim()}`;
+  return `@H@${padCenterLine(line)}`;
 }
 
-function isReceiptAsciiLine(text: string): boolean {
-  return /^[\x20-\x7E]+$/.test(text.trim());
-}
-
-/** ASCII → @C@ (printer ESC a center). Chinese/mixed → fullwidth pad @N@. */
+/** All centered lines: symmetric fullwidth pad via @N@ (do not use ESC a on H10). */
 function plainCenter(line: string): string {
   const t = line.trim();
   if (!t) return '';
-  if (isReceiptAsciiLine(t)) return `@C@${t}`;
   return `@N@${padCenterLine(t)}`;
 }
 
