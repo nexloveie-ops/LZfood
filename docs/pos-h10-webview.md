@@ -1,27 +1,26 @@
-# CITAQ H10：用 Firefox 收银（不用 WebView）
+# CITAQ H10：热敏打印（目标）与 WebView（收银界面）
 
-## 现状
+## 目标
 
-- **Firefox** 能打开 `https://food.lztechserve.com/demo/cashier`
-- **System WebView** 太旧 → LZFOOD Cashier App 内嵌页白屏
+**调用机身热敏打印机** — 必须通过 **LZFOOD 收银 APK**（WebView + `LZFOODPrinter`），**不能**只用 Firefox。
 
-## 方案（v0.2+ APK）
+| 方式 | 收银界面 | 热敏机 |
+|------|----------|--------|
+| LZFOOD APK (WebView) | 需更新 System WebView 后显示 React | **支持** |
+| Firefox | 能显示 | **不支持**桥接 |
+| APK → 菜单「打印机测试」 | 本地测试页 | **可测打印**（不依赖 React） |
 
-**LZFOOD 收银 APK** 改为：点击图标 → **自动用 Firefox 打开** 收银 URL，不再使用 WebView。
+## 操作步骤
 
-## 打印说明
+1. 安装 **LZFOOD 收银 APK**（不要用 Firefox 版启动器）
+2. 若收银 URL 白屏 → **设置 → Android System WebView → 更新** → 重启
+3. 先测打印：APK 菜单 → **打印机测试** → 点「测试打印」→ 应出纸
+4. WebView 正常后：完整收银结账会自动 `printText` 小票
 
-| 方式 | 内置热敏机 |
-|------|------------|
-| Firefox 收银 | 无 `LZFOODPrinter` 桥 |
-| 以后 WebView 可用的新设备 | 可用 APK 内打印桥 |
+## 与 LZFOOD 前端
 
-H10 上若要坚持机身打印机，需另接 **PrintProxy** 等 ESC/POS 方案，或更换带可更新 WebView 的 POS。
+部署含 `posPrint.ts` / `printBuiltReceipt` 的前端后，结账时 WebView 内自动走硬件打印；无 bridge 时仍用浏览器打印（H10 上无效）。
 
-## 安装
+## Firefox 能开但 App 白屏
 
-1. H10 安装 **Firefox**
-2. 安装 `LZFOOD-Cashier-debug.apk`（v0.2+）
-3. 点 **LZFOOD 收银** → 进入 Firefox 收银页
-
-可将 Firefox 书签固定到桌面；APK 图标相当于「一键打开收银」。
+说明网站正常，**WebView 内核过旧**。更新 WebView 后 App 内即可同时：显示收银 + 打印。

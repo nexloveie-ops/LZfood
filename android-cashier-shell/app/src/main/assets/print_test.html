@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LZFOOD 打印机测试</title>
+  <style>
+    body { font-family: sans-serif; padding: 16px; font-size: 16px; }
+    button { font-size: 18px; padding: 12px 20px; margin: 8px 0; width: 100%; }
+    h2 { color: #c62828; }
+  </style>
+</head>
+<body>
+  <h2>热敏打印机测试</h2>
+  <p>不依赖 React。若此页能打印，说明机身打印机与 App 桥接正常。</p>
+  <p>收银主站仍须 <b>更新 System WebView</b> 后才能显示完整界面。</p>
+  <button type="button" onclick="testPrint()">测试打印</button>
+  <button type="button" onclick="openCashier()">打开完整收银 (WebView)</button>
+  <pre id="log"></pre>
+  <script>
+    function log(msg) {
+      document.getElementById('log').textContent += msg + '\n';
+    }
+    function testPrint() {
+      if (!window.LZFOODPrinter || !window.LZFOODPrinter.printText) {
+        log('错误: 未找到 LZFOODPrinter（请用 LZFOOD 收银 App 打开，不要用 Firefox）');
+        return;
+      }
+      var text = 'LZFOOD PRINT TEST\n热敏机测试\n' + new Date().toLocaleString() + '\n';
+      window.LZFOODPrinter.printText(text, 1);
+      log('已调用 printText');
+    }
+    function openCashier() {
+      location.href = 'https://food.lztechserve.com/demo/cashier';
+    }
+  </script>
+</body>
+</html>

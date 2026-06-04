@@ -1,46 +1,41 @@
 # LZFOOD Cashier Shell (CITAQ H10-3)
 
-Launcher APK that opens the LZFOOD cashier in **Firefox** (not WebView).
+**Primary goal: built-in thermal printer** via `window.LZFOODPrinter` → serial `/dev/ttyS1` (ESC/POS).
 
-## Why Firefox?
+## You must use this App (WebView), not Firefox
 
-On CITAQ H10-3 (Android 5.1), **System WebView is too old** for the React cashier UI (white screen).
-**Firefox can load the site** — this APK starts Firefox with your cashier URL.
+| App | Cashier UI | Thermal printer |
+|-----|------------|-----------------|
+| **LZFOOD 收银 APK** | WebView (needs updated System WebView on H10) | **Yes** (`LZFOODPrinter`) |
+| Firefox only | Works on H10 | **No** JS bridge |
 
-## Configure URL
+## White screen on cashier URL?
 
-`app/src/main/res/values/strings.xml`:
+Android 5.1 **System WebView** is too old for React. Fix:
 
-```xml
-<string name="cashier_start_url">https://food.lztechserve.com/demo/cashier</string>
-```
+1. Settings → Apps → **Android System WebView** → Update → reboot  
+2. Or sideload newer `com.google.android.webview` (armeabi-v7a)  
+3. Menu → **打印机测试** — verifies printer **without** React (asset page)
 
-## Usage
+When WebView is updated, full cashier + checkout print works via LZFOOD `posPrint.ts`.
 
-1. Install **Firefox** on the H10.
-2. Install this APK.
-3. Tap **LZFOOD 收银** → Firefox opens the cashier page.
-4. Use Firefox for daily cashier work (bookmark optional).
+## URL
 
-## Printing
+`app/src/main/res/values/strings.xml` → `cashier_start_url`
 
-| Mode | Built-in thermal printer (`LZFOODPrinter`) |
-|------|---------------------------------------------|
-| **Firefox (this APK)** | **No** — Firefox cannot use the JS bridge |
-| WebView shell (removed on H10) | Yes, when WebView is new enough |
-
-For receipt printing on H10 without WebView, consider [Citaq PrintProxy](https://citaq.co.uk/) (ESC/POS on port 9100) or a newer POS with updatable WebView.
-
-The LZFOOD web app still uses normal browser print in Firefox (`window.print`) if the OS print dialog supports your printer — usually **not** the internal serial printer on H10.
+Default: `https://food.lztechserve.com/demo/cashier`
 
 ## Build
 
 ```bash
-cd android-cashier-shell
 ./gradlew assembleDebug
-# APK: app/build/outputs/apk/debug/app-debug.apk
 ```
 
-## Change URL per store
+APK: `app/build/outputs/apk/debug/app-debug.apk`
 
-Edit `cashier_start_url`, rebuild APK, reinstall.
+## Printing
+
+- Web: `printHtmlReceipt()` → `LZFOODPrinter.printText(plainText)`  
+- Native: `EscPosPrinter` writes GBK ESC/POS to `/dev/ttyS1` @ 115200  
+
+If print fails, check POSFactory print test on device (same serial path).
