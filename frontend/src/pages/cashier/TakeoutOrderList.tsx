@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { connectStoreSocket } from '../../api/storeSocket';
 import { useAuth } from '../../context/AuthContext';
 import ReceiptPrint from '../../components/cashier/ReceiptPrint';
-import { buildReceiptHTML, printViaIframe } from '../../components/cashier/ReceiptPrint';
+import { printBuiltReceipt } from '../../components/cashier/ReceiptPrint';
 import { apiFetch } from '../../api/client';
 import CashierMemberCheckoutBlock, {
   buildMemberFullWalletCheckoutBody,
@@ -126,8 +126,7 @@ export default function TakeoutOrderList() {
           }],
         };
         const bundleDiscounts = (order.appliedBundles || []).map(b => ({ name: b.name, nameEn: b.nameEn || '', discount: b.discount }));
-        const html = buildReceiptHTML(receiptData, config, undefined, undefined, bundleDiscounts);
-        printViaIframe(html, 1);
+        void printBuiltReceipt(receiptData, config, { bundleDiscounts, copies: 1 });
         setSelected(null);
         fetchOrders();
       }

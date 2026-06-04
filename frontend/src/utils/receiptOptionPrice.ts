@@ -79,3 +79,15 @@ export function receiptOptionPrintHtml(
   }
   return html;
 }
+
+/** Plain-text thermal line(s) for an option (indent with middle dot). */
+export function receiptOptionPrintPlain(o: ReceiptOptionSnapshot): string[] {
+  const { primary, secondary } = receiptOptionBilingualLines(o);
+  const fallback = receiptOptionExtraEuro(o.extraPrice) > 0 ? 'Option' : '';
+  const main = primary || secondary || fallback;
+  const pricePart = receiptOptionExtraSuffix(o.extraPrice);
+  if (!main && !pricePart) return [];
+  const lines: string[] = [`  · ${main}${pricePart}`];
+  if (secondary && primary) lines.push(`    ${secondary}`);
+  return lines;
+}

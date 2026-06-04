@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { useState, useEffect, useCallback } from 'react';
 import { connectStoreSocket } from '../api/storeSocket';
 import { playDineInSound, playTakeoutSound, unlockAudio } from '../utils/orderSound';
-import { printViaIframe } from '../components/cashier/ReceiptPrint';
+import { printHtmlReceipt } from '../utils/posPrint';
 import LanguageSwitcher from '../components/LanguageSwitcher';
 import { useRestaurantConfig } from '../hooks/useRestaurantConfig';
 import { apiFetch } from '../api/client';
@@ -112,7 +112,7 @@ export default function CashierLayout() {
       html += `<div class="center" style="font-size:12px;margin-top:4px">Printed by ${user?.username || ''} at ${timeStr}</div>`;
       html += `</body></html>`;
 
-      printViaIframe(html, 1);
+      void printHtmlReceipt({ html, copies: 1 });
     } catch {
       alert(t('cashier.settlementFailed'));
     } finally {

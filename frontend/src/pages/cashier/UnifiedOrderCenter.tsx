@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { connectStoreSocket } from '../../api/storeSocket';
 import { useAuth } from '../../context/AuthContext';
 import { apiFetch } from '../../api/client';
-import { buildReceiptHTML, printViaIframe, type BundleDiscountInfo } from '../../components/cashier/ReceiptPrint';
+import { printBuiltReceipt, type BundleDiscountInfo } from '../../components/cashier/ReceiptPrint';
 import { type ReceiptOptionSnapshot, receiptOptionExtraEuro } from '../../utils/receiptOptionPrice';
 import { computeDineInUnsettledPayableEuro, computePartialDineInSettlementPreview, dineInHasUnsettledFoodLineQty } from '../../utils/orderPayableEuro';
 import CashierMemberCheckoutBlock, {
@@ -369,8 +369,11 @@ export default function UnifiedOrderCenter() {
     const receiptRes = await apiFetch(`/api/checkout/receipt/${checkoutId}`);
     if (!receiptRes.ok) return;
     const receipt = await receiptRes.json();
-    const html = buildReceiptHTML(receipt, config, opts?.cashReceived, opts?.changeAmount);
-    await printViaIframe(html, 1);
+    await printBuiltReceipt(receipt, config, {
+      cashReceived: opts?.cashReceived,
+      changeAmount: opts?.changeAmount,
+      copies: 1,
+    });
   }, [config]);
 
   const checkoutSeat = useCallback(async (
@@ -827,8 +830,7 @@ export default function UnifiedOrderCenter() {
             },
           ],
         };
-        const html = buildReceiptHTML(receiptData, config, undefined, undefined, bundleDiscounts);
-        await printViaIframe(html, 1);
+        await printBuiltReceipt(receiptData, config, { bundleDiscounts, copies: 1 });
         const mark = await apiFetch(`/api/orders/${src._id}/kitchen-printed-increment`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -887,8 +889,7 @@ export default function UnifiedOrderCenter() {
           },
         ],
       };
-      const html = buildReceiptHTML(receiptData, config, undefined, undefined, bundleDiscounts);
-      await printViaIframe(html, 1);
+      await printBuiltReceipt(receiptData, config, { bundleDiscounts, copies: 1 });
 
       if (kitchenTicket === 'full_mark_all' && isPayAfterDineIn) {
         const mark = await apiFetch(`/api/orders/${src._id}/kitchen-printed-all`, {
@@ -995,8 +996,7 @@ export default function UnifiedOrderCenter() {
           orders: receiptOrders,
         };
 
-        const html = buildReceiptHTML(receiptData, config, undefined, undefined, bundleDiscounts);
-        await printViaIframe(html, 1);
+        await printBuiltReceipt(receiptData, config, { bundleDiscounts, copies: 1 });
 
         for (const src of sources) {
           const isPayAfterDineIn = dineInPayAfterEligibleForKitchenMark(src, config.dine_in_workflow_mode === 'pay_after');

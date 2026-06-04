@@ -11,7 +11,7 @@ import CashierAdHocOptionModal, { type AdHocOptionFormResult } from '../../compo
 import OptionSelectModal, { type OptionGroup } from '../../components/customer/OptionSelectModal';
 import type { CartItemOption } from '../../context/CartContext';
 import ReceiptPrint from '../../components/cashier/ReceiptPrint';
-import { buildReceiptHTML, printViaIframe } from '../../components/cashier/ReceiptPrint';
+import { printBuiltReceipt } from '../../components/cashier/ReceiptPrint';
 import { matchBundles, calcBundleTotal, type OfferData, type MatchedBundle } from '../../utils/bundleMatcher';
 import {
   cashierMenuSessionCacheKey,
@@ -1522,10 +1522,12 @@ export default function CashierOrder() {
             items: orderData.items,
           }],
         };
-        const html = buildReceiptHTML(receiptData, cfg, undefined, undefined,
-          matchedBundles.length > 0 ? matchedBundles.map(b => ({ name: b.offer.name, nameEn: b.offer.nameEn, discount: b.savings })) : undefined
-        );
-        printViaIframe(html, 1);
+        void printBuiltReceipt(receiptData, cfg, {
+          bundleDiscounts: matchedBundles.length > 0
+            ? matchedBundles.map((b) => ({ name: b.offer.name, nameEn: b.offer.nameEn, discount: b.savings }))
+            : undefined,
+          copies: 1,
+        });
       } catch { /* print error ignored */ }
 
       setPhoneOrderId(orderData._id);
@@ -1705,16 +1707,12 @@ export default function CashierOrder() {
             },
           ],
         };
-        const html = buildReceiptHTML(
-          receiptData,
-          cfg,
-          undefined,
-          undefined,
-          matchedBundles.length > 0
+        void printBuiltReceipt(receiptData, cfg, {
+          bundleDiscounts: matchedBundles.length > 0
             ? matchedBundles.map((b) => ({ name: b.offer.name, nameEn: b.offer.nameEn, discount: b.savings }))
             : undefined,
-        );
-        printViaIframe(html, 1);
+          copies: 1,
+        });
       } catch {
         /* print error ignored */
       }
@@ -1916,14 +1914,12 @@ export default function CashierOrder() {
             items: receiptItems,
           }],
         };
-        const html = buildReceiptHTML(
-          receiptData,
-          cfg,
-          undefined,
-          undefined,
-          matchedBundles.length > 0 ? matchedBundles.map((b) => ({ name: b.offer.name, nameEn: b.offer.nameEn, discount: b.savings })) : undefined,
-        );
-        void printViaIframe(html, 1);
+        void printBuiltReceipt(receiptData, cfg, {
+          bundleDiscounts: matchedBundles.length > 0
+            ? matchedBundles.map((b) => ({ name: b.offer.name, nameEn: b.offer.nameEn, discount: b.savings }))
+            : undefined,
+          copies: 1,
+        });
       } catch {
         /* guest slip print is best-effort */
       }

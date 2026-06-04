@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { connectStoreSocket } from '../../api/storeSocket';
 import { useAuth } from '../../context/AuthContext';
 import OrderDetail, { type Order } from '../../components/cashier/OrderDetail';
-import { buildReceiptHTML, printViaIframe } from '../../components/cashier/ReceiptPrint';
+import { printBuiltReceipt } from '../../components/cashier/ReceiptPrint';
 import { apiFetch } from '../../api/client';
 import { computeCustomerFacingPayableEuro } from '../../utils/orderPayableEuro';
 
@@ -135,8 +135,7 @@ export default function DineInOrderBoard() {
             }],
           };
           const bundleDiscounts = (order.appliedBundles || []).map(b => ({ name: b.name, nameEn: b.nameEn || '', discount: b.discount }));
-          const html = buildReceiptHTML(receiptData, config, undefined, undefined, bundleDiscounts);
-          printViaIframe(html, 1);
+          void printBuiltReceipt(receiptData, config, { bundleDiscounts, copies: 1 });
         }
       }
       fetchOrders();

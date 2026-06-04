@@ -6,8 +6,10 @@ import {
   receiptOptionExtraSuffix,
   receiptOptionFallbackLabel,
   receiptOptionPrintHtml,
+  receiptOptionPrintPlain,
   type ReceiptOptionSnapshot,
 } from '../../utils/receiptOptionPrice';
+import { printHtmlReceipt } from '../../utils/posPrint';
 
 interface ReceiptOrderItem {
   _id: string;
@@ -197,6 +199,220 @@ function parseQRCodes(text: string): Array<{ type: 'text' | 'qr'; value: string 
   }
   if (lastIndex < text.length) segments.push({ type: 'text', value: text.slice(lastIndex) });
   return segments;
+}
+
+/** CITAQ H10-3 internal printer: 48 chars/line (ESC/POS). */
+const RECEIPT_CHARS_PER_LINE = 48;
+
+function plainDivider(): string {
+  return '-'.repeat(RECEIPT_CHARS_PER_LINE);
+}
+
+function plainCenter(line: string): string {
+  const t = line.trim();
+  if (t.length >= RECEIPT_CHARS_PER_LINE) return t.slice(0, RECEIPT_CHARS_PER_LINE);
+  const pad = Math.floor((RECEIPT_CHARS_PER_LINE - t.length) / 2);
+  return `${' '.repeat(Math.max(0, pad))}${t}`;
+}
+
+function plainRow(left: string, right: string): string {
+  const l = left.trim();
+  const r = right.trim();
+  const gap = RECEIPT_CHARS_PER_LINE - l.length - r.length;
+  if (gap >= 1) return `${l}${' '.repeat(gap)}${r}`;
+  const maxL = Math.max(8, RECEIPT_CHARS_PER_LINE - r.length - 1);
+  const clipped = l.length > maxL ? `${l.slice(0, maxL - 1)}…` : l;
+  return `${clipped} ${r}`;
+}
+
+function plainWrap(text: string, indent = ''): string[] {
+  const max = RECEIPT_CHARS_PER_LINE - indent.length;
+  const normalized = text.replace(/\s+/g, ' ').trim();
+  if (!normalized) return [];
+  const out: string[] = [];
+  let cur = '';
+  for (const w of normalized.split(' ')) {
+    const next = cur ? `${cur} ${w}` : w;
+    if (next.length <= max) {
+      cur = next;
+    } else {
+      if (cur) out.push(indent + cur);
+      cur = w.length > max ? w.slice(0, max) : w;
+    }
+  }
+  if (cur) out.push(indent + cur);
+  return out;
+}
+
+/** Plain-text receipt for POS thermal bridge (same data as buildReceiptHTML). */
+function buildReceiptPlainText(
+  receipt: ReceiptData,
+  config: RestaurantConfig,
+  cashReceived?: number,
+  changeAmount?: number,
+  bundleDiscounts?: BundleDiscountInfo[],
+): string {
+  const lines: string[] = [];
+  const isDineIn = receipt.orders.some((o) => o.type === 'dine_in');
+  const isPhone = receipt.orders.some((o) => o.type === 'phone');
+  const isDelivery = receipt.orders.some((o) => o.type === 'delivery');
+  const checkedOutAt = new Date(receipt.checkedOutAt);
+  const paymentLabel = paymentMethodLabel(receipt.paymentMethod);
+  const restaurantName = config.restaurant_name_en || config.restaurant_name_zh || '';
+  const termsSegments = config.receipt_terms ? parseQRCodes(config.receipt_terms) : [];
+  const receiptItemQty = countReceiptItemQty(receipt);
+  const partialDesc = describeDineInPartialLines(receipt);
+
+  if (restaurantName) lines.push(plainCenter(restaurantName));
+  if (config.restaurant_address) lines.push(plainCenter(config.restaurant_address));
+  if (config.restaurant_phone) lines.push(plainCenter(`Tel: ${config.restaurant_phone}`));
+  if (config.restaurant_website) lines.push(plainCenter(config.restaurant_website));
+  if (config.restaurant_email) lines.push(plainCenter(config.restaurant_email));
+
+  if (isDineIn) {
+    if (receipt.tableNumber != null && receipt.tableNumber > 0) {
+      lines.push(plainCenter(`Table ${receipt.tableNumber}`));
+    }
+    const seats = [...new Set(receipt.orders.map((o) => o.seatNumber).filter((s) => s != null && s > 0))].sort();
+    if (seats.length > 0) lines.push(plainCenter(`Seat ${seats.join(', ')}`));
+    if (receipt.wholeTableKitchenTicket) {
+      lines.push(plainCenter('全桌厨房单 / Whole table'));
+      const labels = receipt.orders
+        .map((o) => o.dineInGuestLabel?.trim())
+        .filter((g): g is string => Boolean(g && g.length > 0));
+      const nums = receipt.orders.map((o) => o.dineInOrderNumber).filter((n): n is string => Boolean(n && String(n).trim()));
+      if (labels.length > 0) lines.push(plainCenter(`Label: ${labels.join(' · ')}`));
+      else if (nums.length > 0) lines.push(plainCenter(`Order: ${nums.join(' · ')}`));
+    } else {
+      const orderNum = receipt.orders.find((o) => o.dineInOrderNumber)?.dineInOrderNumber;
+      if (orderNum) lines.push(plainCenter(`Order #${orderNum}`));
+    }
+    if (receiptItemQty > 0) lines.push(plainCenter(`Item: ${receiptItemQty}`));
+    lines.push(plainCenter(`Ref: ${String(receipt.checkoutId).slice(-8).toUpperCase()}`));
+  } else if (isPhone) {
+    lines.push(plainCenter(`Phone #${receipt.orders[0]?.dailyOrderNumber || ''}`));
+    if (receiptItemQty > 0) lines.push(plainCenter(`Item: ${receiptItemQty}`));
+  } else if (isDelivery) {
+    lines.push(plainCenter(`Delivery #${receipt.orders[0]?.dailyOrderNumber || ''}`));
+    if (receiptItemQty > 0) lines.push(plainCenter(`Item: ${receiptItemQty}`));
+  } else {
+    lines.push(plainCenter(`Pickup #${receipt.orders[0]?.dailyOrderNumber || ''}`));
+    if (receiptItemQty > 0) lines.push(plainCenter(`Item: ${receiptItemQty}`));
+  }
+
+  if (!isDineIn) {
+    const guestTel = receipt.orders.map((o) => o.customerPhone?.trim()).find(Boolean);
+    const guestName = receipt.orders.map((o) => o.customerName?.trim()).find(Boolean);
+    if (guestTel) lines.push(...plainWrap(`Guest Tel: ${guestTel}`));
+    if (guestName) lines.push(...plainWrap(`Name: ${guestName}`));
+    const delForAddr =
+      receipt.orders.find((o) => o.type === 'delivery')
+      ?? receipt.orders.find((o) => !!(o.deliveryAddress?.trim() || o.postalCode?.trim()));
+    if (delForAddr && (delForAddr.deliveryAddress?.trim() || delForAddr.postalCode?.trim())) {
+      lines.push(plainCenter('Delivery (guest)'));
+      const addr = delForAddr.deliveryAddress?.trim();
+      const pc = delForAddr.postalCode?.trim();
+      if (addr) lines.push(...plainWrap(addr));
+      if (pc) lines.push(...plainWrap(`Postcode: ${pc}`));
+    }
+  }
+
+  lines.push(plainDivider());
+
+  if (partialDesc) {
+    lines.push(plainCenter('Partial checkout / 部分结账'));
+    for (const L of partialDesc.lines) {
+      lines.push(plainRow(formatReceiptItemTitle(L.qty, L.title), `€${L.amountEuro.toFixed(2)}`));
+      if (L.titleEn && L.titleEn !== L.title) lines.push(`  ${L.titleEn}`);
+      if (L.options) {
+        for (const o of L.options) lines.push(...receiptOptionPrintPlain(o));
+      }
+    }
+  } else {
+    for (let oi = 0; oi < receipt.orders.length; oi++) {
+      const order = receipt.orders[oi];
+      if (receipt.wholeTableKitchenTicket && receipt.orders.length > 1 && order.type === 'dine_in') {
+        const guest = order.dineInGuestLabel?.trim();
+        const sub = order.dineInOrderNumber?.trim() || String(order._id || '').slice(-6);
+        const rowLabel = guest ? `— ${guest} —` : `— #${sub} —`;
+        lines.push(plainCenter(rowLabel));
+      }
+      for (const item of order.items) {
+        lines.push(
+          plainRow(
+            formatReceiptItemTitle(item.quantity, item.itemName),
+            `€${(item.unitPrice * item.quantity).toFixed(2)}`,
+          ),
+        );
+        if (item.itemNameEn && item.itemNameEn !== item.itemName) {
+          lines.push(`  ${item.itemNameEn}`);
+        }
+        if (item.selectedOptions) {
+          for (const o of item.selectedOptions) lines.push(...receiptOptionPrintPlain(o));
+        }
+      }
+    }
+  }
+
+  lines.push(plainDivider());
+
+  const { deliveryAmt, showLegacyDeliveryRow } = receiptDeliveryFeeBreakdown(receipt);
+  const totalBundleDiscount = (bundleDiscounts || []).reduce((s, b) => s + b.discount, 0);
+  if (partialDesc) {
+    lines.push(plainRow('Subtotal (lines)', `€${partialDesc.subtotalLinesEuro.toFixed(2)}`));
+    if (partialDesc.bundleOrAdjustmentsEuro > 0.001) {
+      lines.push(plainRow('Bundle/coupon', `-€${partialDesc.bundleOrAdjustmentsEuro.toFixed(2)}`));
+    }
+    if (showLegacyDeliveryRow) lines.push(plainRow('Delivery', `€${deliveryAmt.toFixed(2)}`));
+    lines.push(plainRow('Total', `€${receipt.totalAmount.toFixed(2)}`));
+  } else if (totalBundleDiscount > 0) {
+    const foodAfterBundles = receipt.totalAmount - deliveryAmt;
+    const subtotal = foodAfterBundles + totalBundleDiscount;
+    lines.push(plainRow('Subtotal', `€${subtotal.toFixed(2)}`));
+    for (const bd of bundleDiscounts || []) {
+      lines.push(plainRow(`Disc ${bd.nameEn || bd.name}`, `-€${bd.discount.toFixed(2)}`));
+    }
+    if (showLegacyDeliveryRow) lines.push(plainRow('Delivery', `€${deliveryAmt.toFixed(2)}`));
+    lines.push(plainRow('Total', `€${receipt.totalAmount.toFixed(2)}`));
+  } else {
+    if (showLegacyDeliveryRow) lines.push(plainRow('Delivery', `€${deliveryAmt.toFixed(2)}`));
+    lines.push(plainRow('Total', `€${receipt.totalAmount.toFixed(2)}`));
+  }
+  lines.push(plainRow('Payment', paymentLabel));
+  if ((receipt.memberCreditUsed ?? 0) > 0.001) {
+    lines.push(plainRow('Member credit', `€${(receipt.memberCreditUsed ?? 0).toFixed(2)}`));
+  }
+  if (receipt.paymentMethod === 'mixed') {
+    lines.push(plainRow('Cash', `€${(receipt.cashAmount ?? 0).toFixed(2)}`));
+    lines.push(plainRow('Card', `€${(receipt.cardAmount ?? 0).toFixed(2)}`));
+  }
+  if (receipt.paymentMethod === 'cash' && cashReceived != null && cashReceived > 0) {
+    lines.push(plainDivider());
+    lines.push(plainRow('Cash Received', `€${cashReceived.toFixed(2)}`));
+    if (changeAmount != null && changeAmount > 0) {
+      lines.push(plainRow('Change', `€${changeAmount.toFixed(2)}`));
+    }
+  }
+
+  if (termsSegments.length > 0) {
+    lines.push(plainDivider());
+    for (const seg of termsSegments) {
+      if (seg.type === 'text') {
+        lines.push(...plainWrap(seg.value));
+      } else {
+        lines.push('[QR]');
+        lines.push(...plainWrap(seg.value));
+      }
+    }
+  }
+
+  const thanks =
+    isDineIn ? 'Thank you for dining with us!' : isPhone ? 'Thank you!' : isDelivery ? 'Thank you for your order!' : 'Thank you for your order!';
+  lines.push(plainDivider());
+  lines.push(plainCenter(checkedOutAt.toLocaleString('en-GB')));
+  lines.push(plainCenter(thanks));
+
+  return `${lines.join('\n')}\n`;
 }
 
 /** Build standalone receipt HTML for iframe printing */
@@ -422,64 +638,6 @@ function buildReceiptHTML(
   return html;
 }
 
-/** Print HTML content via hidden iframe. Resolves after print dialog is triggered (and iframe cleaned up). */
-function printViaIframe(html: string, copies: number): Promise<void> {
-  return new Promise((resolve) => {
-    const iframe = document.createElement('iframe');
-    iframe.style.position = 'fixed';
-    iframe.style.left = '-9999px';
-    iframe.style.top = '-9999px';
-    iframe.style.width = '0';
-    iframe.style.height = '0';
-    document.body.appendChild(iframe);
-
-    const doc = iframe.contentDocument || iframe.contentWindow?.document;
-    if (!doc) {
-      try {
-        document.body.removeChild(iframe);
-      } catch {
-        /* ignore */
-      }
-      resolve();
-      return;
-    }
-
-    let done = false;
-    const runPrint = () => {
-      if (done) return;
-      done = true;
-      const images = doc.querySelectorAll('img');
-      const imageWaits = Array.from(images).map(img => {
-        if (img.complete) return Promise.resolve();
-        return new Promise<void>(r => { img.onload = () => r(); img.onerror = () => r(); });
-      });
-      Promise.all(imageWaits).then(() => {
-        setTimeout(() => {
-          for (let i = 0; i < copies; i++) {
-            iframe.contentWindow?.print();
-          }
-          setTimeout(() => {
-            try {
-              document.body.removeChild(iframe);
-            } catch {
-              /* ignore */
-            }
-            resolve();
-          }, 1000);
-        }, 100);
-      });
-    };
-
-    iframe.onload = runPrint;
-
-    doc.open();
-    doc.write(html);
-    doc.close();
-
-    setTimeout(runPrint, 250);
-  });
-}
-
 export default function ReceiptPrint({ checkoutId, cashReceived, changeAmount, bundleDiscounts, printCopies }: ReceiptPrintProps) {
   const [receipt, setReceipt] = useState<ReceiptData | null>(null);
   const [config, setConfig] = useState<RestaurantConfig>({});
@@ -518,7 +676,8 @@ export default function ReceiptPrint({ checkoutId, cashReceived, changeAmount, b
     if (receipt && configLoaded && !autoPrintDone.current) {
       autoPrintDone.current = true;
       const html = buildReceiptHTML(receipt, config, cashReceived, changeAmount, bundleDiscounts);
-      void printViaIframe(html, printCopies ?? copies).catch(() => {});
+      const plainText = buildReceiptPlainText(receipt, config, cashReceived, changeAmount, bundleDiscounts);
+      void printHtmlReceipt({ html, plainText, copies: printCopies ?? copies }).catch(() => {});
     }
   }, [receipt, config, configLoaded, copies, printCopies, cashReceived, changeAmount, bundleDiscounts]);
 
@@ -526,7 +685,8 @@ export default function ReceiptPrint({ checkoutId, cashReceived, changeAmount, b
   const handleManualPrint = useCallback(() => {
     if (!receipt) return;
     const html = buildReceiptHTML(receipt, config, cashReceived, changeAmount, bundleDiscounts);
-    void printViaIframe(html, 1).catch(() => {});
+    const plainText = buildReceiptPlainText(receipt, config, cashReceived, changeAmount, bundleDiscounts);
+    void printHtmlReceipt({ html, plainText, copies: 1 }).catch(() => {});
   }, [receipt, config, cashReceived, changeAmount, bundleDiscounts]);
 
   // Expose manual print globally so parent buttons can use window.print()
@@ -757,4 +917,34 @@ export default function ReceiptPrint({ checkoutId, cashReceived, changeAmount, b
   );
 }
 
-export { printViaIframe, buildReceiptHTML };
+/** Print checkout receipt: POS bridge when present, else browser iframe print. */
+export async function printBuiltReceipt(
+  receipt: ReceiptData,
+  config: RestaurantConfig,
+  opts?: {
+    cashReceived?: number;
+    changeAmount?: number;
+    bundleDiscounts?: BundleDiscountInfo[];
+    copies?: number;
+  },
+) {
+  const html = buildReceiptHTML(
+    receipt,
+    config,
+    opts?.cashReceived,
+    opts?.changeAmount,
+    opts?.bundleDiscounts,
+  );
+  const plainText = buildReceiptPlainText(
+    receipt,
+    config,
+    opts?.cashReceived,
+    opts?.changeAmount,
+    opts?.bundleDiscounts,
+  );
+  return printHtmlReceipt({ html, plainText, copies: opts?.copies ?? 1 });
+}
+
+export { buildReceiptHTML, buildReceiptPlainText };
+export { printViaIframe } from '../../utils/iframePrint';
+export { printHtmlReceipt } from '../../utils/posPrint';

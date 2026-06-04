@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">LZFOOD Cashier</string>
+    <!-- Change to your production cashier URL -->
+    <string name="cashier_start_url">https://food.lztechserve.com/demo/cashier</string>
+</resources>

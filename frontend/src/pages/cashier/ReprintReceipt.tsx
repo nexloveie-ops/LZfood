@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../../context/AuthContext';
-import { buildReceiptHTML, printViaIframe } from '../../components/cashier/ReceiptPrint';
+import { printBuiltReceipt } from '../../components/cashier/ReceiptPrint';
 import { receiptOptionBilingualLines, receiptOptionExtraEuro, receiptOptionExtraSuffix } from '../../utils/receiptOptionPrice';
 import { bundleAdjustedLineTotals, lineGrossEuro, type AppliedBundleLite } from '../../utils/bundleLineAllocation';
 import { apiFetch } from '../../api/client';
@@ -155,8 +155,7 @@ export default function ReprintReceipt() {
         items: o.items,
       })),
     };
-    const html = buildReceiptHTML(receiptData, config);
-    printViaIframe(html, 1);
+    void printBuiltReceipt(receiptData, config, { copies: 1 });
     setTimeout(() => setPrinting(null), 2000);
   };
 
