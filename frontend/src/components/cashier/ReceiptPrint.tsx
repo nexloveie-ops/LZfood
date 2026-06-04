@@ -201,8 +201,8 @@ function parseQRCodes(text: string): Array<{ type: 'text' | 'qr'; value: string 
   return segments;
 }
 
-/** CITAQ H10-3 thermal: 48 columns; layout done here (H10 strips leading ASCII spaces). */
-const RECEIPT_CHARS_PER_LINE = 48;
+/** CITAQ H10-3 built-in printer effective width (~32 cols). Using 48 over-pads → looks right-aligned. */
+const RECEIPT_CHARS_PER_LINE = 32;
 const RECEIPT_FULLWIDTH_SPACE = '\u3000';
 
 function receiptDisplayWidth(s: string): number {
@@ -242,13 +242,21 @@ function plainDivider(): string {
   return '@D@';
 }
 
-/** Shop name — same fullwidth center as address (@H@ fails on H10). */
+/** Shop name — APK @H@: ASCII ESC/POS center + double height. */
 function plainHeaderCenter(line: string): string {
-  return plainCenter(line);
+  return `@H@${line.trim()}`;
 }
 
+function isReceiptAsciiLine(text: string): boolean {
+  return /^[\x20-\x7E]+$/.test(text.trim());
+}
+
+/** ASCII → @C@ (printer ESC a center). Chinese/mixed → fullwidth pad @N@. */
 function plainCenter(line: string): string {
-  return `@N@${padCenterLine(line)}`;
+  const t = line.trim();
+  if (!t) return '';
+  if (isReceiptAsciiLine(t)) return `@C@${t}`;
+  return `@N@${padCenterLine(t)}`;
 }
 
 function wrapByDisplayWidth(text: string, cols: number): string[] {

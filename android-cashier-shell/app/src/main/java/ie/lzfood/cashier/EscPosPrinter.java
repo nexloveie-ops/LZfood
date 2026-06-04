@@ -19,7 +19,7 @@ public final class EscPosPrinter {
     private static final String TAG = "EscPosPrinter";
     private static final String DEVICE_PATH = "/dev/ttyS1";
     private static final int BAUD = 115200;
-    private static final int LINE_COLS = 48;
+    private static final int LINE_COLS = 32;
 
     private static final ExecutorService EXEC = Executors.newSingleThreadExecutor();
     private static final Charset GBK;
@@ -128,7 +128,7 @@ public final class EscPosPrinter {
         }
         // Legacy tags from older web bundles
         if (line.startsWith("@C@")) {
-            writeGbkRawLine(buf, line.substring(3));
+            writeAsciiCenter(buf, line.substring(3), false);
             return;
         }
         if (line.startsWith("@R@")) {

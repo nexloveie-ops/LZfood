@@ -20,7 +20,7 @@ public class PrinterBridge {
 
     @JavascriptInterface
     public String getVersion() {
-        return "0.3.5-thermal";
+        return "0.3.6-32col";
     }
 
     @JavascriptInterface
