@@ -201,28 +201,126 @@ function parseQRCodes(text: string): Array<{ type: 'text' | 'qr'; value: string 
   return segments;
 }
 
-/** CITAQ H10-3 internal printer: 48 chars/line (ESC/POS). */
+/** CITAQ H10-3 thermal: 48 columns; layout done here (H10 strips leading ASCII spaces). */
 const RECEIPT_CHARS_PER_LINE = 48;
+const RECEIPT_FULLWIDTH_SPACE = '\u3000';
+
+function receiptDisplayWidth(s: string): number {
+  let w = 0;
+  for (const ch of s) {
+    const cp = ch.codePointAt(0) ?? 0;
+    w += receiptIsWideCodePoint(cp) ? 2 : 1;
+  }
+  return w;
+}
+
+function receiptIsWideCodePoint(cp: number): boolean {
+  return (
+    (cp >= 0x3000 && cp <= 0x9fff)
+    || (cp >= 0xac00 && cp <= 0xd7af)
+    || (cp >= 0xff01 && cp <= 0xff60)
+    || (cp >= 0x20000 && cp <= 0x2ffff)
+  );
+}
+
+/** Center with fullwidth spaces — survives H10 firmware (ASCII spaces at line start are stripped). */
+function padCenterLine(text: string, cols = RECEIPT_CHARS_PER_LINE): string {
+  const t = text.trim();
+  if (!t) return '';
+  const pad = Math.max(0, Math.floor((cols - receiptDisplayWidth(t)) / 2));
+  return RECEIPT_FULLWIDTH_SPACE.repeat(pad) + t;
+}
+
+/** Amount suffix (never use € on serial printer). */
+function formatPlainEuro(amount: number, opts?: { negate?: boolean }): string {
+  const n = Number(amount);
+  const v = Number.isFinite(n) ? Math.abs(n).toFixed(2) : '0.00';
+  return opts?.negate ? `-${v} EUR` : `${v} EUR`;
+}
 
 function plainDivider(): string {
-  return '-'.repeat(RECEIPT_CHARS_PER_LINE);
+  return '@D@';
+}
+
+/** Shop name — same fullwidth center as address (@H@ fails on H10). */
+function plainHeaderCenter(line: string): string {
+  return plainCenter(line);
 }
 
 function plainCenter(line: string): string {
-  const t = line.trim();
-  if (t.length >= RECEIPT_CHARS_PER_LINE) return t.slice(0, RECEIPT_CHARS_PER_LINE);
-  const pad = Math.floor((RECEIPT_CHARS_PER_LINE - t.length) / 2);
-  return `${' '.repeat(Math.max(0, pad))}${t}`;
+  return `@N@${padCenterLine(line)}`;
+}
+
+function wrapByDisplayWidth(text: string, cols: number): string[] {
+  const normalized = text.replace(/\s+/g, ' ').trim();
+  if (!normalized) return [];
+  const out: string[] = [];
+  let cur = '';
+  const flush = () => {
+    if (cur) {
+      out.push(cur);
+      cur = '';
+    }
+  };
+  for (const w of normalized.split(' ')) {
+    const next = cur ? `${cur} ${w}` : w;
+    if (receiptDisplayWidth(next) <= cols) {
+      cur = next;
+      continue;
+    }
+    flush();
+    if (receiptDisplayWidth(w) <= cols) {
+      cur = w;
+      continue;
+    }
+    let chunk = '';
+    for (const ch of w) {
+      const trial = chunk + ch;
+      if (receiptDisplayWidth(trial) > cols) {
+        if (chunk) out.push(chunk);
+        chunk = ch;
+      } else {
+        chunk = trial;
+      }
+    }
+    cur = chunk;
+  }
+  flush();
+  return out;
+}
+
+function plainCenterWrap(text: string): string[] {
+  return wrapByDisplayWidth(text, RECEIPT_CHARS_PER_LINE).map((chunk) => plainCenter(chunk));
+}
+
+/** Right-align amount (fullwidth pad — H10 strips leading ASCII spaces). */
+function padRightLine(text: string, cols = RECEIPT_CHARS_PER_LINE): string {
+  const t = text.trim();
+  const pad = Math.max(0, cols - receiptDisplayWidth(t));
+  const fw = Math.floor(pad / 2);
+  const sp = pad - fw * 2;
+  return RECEIPT_FULLWIDTH_SPACE.repeat(fw) + ' '.repeat(sp) + t;
+}
+
+function padRowLine(left: string, right: string, cols = RECEIPT_CHARS_PER_LINE): string {
+  const l = left.trim();
+  const r = right.trim();
+  const gap = cols - receiptDisplayWidth(l) - receiptDisplayWidth(r);
+  if (gap >= 1) return `${l}${' '.repeat(gap)}${r}`;
+  return `${l}\n${padRightLine(r, cols)}`;
+}
+
+/** Item: name line + amount on next line (avoids 9. / 50 wrap on narrow firmware). */
+function plainItemLines(qtyTitle: string, amount: number): string[] {
+  return [`@N@${qtyTitle.trim()}`, `@N@${padRightLine(formatPlainEuro(amount))}`];
 }
 
 function plainRow(left: string, right: string): string {
-  const l = left.trim();
-  const r = right.trim();
-  const gap = RECEIPT_CHARS_PER_LINE - l.length - r.length;
-  if (gap >= 1) return `${l}${' '.repeat(gap)}${r}`;
-  const maxL = Math.max(8, RECEIPT_CHARS_PER_LINE - r.length - 1);
-  const clipped = l.length > maxL ? `${l.slice(0, maxL - 1)}…` : l;
-  return `${clipped} ${r}`;
+  return `@N@${padRowLine(left, right)}`;
+}
+
+function plainTotalRow(left: string, right: string): string {
+  return `@T@${padRowLine(left, right)}`;
 }
 
 function plainWrap(text: string, indent = ''): string[] {
@@ -236,11 +334,11 @@ function plainWrap(text: string, indent = ''): string[] {
     if (next.length <= max) {
       cur = next;
     } else {
-      if (cur) out.push(indent + cur);
+      if (cur) out.push(`@N@${indent}${cur}`);
       cur = w.length > max ? w.slice(0, max) : w;
     }
   }
-  if (cur) out.push(indent + cur);
+  if (cur) out.push(`@N@${indent}${cur}`);
   return out;
 }
 
@@ -263,10 +361,10 @@ function buildReceiptPlainText(
   const receiptItemQty = countReceiptItemQty(receipt);
   const partialDesc = describeDineInPartialLines(receipt);
 
-  if (restaurantName) lines.push(plainCenter(restaurantName));
-  if (config.restaurant_address) lines.push(plainCenter(config.restaurant_address));
+  if (restaurantName) lines.push(plainHeaderCenter(restaurantName));
+  if (config.restaurant_address) lines.push(...plainCenterWrap(config.restaurant_address));
   if (config.restaurant_phone) lines.push(plainCenter(`Tel: ${config.restaurant_phone}`));
-  if (config.restaurant_website) lines.push(plainCenter(config.restaurant_website));
+  if (config.restaurant_website) lines.push(...plainCenterWrap(config.restaurant_website));
   if (config.restaurant_email) lines.push(plainCenter(config.restaurant_email));
 
   if (isDineIn) {
@@ -322,8 +420,8 @@ function buildReceiptPlainText(
   if (partialDesc) {
     lines.push(plainCenter('Partial checkout / 部分结账'));
     for (const L of partialDesc.lines) {
-      lines.push(plainRow(formatReceiptItemTitle(L.qty, L.title), `€${L.amountEuro.toFixed(2)}`));
-      if (L.titleEn && L.titleEn !== L.title) lines.push(`  ${L.titleEn}`);
+      lines.push(...plainItemLines(formatReceiptItemTitle(L.qty, L.title), L.amountEuro));
+      if (L.titleEn && L.titleEn !== L.title) lines.push(`@N@  ${L.titleEn}`);
       if (L.options) {
         for (const o of L.options) lines.push(...receiptOptionPrintPlain(o));
       }
@@ -339,13 +437,13 @@ function buildReceiptPlainText(
       }
       for (const item of order.items) {
         lines.push(
-          plainRow(
+          ...plainItemLines(
             formatReceiptItemTitle(item.quantity, item.itemName),
-            `€${(item.unitPrice * item.quantity).toFixed(2)}`,
+            item.unitPrice * item.quantity,
           ),
         );
         if (item.itemNameEn && item.itemNameEn !== item.itemName) {
-          lines.push(`  ${item.itemNameEn}`);
+          lines.push(`@N@  ${item.itemNameEn}`);
         }
         if (item.selectedOptions) {
           for (const o of item.selectedOptions) lines.push(...receiptOptionPrintPlain(o));
@@ -359,38 +457,38 @@ function buildReceiptPlainText(
   const { deliveryAmt, showLegacyDeliveryRow } = receiptDeliveryFeeBreakdown(receipt);
   const totalBundleDiscount = (bundleDiscounts || []).reduce((s, b) => s + b.discount, 0);
   if (partialDesc) {
-    lines.push(plainRow('Subtotal (lines)', `€${partialDesc.subtotalLinesEuro.toFixed(2)}`));
+    lines.push(plainRow('Subtotal (lines)', formatPlainEuro(partialDesc.subtotalLinesEuro)));
     if (partialDesc.bundleOrAdjustmentsEuro > 0.001) {
-      lines.push(plainRow('Bundle/coupon', `-€${partialDesc.bundleOrAdjustmentsEuro.toFixed(2)}`));
+      lines.push(plainRow('Bundle/coupon', formatPlainEuro(partialDesc.bundleOrAdjustmentsEuro, { negate: true })));
     }
-    if (showLegacyDeliveryRow) lines.push(plainRow('Delivery', `€${deliveryAmt.toFixed(2)}`));
-    lines.push(plainRow('Total', `€${receipt.totalAmount.toFixed(2)}`));
+    if (showLegacyDeliveryRow) lines.push(plainRow('Delivery', formatPlainEuro(deliveryAmt)));
+    lines.push(plainTotalRow('Total', formatPlainEuro(receipt.totalAmount)));
   } else if (totalBundleDiscount > 0) {
     const foodAfterBundles = receipt.totalAmount - deliveryAmt;
     const subtotal = foodAfterBundles + totalBundleDiscount;
-    lines.push(plainRow('Subtotal', `€${subtotal.toFixed(2)}`));
+    lines.push(plainRow('Subtotal', formatPlainEuro(subtotal)));
     for (const bd of bundleDiscounts || []) {
-      lines.push(plainRow(`Disc ${bd.nameEn || bd.name}`, `-€${bd.discount.toFixed(2)}`));
+      lines.push(plainRow(`Disc ${bd.nameEn || bd.name}`, formatPlainEuro(bd.discount, { negate: true })));
     }
-    if (showLegacyDeliveryRow) lines.push(plainRow('Delivery', `€${deliveryAmt.toFixed(2)}`));
-    lines.push(plainRow('Total', `€${receipt.totalAmount.toFixed(2)}`));
+    if (showLegacyDeliveryRow) lines.push(plainRow('Delivery', formatPlainEuro(deliveryAmt)));
+    lines.push(plainTotalRow('Total', formatPlainEuro(receipt.totalAmount)));
   } else {
-    if (showLegacyDeliveryRow) lines.push(plainRow('Delivery', `€${deliveryAmt.toFixed(2)}`));
-    lines.push(plainRow('Total', `€${receipt.totalAmount.toFixed(2)}`));
+    if (showLegacyDeliveryRow) lines.push(plainRow('Delivery', formatPlainEuro(deliveryAmt)));
+    lines.push(plainTotalRow('Total', formatPlainEuro(receipt.totalAmount)));
   }
   lines.push(plainRow('Payment', paymentLabel));
   if ((receipt.memberCreditUsed ?? 0) > 0.001) {
-    lines.push(plainRow('Member credit', `€${(receipt.memberCreditUsed ?? 0).toFixed(2)}`));
+    lines.push(plainRow('Member credit', formatPlainEuro(receipt.memberCreditUsed ?? 0)));
   }
   if (receipt.paymentMethod === 'mixed') {
-    lines.push(plainRow('Cash', `€${(receipt.cashAmount ?? 0).toFixed(2)}`));
-    lines.push(plainRow('Card', `€${(receipt.cardAmount ?? 0).toFixed(2)}`));
+    lines.push(plainRow('Cash', formatPlainEuro(receipt.cashAmount ?? 0)));
+    lines.push(plainRow('Card', formatPlainEuro(receipt.cardAmount ?? 0)));
   }
   if (receipt.paymentMethod === 'cash' && cashReceived != null && cashReceived > 0) {
     lines.push(plainDivider());
-    lines.push(plainRow('Cash Received', `€${cashReceived.toFixed(2)}`));
+    lines.push(plainRow('Cash Received', formatPlainEuro(cashReceived)));
     if (changeAmount != null && changeAmount > 0) {
-      lines.push(plainRow('Change', `€${changeAmount.toFixed(2)}`));
+      lines.push(plainRow('Change', formatPlainEuro(changeAmount)));
     }
   }
 

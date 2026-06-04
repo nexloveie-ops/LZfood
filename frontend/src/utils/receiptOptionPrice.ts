@@ -80,14 +80,21 @@ export function receiptOptionPrintHtml(
   return html;
 }
 
+/** Plain-text thermal: amount + EUR suffix (no € on H10). */
+export function receiptOptionExtraSuffixPlain(raw: unknown): string {
+  const ep = receiptOptionExtraEuro(raw);
+  if (ep <= 0.000_001) return '';
+  return ` +${ep.toFixed(2)} EUR`;
+}
+
 /** Plain-text thermal line(s) for an option (indent with middle dot). */
 export function receiptOptionPrintPlain(o: ReceiptOptionSnapshot): string[] {
   const { primary, secondary } = receiptOptionBilingualLines(o);
   const fallback = receiptOptionExtraEuro(o.extraPrice) > 0 ? 'Option' : '';
   const main = primary || secondary || fallback;
-  const pricePart = receiptOptionExtraSuffix(o.extraPrice);
+  const pricePart = receiptOptionExtraSuffixPlain(o.extraPrice);
   if (!main && !pricePart) return [];
-  const lines: string[] = [`  · ${main}${pricePart}`];
-  if (secondary && primary) lines.push(`    ${secondary}`);
+  const lines: string[] = [`@N@  · ${main}${pricePart}`];
+  if (secondary && primary) lines.push(`@N@    ${secondary}`);
   return lines;
 }

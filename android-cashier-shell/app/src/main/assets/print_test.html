@@ -13,6 +13,8 @@
 <body>
   <h2>热敏打印机测试</h2>
   <p>不依赖 React。若此页能打印，说明机身打印机与 App 桥接正常。</p>
+  <p>桥接版本：<b id="ver">检测中…</b></p>
+  <p id="verWarn" style="color:#c62828;display:none">仍是旧版 stub，请卸载后重装 <b>0.3.x</b> APK（见 README）。</p>
   <p>收银主站仍须 <b>更新 System WebView</b> 后才能显示完整界面。</p>
   <button type="button" onclick="testPrint()">测试打印</button>
   <button type="button" onclick="openCashier()">打开完整收银 (WebView)</button>
@@ -21,12 +23,29 @@
     function log(msg) {
       document.getElementById('log').textContent += msg + '\n';
     }
+    (function showBridgeVersion() {
+      var el = document.getElementById('ver');
+      var warn = document.getElementById('verWarn');
+      if (!window.LZFOODPrinter || !window.LZFOODPrinter.getVersion) {
+        el.textContent = '未找到 LZFOODPrinter';
+        return;
+      }
+      try {
+        var v = window.LZFOODPrinter.getVersion();
+        el.textContent = v;
+        if (v && v.indexOf('stub') >= 0) warn.style.display = 'block';
+        if (v && v.indexOf('0.3') >= 0) log('OK: 已加载串口打印版 ' + v);
+      } catch (e) {
+        el.textContent = 'getVersion 失败: ' + e;
+      }
+    })();
     function testPrint() {
       if (!window.LZFOODPrinter || !window.LZFOODPrinter.printText) {
         log('错误: 未找到 LZFOODPrinter（请用 LZFOOD 收银 App 打开，不要用 Firefox）');
         return;
       }
-      var text = 'LZFOOD PRINT TEST\n热敏机测试\n' + new Date().toLocaleString() + '\n';
+      var fw = '\u3000';
+      var text = '@N@' + fw.repeat(8) + 'Taste Of Asia\n@N@' + fw.repeat(2) + 'UNIT 96B OMNI PARK SHOPPING CENTRE\n@N@' + fw.repeat(10) + 'Tel: 01-7123122\n@N@1X \u8fa3\u888b\n@N@' + fw.repeat(16) + '9.50 EUR\n@T@Total                              9.50 EUR\n';
       window.LZFOODPrinter.printText(text, 1);
       log('已调用 printText');
     }

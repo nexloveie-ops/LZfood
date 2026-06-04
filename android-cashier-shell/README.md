@@ -31,7 +31,40 @@ Default: `https://food.lztechserve.com/demo/cashier`
 ./gradlew assembleDebug
 ```
 
-APK: `app/build/outputs/apk/debug/app-debug.apk`
+APK: `app/build/outputs/apk/debug/app-debug.apk`  
+Also copied to: `dist/LZFOOD-Cashier-0.3.1-debug.apk`
+
+### 热敏小票：必须 **同时** 更新 APK + 线上前端
+
+| 步骤 | 作用 |
+|------|------|
+| 安装 `dist/LZFOOD-Cashier-0.3.5-debug.apk` | GBK 原样打印 |
+| **重新构建并发布 Docker 镜像**（见下方） | 店名/地址居中；金额为 **`9.50 EUR`** |
+
+只改本地代码、或只上传 `frontend/dist` 到错误目录 → **线上仍是旧 JS**，小票不会变。
+
+### 线上前端怎么发布（LZFOOD 生产）
+
+生产环境 **不是** 直接读 `frontend/dist/`，而是 Docker 镜像里的 `public/`（见仓库根目录 `Dockerfile`）。必须：
+
+```bash
+cd LZFOOD
+docker build -t lzfood:latest .
+# 再把该镜像部署到 Cloud Run / 你的服务器（替换当前在跑的镜像）
+```
+
+部署后打开 https://food.lztechserve.com/demo/cashier ，查看页面源代码里 script 的 `index-XXXX.js` 文件名；与本次 `npm run build` 后 `frontend/dist/index.html` 里引用的 hash **必须一致**。
+
+打印机测试：桥接版本 **`0.3.5-thermal`**；测试页应见居中店名 + `9.50 EUR` 在单独一行右侧。
+
+### 若打印出现 `LZFOOD print (stub) — wire /dev/ttyS1`
+
+这是 **旧版 0.1.0 APK**（只弹 Toast，不写串口）。请：
+
+1. **卸载** 设备上的「LZFOOD 收银」  
+2. 安装 **0.3.1**（`dist/LZFOOD-Cashier-0.3.1-debug.apk`）  
+3. 菜单 → **打印机测试** → 页面上应显示桥接版本 **`0.3.1-serial`**（不能含 `stub`）  
+4. 点测试打印 → 成功时 Toast 为 **「已发送到热敏打印机」**，不是 stub 提示
 
 ## Printing
 
