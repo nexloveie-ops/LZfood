@@ -257,6 +257,7 @@ export default function UnifiedOrderCenter() {
   const { token, user, hasFeature } = useAuth();
   const canDelivery = hasFeature('cashier.delivery.page');
   const canMemberWallet = hasFeature('cashier.member.wallet');
+  const canCustomerNotify = hasFeature('admin.customerNotifications.page');
   const [orders, setOrders] = useState<OrderRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -1102,6 +1103,55 @@ export default function UnifiedOrderCenter() {
     }
   }, [fetchAll, isEn, printOrderTicket, token]);
 
+  const notifyCustomerReady = useCallback(async (order: OrderRow) => {
+    const phone = String(order.customerPhone || '').trim();
+    if (!phone) {
+      alert(isEn ? 'No customer phone on this order.' : '该订单没有客人电话。');
+      return;
+    }
+    setBusyId(order._id);
+    try {
+      const res = await apiFetch(`/api/orders/${order._id}/notify-customer-ready`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        sent?: boolean;
+        skipped?: boolean;
+        skipReason?: string;
+        error?: { message?: string };
+        message?: string;
+      };
+      if (res.ok) {
+        if (data.sent) {
+          alert(isEn ? 'Customer notified.' : '已通知客人。');
+        } else if (data.skipped) {
+          alert(
+            isEn
+              ? `Notification skipped: ${data.skipReason || 'policy off or duplicate'}`
+              : `未发送：${data.skipReason || '策略关闭或重复发送'}`,
+          );
+        } else {
+          alert(isEn ? 'Done.' : '已完成。');
+        }
+        return;
+      }
+      const msg = data?.error?.message || data?.message || `HTTP ${res.status}`;
+      alert(isEn ? `Could not notify customer: ${msg}` : `无法通知客人：${msg}`);
+    } finally {
+      setBusyId(null);
+    }
+  }, [isEn, token]);
+
+  const canNotifyCustomerReady = useCallback((order: OrderRow) => {
+    if (!canCustomerNotify) return false;
+    if (order.type !== 'phone' && order.type !== 'delivery') return false;
+    if (!String(order.customerPhone || '').trim()) return false;
+    if (order.status === 'refunded' || order.status === 'completed' || order.status === 'completed-hide') return false;
+    return true;
+  }, [canCustomerNotify]);
+
   /** 后结堂食：锁定后顾客仅可加菜 */
   const openPartialModal = useCallback((o: OrderRow) => {
     const init: Record<string, number> = {};
@@ -1327,6 +1377,8 @@ export default function UnifiedOrderCenter() {
     status: isEn ? 'Status' : '状态',
     customer: isEn ? 'Customer' : '客户',
     guestPhone: isEn ? 'Guest tel.' : '客人电话',
+    notifyCustomerReady: isEn ? 'Notify customer — ready' : '通知客人 — 可取餐',
+    notifyCustomerReadyHint: isEn ? 'Send SMS or WhatsApp per admin notification settings' : '按后台通知设置发送短信或 WhatsApp',
     address: isEn ? 'Address' : '地址',
     postalCode: isEn ? 'Postal Code' : '邮编',
     guestDeliveryAddress: isEn ? 'Delivery address (guest)' : '送餐地址（客人填写）',
@@ -2472,6 +2524,13 @@ export default function UnifiedOrderCenter() {
                 ) : null}
               </div>
             ) : null}
+            {detailModalOrder.type === 'phone' ? (
+              <div style={{ border: '1px solid #eee', borderRadius: 10, padding: 10, marginBottom: 10, lineHeight: 1.6 }}>
+                <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>{isEn ? 'Phone order' : '电话订单'}</div>
+                <div style={{ fontSize: 13 }}>{L.customer}: {detailModalOrder.customerName || '-'}</div>
+                <div style={{ fontSize: 13 }}>{L.guestPhone}: {detailModalOrder.customerPhone || '-'}</div>
+              </div>
+            ) : null}
             {detailModalOrder.type === 'delivery' ? (
               <div style={{ border: '1px solid #eee', borderRadius: 10, padding: 10, marginBottom: 10, lineHeight: 1.6 }}>
                 <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>配送信息</div>
@@ -2582,6 +2641,18 @@ export default function UnifiedOrderCenter() {
                   onClick={() => void cancelPending(detailModalOrder._id, () => setDetailModalOrder(null))}
                 >
                   {L.cancelOrder}
+                </button>
+              ) : null}
+              {canNotifyCustomerReady(detailModalOrder) ? (
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  style={{ background: '#00897B', border: 'none' }}
+                  disabled={busyId === detailModalOrder._id}
+                  title={L.notifyCustomerReadyHint}
+                  onClick={() => void notifyCustomerReady(detailModalOrder)}
+                >
+                  {busyId === detailModalOrder._id ? L.processing : L.notifyCustomerReady}
                 </button>
               ) : null}
               <button className="btn btn-outline" onClick={() => setDetailModalOrder(null)}>{L.closeModal}</button>

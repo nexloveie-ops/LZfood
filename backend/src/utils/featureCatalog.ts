@@ -11,6 +11,8 @@ export const FeatureKeys = {
   AdminCouponsPage: 'admin.coupons.page',
   /** 仅控制侧边栏「订单历史」页；营业报表 `/admin/reports` 点击钻取走 `/api/reports/orders`，只要求 `report:view`，不依赖本 key */
   AdminOrderHistoryPage: 'admin.orderHistory.page',
+  /** 管理端「客人通知」页 + 订单短信/WhatsApp 提醒（电话单/送餐） */
+  AdminCustomerNotificationsPage: 'admin.customerNotifications.page',
   AdminReportsVatExportAction: 'admin.reports.vatExport.action',
   AdminInventoryRestoreTimeAction: 'admin.inventory.restoreTime.action',
   /**

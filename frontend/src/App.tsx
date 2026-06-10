@@ -47,6 +47,7 @@ import OfferManager from './pages/admin/OfferManager';
 import CouponManager from './pages/admin/CouponManager';
 import MemberManager from './pages/admin/MemberManager';
 import BusinessHours from './pages/admin/BusinessHours';
+import CustomerNotifications from './pages/admin/CustomerNotifications';
 import StripeSettings from './pages/admin/StripeSettings';
 
 const DEFAULT_STORE_SLUG = import.meta.env.VITE_DEFAULT_STORE_SLUG || 'demo';
@@ -188,6 +189,7 @@ export default function App() {
               <Route path="orders" element={<RequireFeature featureKey="admin.orderHistory.page"><OrderHistory /></RequireFeature>} />
               <Route path="reports" element={<ReportDashboard />} />
               <Route path="business-hours" element={<BusinessHours />} />
+              <Route path="customer-notifications" element={<RequireFeature featureKey="admin.customerNotifications.page"><CustomerNotifications /></RequireFeature>} />
               <Route path="users" element={<UserManager />} />
               <Route path="config" element={<SystemConfig />} />
               <Route path="stripe" element={<StripeSettings />} />

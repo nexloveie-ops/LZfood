@@ -35,12 +35,24 @@ Menu **刷新收银** reloads the **current** page (stays on cashier after login
 
 ## Build
 
+Two flavors (same WebView + printer bridge code):
+
+| Flavor | Device | targetSdk | Package |
+|--------|--------|-----------|---------|
+| **h10** | CITAQ H10-3 (Android 5.1) | 22 | `ie.lzfood.cashier` |
+| **android15** | Modern phones / tablets (Android 15) | 35 | `ie.lzfood.cashier.a15` |
+
 ```bash
-./gradlew assembleDebug
+# CITAQ H10 POS
+./gradlew assembleH10Debug
+
+# Android 15 (API 35) — UI testing; built-in /dev/ttyS1 printer only on H10 hardware
+./gradlew assembleAndroid15Debug
 ```
 
-APK: `app/build/outputs/apk/debug/app-debug.apk`  
-Also copied to: `dist/LZFOOD-Cashier-0.3.1-debug.apk`
+Outputs:
+- `app/build/outputs/apk/h10/debug/app-h10-debug.apk`
+- `app/build/outputs/apk/android15/debug/app-android15-debug.apk`
 
 ### 热敏小票：必须 **同时** 更新 APK + 线上前端
 

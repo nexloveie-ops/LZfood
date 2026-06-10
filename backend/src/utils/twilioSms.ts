@@ -29,6 +29,11 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+/** Generic outbound SMS (order notifications, etc.). Throws on Twilio HTTP error. */
+export async function sendTransactionalSms(to: string, body: string): Promise<void> {
+  await twilioSendSms(to, body);
+}
+
 async function twilioSendSms(to: string, body: string): Promise<void> {
   const sid = process.env.TWILIO_ACCOUNT_SID?.trim();
   const token = process.env.TWILIO_AUTH_TOKEN?.trim();

@@ -30,6 +30,7 @@ import publicAdsRouter from './routes/publicAds';
 import publicPortalRouter from './routes/publicPortal';
 import geoRouter, { guestEircodeMiddleware } from './routes/geo';
 import membersRouter, { membersScanOrderLookup } from './routes/members';
+import customerNotificationsRouter from './routes/customerNotifications';
 import { requireFeature } from './middleware/featureAccess';
 import { FeatureKeys } from './utils/featureCatalog';
 import { storeIoRoom } from './socketRooms';
@@ -124,6 +125,7 @@ app.use('/api/members', membersRouter);
 
 // Admin routes（单路由内按需 auth + enforceJwtStoreMatch）
 app.use('/api/admin', adminRouter);
+app.use('/api/admin/customer-notifications', customerNotificationsRouter);
 app.use('/api/admin/option-group-templates', optionGroupTemplatesRouter);
 
 // Inventory tracking (gated by feature flag; admin + cashier shared)

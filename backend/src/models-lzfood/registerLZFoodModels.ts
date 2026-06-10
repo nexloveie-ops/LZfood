@@ -24,6 +24,12 @@ import { CustomerProfileSchema } from '../models/CustomerProfile';
 import { PortalOwnerEmailSchema } from './PortalOwnerEmail';
 import { PortalRegistrationOtpSchema } from './PortalRegistrationOtp';
 import { PortalPasswordResetOtpSchema } from './PortalPasswordResetOtp';
+import {
+  NotificationLogSchema,
+  NotificationTemplateSchema,
+  StoreNotificationPolicySchema,
+  StoreWhatsAppConfigSchema,
+} from '../modules/customer-notifications/schemas';
 
 const storeIdField = {
   storeId: {
@@ -86,6 +92,10 @@ export type LZFoodModels = {
   PortalPasswordResetOtp: Model<unknown>;
   InventoryTxn: Model<unknown>;
   RawMaterial: Model<unknown>;
+  StoreNotificationPolicy: Model<unknown>;
+  NotificationTemplate: Model<unknown>;
+  NotificationLog: Model<unknown>;
+  StoreWhatsAppConfig: Model<unknown>;
 };
 
 let cached: LZFoodModels | null = null;
@@ -141,6 +151,22 @@ export function registerLZFoodModels(conn: Connection): LZFoodModels {
   );
   const InventoryTxn = m('InventoryTxn', withStoreId(InventoryTxnSchema), 'inventory_txns');
   const RawMaterial = m('RawMaterial', withStoreId(RawMaterialSchema), 'raw_materials');
+  const StoreNotificationPolicy = m(
+    'StoreNotificationPolicy',
+    StoreNotificationPolicySchema,
+    'store_notification_policies',
+  );
+  const NotificationTemplate = m(
+    'NotificationTemplate',
+    NotificationTemplateSchema,
+    'notification_templates',
+  );
+  const NotificationLog = m('NotificationLog', NotificationLogSchema, 'notification_logs');
+  const StoreWhatsAppConfig = m(
+    'StoreWhatsAppConfig',
+    StoreWhatsAppConfigSchema,
+    'store_whatsapp_configs',
+  );
 
   cached = {
     Store,
@@ -169,6 +195,10 @@ export function registerLZFoodModels(conn: Connection): LZFoodModels {
     PortalPasswordResetOtp,
     InventoryTxn,
     RawMaterial,
+    StoreNotificationPolicy,
+    NotificationTemplate,
+    NotificationLog,
+    StoreWhatsAppConfig,
   };
   return cached;
 }

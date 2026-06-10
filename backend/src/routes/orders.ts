@@ -40,6 +40,8 @@ import {
   writeRawMaterialSaleTxns,
   type OrderItemForInventory,
 } from '../utils/inventoryService';
+import { voidNotifyCustomerOrderEvent } from '../modules/customer-notifications/dispatcher';
+import { handleNotifyCustomerReady } from './customerNotifications';
 
 function isStaffCashierOrOwner(req: Request): boolean {
   const u = req.user;
@@ -621,6 +623,20 @@ export function createOrdersRouter(io: SocketIOServer): Router {
 
       io.to(storeIoRoom(req.storeId!)).emit('order:new', order);
 
+      const orderLean = typeof order.toObject === 'function' ? order.toObject() : order;
+      voidNotifyCustomerOrderEvent({
+        storeId: req.storeId!,
+        order: orderLean,
+        event: 'order_placed',
+      });
+      if ((orderLean as { phoneCardPaidAtPlacement?: boolean }).phoneCardPaidAtPlacement) {
+        voidNotifyCustomerOrderEvent({
+          storeId: req.storeId!,
+          order: orderLean,
+          event: 'payment_confirmed',
+        });
+      }
+
       /** 给收银本地缓存做就地 patch：返回订单同时附带本次扣减后的最新库存快照 */
       const inventoryUpdates = inventoryDeduction.demands.length === 0
         ? []
@@ -1041,6 +1057,13 @@ export function createOrdersRouter(io: SocketIOServer): Router {
       );
 
       io.to(storeIoRoom(req.storeId!)).emit('order:updated', updated);
+      if (updated) {
+        voidNotifyCustomerOrderEvent({
+          storeId: req.storeId!,
+          order: updated,
+          event: 'order_completed',
+        });
+      }
       res.json(updated);
     } catch (err) {
       next(err);
@@ -1081,11 +1104,34 @@ export function createOrdersRouter(io: SocketIOServer): Router {
       }
       await order.save();
       io.to(storeIoRoom(req.storeId!)).emit('order:updated', order);
+      const orderLean = typeof order.toObject === 'function' ? order.toObject() : order;
+      if (nextStage === 'out_for_delivery') {
+        voidNotifyCustomerOrderEvent({
+          storeId: req.storeId!,
+          order: orderLean,
+          event: 'out_for_delivery',
+        });
+      }
+      if (nextStage === 'picked_up_by_driver' && order.status === 'completed') {
+        voidNotifyCustomerOrderEvent({
+          storeId: req.storeId!,
+          order: orderLean,
+          event: 'order_completed',
+        });
+      }
       res.json(order);
     } catch (err) {
       next(err);
     }
   });
+
+  // POST /api/orders/:id/notify-customer-ready — cashier triggers ready notification
+  router.post(
+    '/:id/notify-customer-ready',
+    ...requireAuthSameStore,
+    requirePermission('checkout:process'),
+    handleNotifyCustomerReady,
+  );
 
   // GET /api/orders/customer-frequent-items — 近 N 天常点菜品（收银建议；须置于 /:id 之前）
   router.get(
@@ -1579,6 +1625,13 @@ export function createOrdersRouter(io: SocketIOServer): Router {
           }
         }
       }
+
+      const orderLean = typeof order.toObject === 'function' ? order.toObject() : order;
+      voidNotifyCustomerOrderEvent({
+        storeId: req.storeId!,
+        order: orderLean,
+        event: 'order_cancelled',
+      });
 
       await Order.findOneAndDelete({ _id: id, storeId: req.storeId });
 

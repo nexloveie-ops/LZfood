@@ -64,6 +64,7 @@ const FEATURE_GROUPS: {
       { key: 'admin.offers.page', label: '管理员-套餐优惠' },
       { key: 'admin.coupons.page', label: '管理员-Coupon 管理' },
       { key: 'admin.orderHistory.page', label: '管理员-订单历史' },
+      { key: 'admin.customerNotifications.page', label: '管理员-客人通知（短信/WhatsApp）' },
       { key: 'admin.reports.vatExport.action', label: '报表-VAT 导出' },
       { key: 'admin.inventory.restoreTime.action', label: '库存-恢复供应时间' },
     ],

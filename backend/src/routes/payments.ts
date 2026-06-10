@@ -15,6 +15,7 @@ import {
   markDineInFoodLinesFullySettled,
   markDineInKitchenPrintedQtyFull,
 } from '../utils/dineInMarkLinesFullySettled';
+import { voidNotifyCustomerOrderEvent } from '../modules/customer-notifications/dispatcher';
 
 function paymentModels() {
   return getModels() as {
@@ -145,6 +146,15 @@ router.post('/confirm', async (req: Request, res: Response, next: NextFunction) 
     await order.save();
 
     io.to(storeIoRoom(req.storeId!)).emit('order:updated', order);
+
+    if (order.type === 'phone' || order.type === 'delivery') {
+      const orderLean = typeof order.toObject === 'function' ? order.toObject() : order;
+      voidNotifyCustomerOrderEvent({
+        storeId: req.storeId!,
+        order: orderLean,
+        event: 'payment_confirmed',
+      });
+    }
 
     res.json({ message: 'Payment confirmed', orderId: order._id, totalAmount: totalChargedEuro });
   } catch (err: unknown) {

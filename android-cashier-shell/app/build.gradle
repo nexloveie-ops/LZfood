@@ -16,15 +16,30 @@ def readCashierStartUrl = {
 
 android {
     namespace 'ie.lzfood.cashier'
-    compileSdk 34
+    compileSdk 35
 
     defaultConfig {
         applicationId 'ie.lzfood.cashier'
-        minSdk 22
-        targetSdk 22
-        versionCode 13
+        versionCode 14
         versionName '0.3.9'
         resValue 'string', 'cashier_start_url', readCashierStartUrl()
+    }
+
+    flavorDimensions += 'platform'
+    productFlavors {
+        h10 {
+            dimension 'platform'
+            minSdk 22
+            targetSdk 22
+            versionNameSuffix '-h10'
+        }
+        android15 {
+            dimension 'platform'
+            minSdk 24
+            targetSdk 35
+            applicationIdSuffix '.a15'
+            versionNameSuffix '-android15'
+        }
     }
 
     buildTypes {
@@ -39,6 +54,11 @@ android {
     }
 }
 
+configurations.configureEach {
+    exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk7'
+    exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk8'
+}
+
 dependencies {
-    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'androidx.appcompat:appcompat:1.7.0'
 }
