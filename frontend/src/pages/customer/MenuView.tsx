@@ -9,6 +9,7 @@ import { useRestaurantConfig } from '../../hooks/useRestaurantConfig';
 import { useBusinessStatus } from '../../hooks/useBusinessStatus';
 import { apiFetch } from '../../api/client';
 import BannerPlatformCredit from '../../components/customer/BannerPlatformCredit';
+import { useCustomerMenuBootstrap } from '../../context/CustomerMenuBootstrapContext';
 import {
   type BomAvailabilitySnapshot,
   emptyBomSnapshot,
@@ -77,6 +78,7 @@ export default function MenuView({ storeFrontEmbed = false }: { storeFrontEmbed?
   // Active offers for banner
   const [activeOffers, setActiveOffers] = useState<OfferData[]>([]);
   const [selectedOffer, setSelectedOffer] = useState<OfferData | null>(null);
+  const menuBootstrap = useCustomerMenuBootstrap();
 
   // Banner carousel index
   // Banner carousel index + countdown
@@ -98,41 +100,17 @@ export default function MenuView({ storeFrontEmbed = false }: { storeFrontEmbed?
   const tabsRef = useRef<HTMLDivElement>(null);
   const isUserClick = useRef(false);
 
-  const asArray = <T,>(data: unknown): T[] => (Array.isArray(data) ? data : []);
-
   useEffect(() => {
-    apiFetch(`/api/menu/categories?lang=${lang}`)
-      .then((r) => r.json())
-      .then((data: unknown) => {
-        const list = asArray<Category>(data);
-        setCategories(list);
-        if (list.length > 0 && !activeCategory) setActiveCategory(list[0]._id);
-      })
-      .catch(() => {});
-  }, [lang]);
-
-  useEffect(() => {
-    apiFetch(`/api/menu/items?lang=${lang}`)
-      .then((r) => r.json())
-      .then((data: unknown) => setItems(asArray<MenuItemData>(data)))
-      .catch(() => {});
-    apiFetch('/api/menu/bom-availability')
-      .then((r) => (r.ok ? r.json() : emptyBomSnapshot()))
-      .then((data: unknown) => setBomSnapshot(
-        data && typeof data === 'object' && 'enabled' in (data as object)
-          ? (data as BomAvailabilitySnapshot)
-          : emptyBomSnapshot(),
-      ))
-      .catch(() => setBomSnapshot(emptyBomSnapshot()));
-    apiFetch('/api/allergens')
-      .then((r) => r.json())
-      .then((data: unknown) => setAllergens(asArray<AllergenData>(data)))
-      .catch(() => {});
-    apiFetch('/api/offers')
-      .then((r) => (r.ok ? r.json() : []))
-      .then((data: unknown) => setActiveOffers(asArray<OfferData>(data)))
-      .catch(() => {});
-  }, [lang]);
+    if (!menuBootstrap.ready) return;
+    setCategories(menuBootstrap.categories);
+    setItems(menuBootstrap.items);
+    setBomSnapshot(menuBootstrap.bomSnapshot);
+    setAllergens(menuBootstrap.allergens);
+    setActiveOffers(menuBootstrap.offers);
+    if (menuBootstrap.categories.length > 0) {
+      setActiveCategory((prev) => prev || menuBootstrap.categories[0]._id);
+    }
+  }, [menuBootstrap]);
 
   useEffect(() => {
     if (storeFrontEmbed && activeOffers.length > 0) setHeroHidden(false);
@@ -495,11 +473,11 @@ export default function MenuView({ storeFrontEmbed = false }: { storeFrontEmbed?
                     bomSnapshot={bomSnapshot}
                     cartBomLines={cartBomLines}
                   />
-                )) : (
+                )) : menuBootstrap.ready ? (
                   <div style={{ textAlign: 'center', padding: 24, color: 'var(--text-light, #999)', fontSize: 13 }}>
                     暂无菜品
                   </div>
-                )}
+                ) : null}
               </div>
             </div>
           );

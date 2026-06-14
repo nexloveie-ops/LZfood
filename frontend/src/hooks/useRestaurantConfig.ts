@@ -74,9 +74,13 @@ export function useRestaurantConfig() {
   const { i18n } = useTranslation();
   const slug = useStoreSlug();
   const [config, setConfig] = useState<RestaurantConfig>(() => configBySlug.get(slug) || {});
+  const [configLoading, setConfigLoading] = useState(() => !configBySlug.has(slug));
 
   useEffect(() => {
-    fetchConfigForSlug(slug).then(setConfig);
+    setConfigLoading(true);
+    fetchConfigForSlug(slug)
+      .then(setConfig)
+      .finally(() => setConfigLoading(false));
   }, [slug]);
 
   useEffect(() => {
@@ -96,5 +100,5 @@ export function useRestaurantConfig() {
   const displayNameOther =
     nameZh && nameEn && nameZh !== nameEn ? (wantsZh ? nameEn : nameZh) : '';
 
-  return { config, displayName, displayNameOther, nameZh, nameEn };
+  return { config, configLoading, displayName, displayNameOther, nameZh, nameEn };
 }

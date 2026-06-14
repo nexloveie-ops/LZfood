@@ -5,12 +5,13 @@ import { useCart } from '../context/CartContext';
 import LanguageSwitcher from '../components/LanguageSwitcher';
 import { matchBundles, calcBundleTotal, type OfferData } from '../utils/bundleMatcher';
 import { useRestaurantConfig } from '../hooks/useRestaurantConfig';
-import { apiFetch } from '../api/client';
 import { useStoreSlug } from '../context/StoreContext';
+import { CustomerMenuBootstrapProvider, useCustomerMenuBootstrap } from '../context/CustomerMenuBootstrapContext';
+import StorePreloaderGate from '../components/customer/StorePreloaderGate';
 
 const AD_CONTACT_EMAIL = 'info@lztechserve.com';
 
-export default function CustomerLayout() {
+function CustomerLayoutInner() {
   const { t } = useTranslation();
   const storeSlug = useStoreSlug();
   const [searchParams] = useSearchParams();
@@ -27,22 +28,15 @@ export default function CustomerLayout() {
 
   const [offers, setOffers] = useState<OfferData[]>([]);
   const [menuItemCats, setMenuItemCats] = useState<Record<string, string>>({});
+  const menuBootstrap = useCustomerMenuBootstrap();
 
   useEffect(() => {
-    apiFetch('/api/offers')
-      .then((r) => (r.ok ? r.json() : []))
-      .then((data: unknown) => setOffers(Array.isArray(data) ? data : []))
-      .catch(() => {});
-    apiFetch('/api/menu/items?ownOptionGroups=1')
-      .then((r) => (r.ok ? r.json() : []))
-      .then((data: unknown) => {
-        const list = Array.isArray(data) ? data : [];
-        const map: Record<string, string> = {};
-        for (const item of list as { _id: string; categoryId: string }[]) map[item._id] = item.categoryId;
-        setMenuItemCats(map);
-      })
-      .catch(() => {});
-  }, []);
+    if (!menuBootstrap.ready) return;
+    setOffers(menuBootstrap.offers);
+    const map: Record<string, string> = {};
+    for (const item of menuBootstrap.items) map[item._id] = item.categoryId;
+    setMenuItemCats(map);
+  }, [menuBootstrap.ready, menuBootstrap.offers, menuBootstrap.items]);
 
   const finalTotal = useMemo(() => {
     if (offers.length === 0 || cartItems.length === 0) return totalAmount;
@@ -253,5 +247,17 @@ export default function CustomerLayout() {
         </div>
       </footer>
     </div>
+  );
+}
+
+export default function CustomerLayout() {
+  const { i18n } = useTranslation();
+
+  return (
+    <CustomerMenuBootstrapProvider lang={i18n.language}>
+      <StorePreloaderGate>
+        <CustomerLayoutInner />
+      </StorePreloaderGate>
+    </CustomerMenuBootstrapProvider>
   );
 }

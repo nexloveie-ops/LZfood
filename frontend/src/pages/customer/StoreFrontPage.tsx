@@ -6,7 +6,7 @@ import { useRestaurantConfig } from '../../hooks/useRestaurantConfig';
 import { useBusinessStatus } from '../../hooks/useBusinessStatus';
 import { useStoreSlug } from '../../context/StoreContext';
 import type { OfferData } from '../../utils/bundleMatcher';
-import { apiFetch } from '../../api/client';
+import { useCustomerMenuBootstrap } from '../../context/CustomerMenuBootstrapContext';
 import MenuView from './MenuView';
 import BannerPlatformCredit from '../../components/customer/BannerPlatformCredit';
 
@@ -50,14 +50,13 @@ export default function StoreFrontPage() {
   const email = (config.restaurant_email || '').trim();
   const storeTitle = displayName || storeSlug;
   const slots = useMemo(() => parseHoursSlots(config.business_hours_slots), [config.business_hours_slots]);
+  const menuBootstrap = useCustomerMenuBootstrap();
   const [offers, setOffers] = useState<OfferData[]>([]);
 
   useEffect(() => {
-    apiFetch('/api/offers')
-      .then((r) => (r.ok ? r.json() : []))
-      .then((data: unknown) => setOffers(Array.isArray(data) ? data : []))
-      .catch(() => setOffers([]));
-  }, []);
+    if (!menuBootstrap.ready) return;
+    setOffers(menuBootstrap.offers);
+  }, [menuBootstrap.ready, menuBootstrap.offers]);
 
   const offerTitle = (o: OfferData) => (lang.startsWith('zh') ? o.name : (o.nameEn || o.name));
   const offerDesc = (o: OfferData) => {
