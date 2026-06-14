@@ -74,6 +74,10 @@ async function createMenuItem(overrides: Record<string, unknown> = {}) {
   });
 }
 
+const CUSTOMER_TAKEOUT_CONTACT = {
+  customerPhone: '0861234567',
+};
+
 describe('POST /api/orders', () => {
   it('should create a dine_in order successfully', async () => {
     const item1 = await createMenuItem({ price: 30 });
@@ -652,6 +656,7 @@ describe('POST /api/orders (takeout)', () => {
       .post('/api/orders')
       .send({
         type: 'takeout',
+        ...CUSTOMER_TAKEOUT_CONTACT,
         items: [{ menuItemId: item._id.toString(), quantity: 2 }],
       });
 
@@ -675,12 +680,61 @@ describe('POST /api/orders (takeout)', () => {
       .post('/api/orders')
       .send({
         type: 'takeout',
+        ...CUSTOMER_TAKEOUT_CONTACT,
         items: [{ menuItemId: item._id.toString(), quantity: 1 }],
       });
 
     expect(res.status).toBe(201);
     expect(res.body.type).toBe('takeout');
     expect(res.body.dailyOrderNumber).toBeDefined();
+  });
+
+  it('should require customerPhone for customer takeout orders', async () => {
+    const item = await createMenuItem({ price: 15 });
+
+    const res = await request(app)
+      .post('/api/orders')
+      .send({
+        type: 'takeout',
+        items: [{ menuItemId: item._id.toString(), quantity: 1 }],
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+    expect(res.body.error.message).toMatch(/customerPhone/i);
+  });
+
+  it('should allow customer takeout orders without customerName', async () => {
+    const item = await createMenuItem({ price: 18 });
+
+    const res = await request(app)
+      .post('/api/orders')
+      .send({
+        type: 'takeout',
+        customerPhone: '0871234567',
+        items: [{ menuItemId: item._id.toString(), quantity: 1 }],
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body.customerName).toBeFalsy();
+    expect(res.body.customerPhone).toBeTruthy();
+  });
+
+  it('should persist customer contact on customer takeout orders', async () => {
+    const item = await createMenuItem({ price: 18 });
+
+    const res = await request(app)
+      .post('/api/orders')
+      .send({
+        type: 'takeout',
+        customerName: ' 李四 ',
+        customerPhone: '087 123 4567',
+        items: [{ menuItemId: item._id.toString(), quantity: 1 }],
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body.customerName).toBe('李四');
+    expect(res.body.customerPhone).toBeTruthy();
   });
 
   it('should assign incrementing dailyOrderNumbers for same-day takeout orders', async () => {
@@ -690,18 +744,21 @@ describe('POST /api/orders (takeout)', () => {
       .post('/api/orders')
       .send({
         type: 'takeout',
+        ...CUSTOMER_TAKEOUT_CONTACT,
         items: [{ menuItemId: item._id.toString(), quantity: 1 }],
       });
     const res2 = await request(app)
       .post('/api/orders')
       .send({
         type: 'takeout',
+        ...CUSTOMER_TAKEOUT_CONTACT,
         items: [{ menuItemId: item._id.toString(), quantity: 1 }],
       });
     const res3 = await request(app)
       .post('/api/orders')
       .send({
         type: 'takeout',
+        ...CUSTOMER_TAKEOUT_CONTACT,
         items: [{ menuItemId: item._id.toString(), quantity: 1 }],
       });
 
@@ -720,6 +777,7 @@ describe('POST /api/orders (takeout)', () => {
       .post('/api/orders')
       .send({
         type: 'takeout',
+        ...CUSTOMER_TAKEOUT_CONTACT,
         items: [{ menuItemId: item._id.toString(), quantity: 3 }],
       });
 
@@ -740,6 +798,7 @@ describe('POST /api/orders (takeout)', () => {
       .post('/api/orders')
       .send({
         type: 'takeout',
+        ...CUSTOMER_TAKEOUT_CONTACT,
         items: [{ menuItemId: item._id.toString(), quantity: 1 }],
       });
 
@@ -771,6 +830,7 @@ describe('POST /api/orders (takeout)', () => {
       .post('/api/orders')
       .send({
         type: 'takeout',
+        ...CUSTOMER_TAKEOUT_CONTACT,
         items: [{ menuItemId: item._id.toString(), quantity: 1 }],
       });
 
@@ -791,6 +851,7 @@ describe('POST /api/orders (takeout)', () => {
       .post('/api/orders')
       .send({
         type: 'takeout',
+        ...CUSTOMER_TAKEOUT_CONTACT,
         items: [{ menuItemId: soldOut._id.toString(), quantity: 1 }],
       });
 
@@ -805,6 +866,7 @@ describe('POST /api/orders (takeout)', () => {
       .post('/api/orders')
       .send({
         type: 'takeout',
+        ...CUSTOMER_TAKEOUT_CONTACT,
         items: [{ menuItemId: item._id.toString(), quantity: 2 }],
       });
 
@@ -824,6 +886,7 @@ describe('GET /api/orders/takeout', () => {
         .post('/api/orders')
         .send({
           type: 'takeout',
+          ...CUSTOMER_TAKEOUT_CONTACT,
           items: [{ menuItemId: item._id.toString(), quantity: 1 }],
         });
       expect(res.status).toBe(201);
@@ -844,12 +907,14 @@ describe('GET /api/orders/takeout', () => {
       .post('/api/orders')
       .send({
         type: 'takeout',
+        ...CUSTOMER_TAKEOUT_CONTACT,
         items: [{ menuItemId: item._id.toString(), quantity: 1 }],
       });
     const res2 = await request(app)
       .post('/api/orders')
       .send({
         type: 'takeout',
+        ...CUSTOMER_TAKEOUT_CONTACT,
         items: [{ menuItemId: item._id.toString(), quantity: 1 }],
       });
 
@@ -889,6 +954,7 @@ describe('GET /api/orders/takeout/pending', () => {
       .post('/api/orders')
       .send({
         type: 'takeout',
+        ...CUSTOMER_TAKEOUT_CONTACT,
         items: [{ menuItemId: item._id.toString(), quantity: 1 }],
       });
 
@@ -909,6 +975,7 @@ describe('GET /api/orders/takeout/pending', () => {
       .post('/api/orders')
       .send({
         type: 'takeout',
+        ...CUSTOMER_TAKEOUT_CONTACT,
         items: [{ menuItemId: item._id.toString(), quantity: 1 }],
       });
 
@@ -917,6 +984,7 @@ describe('GET /api/orders/takeout/pending', () => {
       .post('/api/orders')
       .send({
         type: 'takeout',
+        ...CUSTOMER_TAKEOUT_CONTACT,
         items: [{ menuItemId: item._id.toString(), quantity: 1 }],
       });
     await Order.findByIdAndUpdate(res2.body._id, { status: 'completed' });
@@ -935,6 +1003,7 @@ describe('PUT /api/orders/takeout/:id/complete', () => {
       .post('/api/orders')
       .send({
         type: 'takeout',
+        ...CUSTOMER_TAKEOUT_CONTACT,
         items: [{ menuItemId: item._id.toString(), quantity: 1 }],
       });
 
@@ -976,6 +1045,7 @@ describe('PUT /api/orders/takeout/:id/complete', () => {
       .post('/api/orders')
       .send({
         type: 'takeout',
+        ...CUSTOMER_TAKEOUT_CONTACT,
         items: [{ menuItemId: item._id.toString(), quantity: 1 }],
       });
 
@@ -1058,6 +1128,7 @@ describe('GET /api/orders/dine-in', () => {
       .post('/api/orders')
       .send({
         type: 'takeout',
+        ...CUSTOMER_TAKEOUT_CONTACT,
         items: [{ menuItemId: item._id.toString(), quantity: 1 }],
       });
 

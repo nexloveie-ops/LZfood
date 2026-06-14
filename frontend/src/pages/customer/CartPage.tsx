@@ -13,22 +13,7 @@ import { apiFetch } from '../../api/client';
 import { useRestaurantConfig } from '../../hooks/useRestaurantConfig';
 import { useBusinessStatus } from '../../hooks/useBusinessStatus';
 import BannerPlatformCredit from '../../components/customer/BannerPlatformCredit';
-
-/** 自取大致时段（仅展示与排序，不做容量） */
-const TAKEOUT_PICKUP_SLOTS = [
-  { labelZh: '11:30–12:00', labelEn: '11:30–12:00', h: 11, m: 30 },
-  { labelZh: '12:00–12:30', labelEn: '12:00–12:30', h: 12, m: 0 },
-  { labelZh: '12:30–13:00', labelEn: '12:30–1:00 PM', h: 12, m: 30 },
-  { labelZh: '17:30–18:00', labelEn: '5:30–6:00 PM', h: 17, m: 30 },
-  { labelZh: '18:00–18:30', labelEn: '6:00–6:30 PM', h: 18, m: 0 },
-  { labelZh: '18:30–19:00', labelEn: '6:30–7:00 PM', h: 18, m: 30 },
-] as const;
-
-function pickupSlotStartIso(h: number, m: number): string {
-  const d = new Date();
-  d.setHours(h, m, 0, 0);
-  return d.toISOString();
-}
+import { buildPickupSlotGroups, flattenPickupSlotGroups } from '../../utils/pickupSlots';
 
 export default function CartPage() {
   const { items, increaseQuantity, decreaseQuantity, removeItem, clearCart, totalAmount, totalItems, getItemKey, editOrderId, setEditOrderId } = useCart();
@@ -56,7 +41,10 @@ export default function CartPage() {
   const [deliveryDistanceKm, setDeliveryDistanceKm] = useState<number | null>(null);
   const [deliveryGeoError, setDeliveryGeoError] = useState('');
   const eircodeReqRef = useRef(0);
+  const pickupContactRef = useRef<HTMLDivElement>(null);
   const [pickupSlotChoice, setPickupSlotChoice] = useState('');
+  const [pickupCustomerName, setPickupCustomerName] = useState('');
+  const [pickupCustomerPhone, setPickupCustomerPhone] = useState('');
   const [dineInGuestLabel, setDineInGuestLabel] = useState('');
 
   const table = searchParams.get('table');
@@ -196,6 +184,19 @@ export default function CartPage() {
 
   const grandTotal = orderType === 'delivery' ? finalTotal + deliveryFeeAmount : finalTotal;
 
+  const pickupSlotGroups = useMemo(
+    () => buildPickupSlotGroups(config.business_hours_slots),
+    [config.business_hours_slots],
+  );
+  const pickupSlotOptions = useMemo(
+    () => flattenPickupSlotGroups(pickupSlotGroups),
+    [pickupSlotGroups],
+  );
+  const pickupSlotByValue = useMemo(
+    () => new Map(pickupSlotOptions.map((slot) => [slot.value, slot])),
+    [pickupSlotOptions],
+  );
+
   const isDineInCart =
     orderType !== 'takeout' &&
     orderType !== 'delivery' &&
@@ -205,10 +206,24 @@ export default function CartPage() {
     !Number.isNaN(Number(seat));
   const showDineInGuestLabel =
     isDineInCart && !editOrderId && config.dine_in_workflow_mode === 'pay_after';
+  const takeoutContactReady = pickupCustomerPhone.trim().length > 0;
+
+  const getPickupContactError = (): string => {
+    if (!pickupCustomerPhone.trim()) return t('customer.pickupPhoneRequired');
+    return '';
+  };
 
   const handleSubmit = async () => {
     if (items.length === 0) return;
     if (submitting) return;
+
+    if (orderType === 'takeout' && !editOrderId && !takeoutContactReady) {
+      const message = getPickupContactError();
+      setError(message);
+      pickupContactRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return;
+    }
+
     setSubmitting(true);
     setError('');
     try {
@@ -233,12 +248,19 @@ export default function CartPage() {
         const body: Record<string, unknown> = { items: itemsPayload };
         if (orderType === 'takeout') {
           body.type = 'takeout';
+          body.customerPhone = pickupCustomerPhone.trim();
+          const pickupName = pickupCustomerName.trim();
+          if (pickupName) body.customerName = pickupName;
           if (pickupSlotChoice !== '') {
-            const idx = Number.parseInt(pickupSlotChoice, 10);
-            const slot = TAKEOUT_PICKUP_SLOTS[idx];
-            if (slot) {
-              body.pickupSlotLabel = lang.startsWith('zh') ? slot.labelZh : slot.labelEn;
-              body.pickupSlotStart = pickupSlotStartIso(slot.h, slot.m);
+            const slot = pickupSlotByValue.get(pickupSlotChoice);
+            const group = pickupSlotGroups.find((g) => g.slots.some((s) => s.value === pickupSlotChoice));
+            if (slot && group) {
+              const dayPrefixZh = group.dayKey === 'tomorrow' ? '明天 ' : '今天 ';
+              const dayPrefixEn = group.dayKey === 'tomorrow' ? 'Tomorrow ' : 'Today ';
+              body.pickupSlotLabel = lang.startsWith('zh')
+                ? `${dayPrefixZh}${slot.labelZh}`
+                : `${dayPrefixEn}${slot.labelEn}`;
+              body.pickupSlotStart = slot.startIso;
             }
           }
         } else if (orderType === 'delivery') {
@@ -408,7 +430,7 @@ export default function CartPage() {
         })}
       </div>
 
-      {error && <div style={{ color: 'var(--red-primary)', marginTop: 12, fontSize: 13 }}>{error}</div>}
+      {error && orderType !== 'takeout' ? <div style={{ color: 'var(--red-primary)', marginTop: 12, fontSize: 13 }}>{error}</div> : null}
       {orderType === 'delivery' && (
         <div style={{
           marginTop: 12,
@@ -450,10 +472,57 @@ export default function CartPage() {
           </div>
         </div>
       )}
-      {orderType === 'takeout' && (
-        <div style={{ marginTop: 12 }}>
-          <label style={{ fontSize: 12, color: 'var(--text-light)', display: 'block', marginBottom: 6 }}>
-            {lang.startsWith('zh') ? '取餐时段（大致）' : 'Pickup time (approx.)'}
+      {orderType === 'takeout' && !editOrderId && (
+        <div ref={pickupContactRef} style={{ marginTop: 12, display: 'grid', gap: 8 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-dark)' }}>
+            {t('customer.pickupContactTitle')}
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--text-light)', lineHeight: 1.45, marginTop: -4 }}>
+            {t('customer.pickupContactHint')}
+          </div>
+          {error && orderType === 'takeout' ? (
+            <div
+              role="alert"
+              style={{
+                padding: '10px 12px',
+                borderRadius: 8,
+                background: '#FFF5F5',
+                border: '1px solid #FFCDD2',
+                color: 'var(--red-primary)',
+                fontSize: 13,
+                lineHeight: 1.45,
+              }}
+            >
+              {error}
+            </div>
+          ) : null}
+          <input
+            className="input"
+            placeholder={t('customer.pickupCustomerPhonePlaceholder')}
+            value={pickupCustomerPhone}
+            onChange={(e) => {
+              setPickupCustomerPhone(e.target.value);
+              if (error) setError('');
+            }}
+            type="tel"
+            autoComplete="tel"
+            inputMode="tel"
+            required
+            style={{ width: '100%', fontSize: 14 }}
+          />
+          <input
+            className="input"
+            placeholder={t('customer.pickupCustomerNamePlaceholder')}
+            value={pickupCustomerName}
+            onChange={(e) => {
+              setPickupCustomerName(e.target.value);
+              if (error) setError('');
+            }}
+            autoComplete="name"
+            style={{ width: '100%', fontSize: 14 }}
+          />
+          <label style={{ fontSize: 12, color: 'var(--text-light)', display: 'block', marginTop: 4 }}>
+            {t('customer.pickupSlotTitle')}
           </label>
           <select
             className="input"
@@ -461,11 +530,18 @@ export default function CartPage() {
             onChange={(e) => setPickupSlotChoice(e.target.value)}
             style={{ width: '100%', fontSize: 14 }}
           >
-            <option value="">{lang.startsWith('zh') ? '不指定 / 尽快' : 'No preference / ASAP'}</option>
-            {TAKEOUT_PICKUP_SLOTS.map((s, i) => (
-              <option key={i} value={String(i)}>
-                {lang.startsWith('zh') ? s.labelZh : s.labelEn}
-              </option>
+            <option value="">{t('customer.pickupSlotAsap')}</option>
+            {pickupSlotGroups.map((group) => (
+              <optgroup
+                key={group.dayKey}
+                label={lang.startsWith('zh') ? group.labelZh : group.labelEn}
+              >
+                {group.slots.map((slot) => (
+                  <option key={slot.value} value={slot.value}>
+                    {lang.startsWith('zh') ? slot.labelZh : slot.labelEn}
+                  </option>
+                ))}
+              </optgroup>
             ))}
           </select>
         </div>
@@ -541,8 +617,12 @@ export default function CartPage() {
           ) : null}
           <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--red-primary)', fontFamily: "'Noto Serif SC', serif" }}>€{grandTotal.toFixed(2)}</div>
         </div>
-        <button className="btn btn-primary" onClick={handleSubmit} disabled={submitting || !offersLoaded}
-          style={{ padding: '12px 28px', fontSize: 15, letterSpacing: 1 }}>
+        <button
+          className="btn btn-primary"
+          onClick={handleSubmit}
+          disabled={submitting || !offersLoaded}
+          style={{ padding: '12px 28px', fontSize: 15, letterSpacing: 1 }}
+        >
           {!offersLoaded ? '...' : submitting ? t('common.loading') : editOrderId ? t('customer.saveChanges') : t('customer.submitOrder')}
         </button>
       </div>

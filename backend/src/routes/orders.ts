@@ -475,6 +475,23 @@ export function createOrdersRouter(io: SocketIOServer): Router {
           u.storeId === req.storeId.toString() &&
           (u.role === Role.OWNER || u.role === Role.CASHIER);
         orderData.takeoutPlacementSource = isCashierPlacement ? 'cashier' : 'customer';
+
+        const name = typeof customerName === 'string' ? customerName.trim() : '';
+        const rawPhone = typeof customerPhone === 'string' ? customerPhone.trim() : '';
+        if (!isCashierPlacement && !rawPhone) {
+          throw createAppError(
+            'VALIDATION_ERROR',
+            'takeout orders require customerPhone',
+          );
+        }
+        if (name) {
+          orderData.customerName = name;
+        }
+        if (rawPhone) {
+          const normPhone = normalizeMemberPhone(rawPhone);
+          orderData.customerPhone =
+            normPhone.length >= 8 ? normPhone : rawPhone.replace(/\D/g, '') || rawPhone;
+        }
       }
 
       if (type === 'phone') {
