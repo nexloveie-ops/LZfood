@@ -242,6 +242,7 @@ export default function CartPage() {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ items: itemsPayload }),
+          omitStaffToken: true,
         });
       } else {
         // Create new order
@@ -302,6 +303,7 @@ export default function CartPage() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
+          omitStaffToken: true,
         });
       }
       if (!res.ok) {

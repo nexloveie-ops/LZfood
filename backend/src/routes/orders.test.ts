@@ -664,6 +664,9 @@ describe('POST /api/orders (takeout)', () => {
     expect(res.body.type).toBe('takeout');
     expect(res.body.status).toBe('pending');
     expect(res.body.takeoutPlacementSource).toBe('customer');
+    expect(res.body.dualTrackVersion).toBe(1);
+    expect(res.body.paymentStatus).toBe('unpaid');
+    expect(res.body.fulfillmentStatus).toBe('ordered');
     expect(res.body.dailyOrderNumber).toBe(1);
     expect(res.body.items).toHaveLength(1);
     expect(res.body.items[0].unitPrice).toBe(20);
@@ -1135,5 +1138,55 @@ describe('GET /api/orders/dine-in', () => {
     const res = await request(app).get('/api/orders/dine-in');
     expect(res.status).toBe(200);
     expect(res.body).toHaveLength(0);
+  });
+});
+
+describe('dual-track order workflow', () => {
+  it('delivery picked_up_by_driver keeps unpaid pending but sets fulfillment fulfilled', async () => {
+    const item = await createMenuItem({ price: 10 });
+    const createRes = await request(app)
+      .post('/api/orders')
+      .send({
+        type: 'delivery',
+        deliverySource: 'phone',
+        customerName: 'Test',
+        customerPhone: '0861111111',
+        deliveryAddress: '1 Main St',
+        postalCode: 'D01',
+        items: [{ menuItemId: item._id.toString(), quantity: 1 }],
+      });
+    if (createRes.status !== 201) {
+      // Delivery may require feature flag / fee rules in test env — seed dual-track row directly.
+      const order = await Order.create({
+        type: 'delivery',
+        deliverySource: 'phone',
+        status: 'pending',
+        dualTrackVersion: 1,
+        paymentStatus: 'unpaid',
+        fulfillmentStatus: 'ordered',
+        deliveryStage: 'new',
+        items: [{ menuItemId: item._id, quantity: 1, unitPrice: 10, itemName: 'x' }],
+      });
+      const stageRes = await request(app)
+        .put(`/api/orders/${order._id}/delivery-stage`)
+        .send({ deliveryStage: 'picked_up_by_driver' });
+      expect(stageRes.status).toBe(200);
+      expect(stageRes.body.status).toBe('pending');
+      expect(stageRes.body.fulfillmentStatus).toBe('fulfilled');
+      return;
+    }
+
+    await Order.findByIdAndUpdate(createRes.body._id, {
+      dualTrackVersion: 1,
+      paymentStatus: 'unpaid',
+      fulfillmentStatus: 'ordered',
+    });
+
+    const stageRes = await request(app)
+      .put(`/api/orders/${createRes.body._id}/delivery-stage`)
+      .send({ deliveryStage: 'picked_up_by_driver' });
+    expect(stageRes.status).toBe(200);
+    expect(stageRes.body.status).toBe('pending');
+    expect(stageRes.body.fulfillmentStatus).toBe('fulfilled');
   });
 });

@@ -18,7 +18,8 @@ import { computeOrderPayableTotalEuro } from '../utils/orderPayableTotal';
 import { optionalAuthMiddleware, requirePermission } from '../middleware/auth';
 import { Role } from '../middleware/permissions';
 import { requireAuthSameStore } from '../middleware/authForStore';
-import { customerPhoneMatchCandidates, normalizeMemberPhone } from '../utils/memberWalletOps';
+import { customerPhoneMatchCandidates, normalizeMemberPhone, debitMemberWallet } from '../utils/memberWalletOps';
+import { resolveMemberPaymentForCheckout } from '../utils/checkoutMemberResolve';
 import { attachCustomerProfileToDeliveryOrder } from '../utils/customerProfileDelivery';
 import { aggregateFrequentMenuItemsForCustomer } from '../utils/customerFrequentOrderItems';
 import { zonedDayBoundsForRef } from '../utils/zonedDayBounds';
@@ -42,6 +43,18 @@ import {
 } from '../utils/inventoryService';
 import { voidNotifyCustomerOrderEvent } from '../modules/customer-notifications/dispatcher';
 import { handleNotifyCustomerReady } from './customerNotifications';
+import {
+  DUAL_TRACK_VERSION,
+  fulfillmentAfterKitchenPrintAll,
+  initialDualTrackForCreate,
+  isCashierKitchenAtPlacement,
+  isKitchenPrintSatisfied,
+  isLegacyPaymentSettled,
+  resolveTakeoutPlacementSource,
+  syncDualTrackBeforeSave,
+} from '../utils/orderDualTrack';
+
+const KITCHEN_PRINT_ORDER_TYPES = new Set(['dine_in', 'takeout', 'phone', 'delivery']);
 
 function isStaffCashierOrOwner(req: Request): boolean {
   const u = req.user;
@@ -235,7 +248,7 @@ export function createOrdersRouter(io: SocketIOServer): Router {
     });
   }
 
-  // POST /api/orders — Create a new order（可选 Bearer：店员创建外卖时标记 takeoutPlacementSource）
+  // POST /api/orders — Create a new order（外卖收银点单须 body.staffTakeoutPlacement=true + 店员会话）
   router.post('/', optionalAuthMiddleware, async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { MenuItem, Order, DailyOrderCounter, SystemConfig, CustomerProfile } = orderModels();
@@ -467,14 +480,13 @@ export function createOrdersRouter(io: SocketIOServer): Router {
             orderData.pickupSlotStart = d;
           }
         }
-        const u = req.user;
-        const isCashierPlacement =
-          !!req.storeId &&
-          !!u &&
-          u.role !== 'platform_owner' &&
-          u.storeId === req.storeId.toString() &&
-          (u.role === Role.OWNER || u.role === Role.CASHIER);
-        orderData.takeoutPlacementSource = isCashierPlacement ? 'cashier' : 'customer';
+        const rawStaffTakeout = (req.body as { staffTakeoutPlacement?: unknown }).staffTakeoutPlacement;
+        const placementSource = resolveTakeoutPlacementSource({
+          staffTakeoutPlacement: rawStaffTakeout,
+          isStaffCashier: isStaffCashierOrOwner(req),
+        });
+        const isCashierPlacement = placementSource === 'cashier';
+        orderData.takeoutPlacementSource = placementSource;
 
         const name = typeof customerName === 'string' ? customerName.trim() : '';
         const rawPhone = typeof customerPhone === 'string' ? customerPhone.trim() : '';
@@ -509,21 +521,72 @@ export function createOrdersRouter(io: SocketIOServer): Router {
 
       const rawPhoneCard = (req.body as { phoneCardPaidAtPlacement?: unknown }).phoneCardPaidAtPlacement;
       const wantsPhoneCard = rawPhoneCard === true || rawPhoneCard === 'true';
-      if (wantsPhoneCard) {
+      const rawPlacementMethod = (req.body as { placementPrepaidMethod?: unknown }).placementPrepaidMethod;
+      const placementMethod =
+        rawPlacementMethod === 'card' || rawPlacementMethod === 'member' ? rawPlacementMethod : null;
+      let prepaidAtPlacement = false;
+      if (wantsPhoneCard || placementMethod) {
         if (!isStaffCashierOrOwner(req)) {
-          throw createAppError('FORBIDDEN', 'phoneCardPaidAtPlacement requires cashier or owner session');
+          throw createAppError('FORBIDDEN', 'placementPrepaidMethod requires cashier or owner session');
         }
         const ds = String((orderData as { deliverySource?: string }).deliverySource || '');
         const isPhonePlacement = type === 'phone' || (type === 'delivery' && ds === 'phone');
         if (!isPhonePlacement) {
           throw createAppError(
             'VALIDATION_ERROR',
-            'phoneCardPaidAtPlacement is only allowed for phone orders or delivery with deliverySource=phone',
+            'placementPrepaidMethod is only allowed for phone orders or delivery with deliverySource=phone',
           );
         }
+        const method = placementMethod || (wantsPhoneCard ? 'card' : null);
+        if (method !== 'card' && method !== 'member') {
+          throw createAppError('VALIDATION_ERROR', 'placementPrepaidMethod must be "card" or "member"');
+        }
         orderData.status = 'paid_online';
-        orderData.phoneCardPaidAtPlacement = true;
+        orderData.placementPrepaidMethod = method;
+        if (method === 'card') {
+          orderData.phoneCardPaidAtPlacement = true;
+        }
+        if (method === 'member') {
+          const memberPhoneRaw = typeof (req.body as { memberPhone?: unknown }).memberPhone === 'string'
+            ? String((req.body as { memberPhone: string }).memberPhone).trim()
+            : '';
+          if (!memberPhoneRaw) {
+            throw createAppError('VALIDATION_ERROR', 'memberPhone is required for placementPrepaidMethod=member');
+          }
+          const features = await resolveStoreEffectiveFeatures(req.storeId!);
+          if (!features.has(FeatureKeys.CashierMemberWallet)) {
+            throw createAppError('FORBIDDEN', '当前套餐未开通会员储值');
+          }
+        }
+        prepaidAtPlacement = true;
       }
+
+      const takeoutSrc = (orderData as { takeoutPlacementSource?: string }).takeoutPlacementSource;
+      const deliverySrcRaw = String((orderData as { deliverySource?: string }).deliverySource || '').trim();
+      const deliverySrc = type === 'delivery' ? (deliverySrcRaw === 'qr' ? 'qr' : 'phone') : undefined;
+      const kitchenAtPlacement = isCashierKitchenAtPlacement({
+        type,
+        takeoutPlacementSource: takeoutSrc === 'cashier' ? 'cashier' : takeoutSrc === 'customer' ? 'customer' : undefined,
+        deliverySource: deliverySrc,
+      });
+      if (kitchenAtPlacement) {
+        for (const line of orderItems as { lineKind?: string; kitchenPrintedQty?: number; quantity: number }[]) {
+          if (line.lineKind === 'delivery_fee') continue;
+          line.kitchenPrintedQty = line.quantity;
+        }
+        if (type === 'delivery' && deliverySrc === 'phone') {
+          orderData.deliveryStage = 'accepted';
+        }
+      }
+      Object.assign(
+        orderData,
+        initialDualTrackForCreate({
+          type,
+          takeoutPlacementSource: takeoutSrc === 'cashier' ? 'cashier' : takeoutSrc === 'customer' ? 'customer' : undefined,
+          deliverySource: deliverySrc,
+          prepaidAtPlacement,
+        }),
+      );
 
       /** 库存追踪：在订单写入前先做原子扣减；后续任何抛错都要把扣减回滚 */
       const inventoryServings = aggregateServingsByMenuItem(
@@ -576,22 +639,40 @@ export function createOrdersRouter(io: SocketIOServer): Router {
       try {
         order = await Order.create(orderData);
 
-        if ((order as { phoneCardPaidAtPlacement?: boolean }).phoneCardPaidAtPlacement) {
-          try {
-            const { Checkout } = getModels() as { Checkout: mongoose.Model<any> };
-            const totalAmount = computeOrderPayableTotalEuro(order);
-            await Checkout.create({
-              storeId: req.storeId,
-              type: 'seat',
-              totalAmount,
-              paymentMethod: 'card',
-              cardAmount: totalAmount,
-              orderIds: [order._id],
-            });
-          } catch (checkoutErr) {
-            await Order.findOneAndDelete({ _id: order._id, storeId: req.storeId });
-            throw checkoutErr;
+        const placementMember =
+          (order as { placementPrepaidMethod?: string }).placementPrepaidMethod === 'member';
+        if (placementMember) {
+          const { Member, MemberWalletTxn } = getModels() as {
+            Member: mongoose.Model<unknown>;
+            MemberWalletTxn: mongoose.Model<unknown>;
+          };
+          const totalAmount = computeOrderPayableTotalEuro(order);
+          const memberPhone = String((req.body as { memberPhone?: string }).memberPhone || '').trim();
+          const mp = await resolveMemberPaymentForCheckout({
+            storeId: req.storeId!,
+            Member,
+            finalAmount: totalAmount,
+            body: { memberPhone, paymentMethod: 'member' },
+            skipMemberPin: true,
+          });
+          if (mp.paymentMethod !== 'member' || mp.memberCreditUsed + 0.02 < totalAmount) {
+            throw createAppError('VALIDATION_ERROR', '会员余额不足以支付本单');
           }
+          await debitMemberWallet({
+            Member,
+            MemberWalletTxn,
+            storeId: req.storeId!,
+            memberId: mp.memberId!,
+            amountEuro: mp.memberCreditUsed,
+            orderId: order._id as mongoose.Types.ObjectId,
+            note: '电话单下单时已付（会员储值）',
+          });
+          order.memberId = mp.memberId;
+          order.memberCreditUsed = mp.memberCreditUsed;
+          order.memberPhoneSnapshot = mp.memberPhoneSnapshot;
+          order.paymentStatus = 'paid';
+          syncDualTrackBeforeSave(order);
+          await order.save();
         }
       } catch (writeErr) {
         if (inventoryDeduction.demands.length > 0) {
@@ -646,7 +727,8 @@ export function createOrdersRouter(io: SocketIOServer): Router {
         order: orderLean,
         event: 'order_placed',
       });
-      if ((orderLean as { phoneCardPaidAtPlacement?: boolean }).phoneCardPaidAtPlacement) {
+      if ((orderLean as { phoneCardPaidAtPlacement?: boolean }).phoneCardPaidAtPlacement
+        || (orderLean as { placementPrepaidMethod?: string }).placementPrepaidMethod) {
         voidNotifyCustomerOrderEvent({
           storeId: req.storeId!,
           order: orderLean,
@@ -769,7 +851,11 @@ export function createOrdersRouter(io: SocketIOServer): Router {
           // Phone orders should disappear after checkout.
           {
             type: 'phone',
-            $or: [{ status: 'pending' }, { status: 'paid_online', phoneCardPaidAtPlacement: true }],
+            $or: [
+              { status: 'pending' },
+              { status: 'paid_online', phoneCardPaidAtPlacement: true },
+              { status: 'paid_online', placementPrepaidMethod: { $in: ['card', 'member'] } },
+            ],
           },
           // 电话送餐：司机回店结账后应为 completed；队列中只保留待处理/待收款阶段（勿含 checked_out，否则旧数据会永远占位）
           {
@@ -788,6 +874,12 @@ export function createOrdersRouter(io: SocketIOServer): Router {
             type: 'delivery',
             deliverySource: { $exists: false },
             status: { $in: ['pending', 'paid_online'] },
+          },
+          // Dual-track: fulfilled but unpaid must stay active until payment.
+          {
+            dualTrackVersion: DUAL_TRACK_VERSION,
+            fulfillmentStatus: 'fulfilled',
+            paymentStatus: { $in: ['unpaid', 'partial'] },
           },
         ],
       })
@@ -841,12 +933,11 @@ export function createOrdersRouter(io: SocketIOServer): Router {
         });
       }
 
-      const updated = await Order.findOneAndUpdate(
-        { _id: id, storeId: req.storeId },
-        { $set: { status: 'completed', completedAt: new Date() } },
-        { new: true },
-      );
-      res.json(updated);
+      order.status = 'completed';
+      order.completedAt = new Date();
+      syncDualTrackBeforeSave(order);
+      await order.save();
+      res.json(order);
     } catch (err) {
       next(err);
     }
@@ -918,13 +1009,12 @@ export function createOrdersRouter(io: SocketIOServer): Router {
         );
       }
 
-      const updated = await Order.findOneAndUpdate(
-        { _id: id, storeId: req.storeId },
-        { $set: { status: 'completed', completedAt: new Date() } },
-        { new: true },
-      );
-      io.to(storeIoRoom(req.storeId!)).emit('order:updated', updated);
-      res.json(updated);
+      order.status = 'completed';
+      order.completedAt = new Date();
+      syncDualTrackBeforeSave(order);
+      await order.save();
+      io.to(storeIoRoom(req.storeId!)).emit('order:updated', order);
+      res.json(order);
     } catch (err) {
       next(err);
     }
@@ -1018,21 +1108,21 @@ export function createOrdersRouter(io: SocketIOServer): Router {
         );
       }
 
-      const updated = await Order.findOneAndUpdate(
-        { _id: id, storeId: req.storeId },
-        { $set: { status: 'completed', completedAt: new Date() } },
-        { new: true },
-      );
+      order.status = 'completed';
+      order.completedAt = new Date();
+      const wfDnComplete = await getDineInWorkflowModeForStore(req.storeId!);
+      syncDualTrackBeforeSave(order, { dineInWorkflowMode: wfDnComplete });
+      await order.save();
 
-      io.to(storeIoRoom(req.storeId!)).emit('order:updated', updated);
-      res.json(updated);
+      io.to(storeIoRoom(req.storeId!)).emit('order:updated', order);
+      res.json(order);
     } catch (err) {
       next(err);
     }
   });
 
   // PUT /api/orders/phone/:id/complete-placement-card-paid
-  // Placement-time phone card pay: Checkout already created at POST; this only marks the order completed after kitchen flow.
+  // Placement-time prepaid (card/member): create Checkout if missing, then mark completed after kitchen + pickup.
   router.put('/phone/:id/complete-placement-card-paid', async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { Order, Checkout } = getModels() as {
@@ -1051,8 +1141,12 @@ export function createOrdersRouter(io: SocketIOServer): Router {
       if (order.type !== 'phone') {
         throw createAppError('VALIDATION_ERROR', 'Only phone orders can use this action');
       }
-      if (!order.phoneCardPaidAtPlacement) {
-        throw createAppError('VALIDATION_ERROR', 'Order was not created with phone card prepayment', {
+      const prepaid =
+        order.phoneCardPaidAtPlacement
+        || order.placementPrepaidMethod === 'card'
+        || order.placementPrepaidMethod === 'member';
+      if (!prepaid) {
+        throw createAppError('VALIDATION_ERROR', 'Order was not created with placement prepayment', {
           currentStatus: order.status,
         });
       }
@@ -1062,26 +1156,39 @@ export function createOrdersRouter(io: SocketIOServer): Router {
         });
       }
 
-      const checkout = await Checkout.findOne({ storeId: req.storeId, orderIds: order._id }).sort({ checkedOutAt: 1 });
+      let checkout = await Checkout.findOne({ storeId: req.storeId, orderIds: order._id }).sort({ checkedOutAt: 1 });
       if (!checkout) {
-        throw createAppError('VALIDATION_ERROR', 'Missing checkout record for this placement card payment');
+        const totalAmount = computeOrderPayableTotalEuro(order);
+        const method = order.placementPrepaidMethod === 'member' ? 'member' : 'card';
+        const checkoutPayload: Record<string, unknown> = {
+          storeId: req.storeId,
+          type: 'seat',
+          totalAmount,
+          paymentMethod: method,
+          orderIds: [order._id],
+        };
+        if (method === 'card') {
+          checkoutPayload.cardAmount = totalAmount;
+        } else {
+          checkoutPayload.memberId = order.memberId;
+          checkoutPayload.memberPhoneSnapshot = String(order.memberPhoneSnapshot || '');
+          checkoutPayload.memberCreditUsed = Number(order.memberCreditUsed) || totalAmount;
+        }
+        checkout = await Checkout.create(checkoutPayload);
       }
 
-      const updated = await Order.findOneAndUpdate(
-        { _id: id, storeId: req.storeId },
-        { $set: { status: 'completed', completedAt: new Date() } },
-        { new: true },
-      );
+      order.status = 'completed';
+      order.completedAt = new Date();
+      syncDualTrackBeforeSave(order);
+      await order.save();
 
-      io.to(storeIoRoom(req.storeId!)).emit('order:updated', updated);
-      if (updated) {
-        voidNotifyCustomerOrderEvent({
-          storeId: req.storeId!,
-          order: updated,
-          event: 'order_completed',
-        });
-      }
-      res.json(updated);
+      io.to(storeIoRoom(req.storeId!)).emit('order:updated', order);
+      voidNotifyCustomerOrderEvent({
+        storeId: req.storeId!,
+        order,
+        event: 'order_completed',
+      });
+      res.json(order);
     } catch (err) {
       next(err);
     }
@@ -1112,13 +1219,25 @@ export function createOrdersRouter(io: SocketIOServer): Router {
       if (order.type !== 'delivery') {
         throw createAppError('VALIDATION_ERROR', 'Only delivery orders can update delivery stage');
       }
-      order.deliveryStage = nextStage;
-      // Delivery business rule: once driver has picked up and payment is already settled,
-      // treat as delivered+done (no separate delivered step needed).
-      if (nextStage === 'picked_up_by_driver' && (order.status === 'checked_out' || order.status === 'paid_online')) {
-        order.status = 'completed';
-        order.completedAt = new Date();
+      if (nextStage === 'picked_up_by_driver') {
+        if (!isKitchenPrintSatisfied(order)) {
+          throw createAppError('VALIDATION_ERROR', '须先送厨房制作后再安排司机取餐');
+        }
+        if (order.deliveryStage !== 'accepted') {
+          throw createAppError('VALIDATION_ERROR', '订单须为已接单状态后才能标记司机取走');
+        }
       }
+      order.deliveryStage = nextStage;
+      if (nextStage === 'picked_up_by_driver') {
+        const paymentSettled =
+          isLegacyPaymentSettled(String(order.status))
+          || String(order.paymentStatus) === 'paid';
+        if (paymentSettled) {
+          order.status = 'completed';
+          order.completedAt = new Date();
+        }
+      }
+      syncDualTrackBeforeSave(order);
       await order.save();
       io.to(storeIoRoom(req.storeId!)).emit('order:updated', order);
       const orderLean = typeof order.toObject === 'function' ? order.toObject() : order;
@@ -1299,8 +1418,8 @@ export function createOrdersRouter(io: SocketIOServer): Router {
         if (!order) {
           throw createAppError('NOT_FOUND', 'Order not found');
         }
-        if (order.type !== 'dine_in') {
-          throw createAppError('VALIDATION_ERROR', 'Only dine-in orders support kitchen print marks');
+        if (!KITCHEN_PRINT_ORDER_TYPES.has(String(order.type))) {
+          throw createAppError('VALIDATION_ERROR', 'This order type does not support kitchen print marks');
         }
         if (!['pending', 'paid_online', 'checked_out'].includes(String(order.status))) {
           throw createAppError('ORDER_NOT_MODIFIABLE', 'Order status does not allow kitchen print updates');
@@ -1337,6 +1456,12 @@ export function createOrdersRouter(io: SocketIOServer): Router {
           }
           (line as { kitchenPrintedQty?: number }).kitchenPrintedQty = cur + qty;
         }
+        if (Number(order.dualTrackVersion) === DUAL_TRACK_VERSION) {
+          order.fulfillmentStatus = fulfillmentAfterKitchenPrintAll(order.fulfillmentStatus);
+        }
+        order.markModified('items');
+        const wfKitchen = order.type === 'dine_in' ? await getDineInWorkflowModeForStore(req.storeId!) : undefined;
+        syncDualTrackBeforeSave(order, { dineInWorkflowMode: wfKitchen });
         await order.save();
         io.to(storeIoRoom(req.storeId!)).emit('order:updated', order);
         res.json(order);
@@ -1362,8 +1487,8 @@ export function createOrdersRouter(io: SocketIOServer): Router {
         if (!order) {
           throw createAppError('NOT_FOUND', 'Order not found');
         }
-        if (order.type !== 'dine_in') {
-          throw createAppError('VALIDATION_ERROR', 'Only dine-in orders support kitchen print marks');
+        if (!KITCHEN_PRINT_ORDER_TYPES.has(String(order.type))) {
+          throw createAppError('VALIDATION_ERROR', 'This order type does not support kitchen print marks');
         }
         if (!['pending', 'paid_online', 'checked_out'].includes(String(order.status))) {
           throw createAppError('ORDER_NOT_MODIFIABLE', 'Order status does not allow kitchen print updates');
@@ -1375,6 +1500,12 @@ export function createOrdersRouter(io: SocketIOServer): Router {
           const maxQ = typeof line.quantity === 'number' ? line.quantity : 0;
           (line as { kitchenPrintedQty?: number }).kitchenPrintedQty = maxQ;
         }
+        if (Number(order.dualTrackVersion) === DUAL_TRACK_VERSION) {
+          order.fulfillmentStatus = fulfillmentAfterKitchenPrintAll(order.fulfillmentStatus);
+        }
+        order.markModified('items');
+        const wfKitchenAll = order.type === 'dine_in' ? await getDineInWorkflowModeForStore(req.storeId!) : undefined;
+        syncDualTrackBeforeSave(order, { dineInWorkflowMode: wfKitchenAll });
         await order.save();
         io.to(storeIoRoom(req.storeId!)).emit('order:updated', order);
         res.json(order);
@@ -1616,14 +1747,15 @@ export function createOrdersRouter(io: SocketIOServer): Router {
         });
       }
 
+      const lines = (order.items || []) as Array<{
+        lineKind?: string;
+        refunded?: boolean;
+        quantity: number;
+        kitchenPrintedQty?: number;
+        settledQty?: number;
+      }>;
+
       if (order.type === 'dine_in') {
-        const lines = (order.items || []) as Array<{
-          lineKind?: string;
-          refunded?: boolean;
-          quantity: number;
-          kitchenPrintedQty?: number;
-          settledQty?: number;
-        }>;
         for (const it of lines) {
           if (it.lineKind === 'delivery_fee' || it.refunded) continue;
           if ((Number(it.kitchenPrintedQty) || 0) > 0) {
@@ -1640,6 +1772,24 @@ export function createOrdersRouter(io: SocketIOServer): Router {
               { reason: 'settled_qty' },
             );
           }
+        }
+      } else {
+        for (const it of lines) {
+          if (it.lineKind === 'delivery_fee' || it.refunded) continue;
+          if ((Number(it.kitchenPrintedQty) || 0) > 0) {
+            throw createAppError(
+              'ORDER_NOT_MODIFIABLE',
+              'Cannot cancel order: kitchen ticket already printed',
+              { reason: 'kitchen_printed' },
+            );
+          }
+        }
+        if (order.type === 'delivery' && order.deliveryStage === 'picked_up_by_driver') {
+          throw createAppError(
+            'ORDER_NOT_MODIFIABLE',
+            'Cannot cancel delivery order: driver already picked up',
+            { reason: 'driver_picked_up' },
+          );
         }
       }
 

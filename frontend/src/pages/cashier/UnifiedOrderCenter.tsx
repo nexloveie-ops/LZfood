@@ -70,6 +70,10 @@ interface OrderRow {
   dineInStaffLockedAt?: string;
   /** 收银创建时客人已通过「电话刷卡」付款；与 paid_online 同流程，结账记为 card */
   phoneCardPaidAtPlacement?: boolean;
+  placementPrepaidMethod?: 'card' | 'member';
+  paymentStatus?: string;
+  fulfillmentStatus?: string;
+  dualTrackVersion?: number;
 }
 
 function mapSelectedOptionsForReceipt(
@@ -115,11 +119,89 @@ function orderNoForDisplay(o: OrderRow): string {
   return '—';
 }
 
+/** 顾客扫码自取（非收银点单） */
+function isCustomerQrTakeout(o: OrderRow): boolean {
+  return o.type === 'takeout' && o.takeoutPlacementSource !== 'cashier';
+}
+
+/** 顾客自取：厨房已接单（以服务端 kitchenPrintedQty 为准） */
+function isTakeoutKitchenReleased(o: OrderRow): boolean {
+  if (!isCustomerQrTakeout(o)) return true;
+  return isOrderKitchenFullyPrinted(o);
+}
+
+function isOrderKitchenFullyPrinted(o: OrderRow): boolean {
+  if (o.type === 'takeout' && o.takeoutPlacementSource === 'cashier') return true;
+  let hasFood = false;
+  for (const it of o.items || []) {
+    if (it.lineKind === 'delivery_fee' || it.refunded) continue;
+    hasFood = true;
+    const q = it.quantity;
+    const p = Math.max(0, Math.min(Number(it.kitchenPrintedQty) || 0, q));
+    if (p < q) return false;
+  }
+  return hasFood;
+}
+
+function fulfillmentStatusLabel(o: OrderRow, isEn: boolean): string {
+  if (o.type === 'delivery') {
+    const fs = o.fulfillmentStatus;
+    if (fs === 'fulfilled' || o.deliveryStage === 'picked_up_by_driver') {
+      return isEn ? 'Fulfilled' : '已取/已送';
+    }
+    return isOrderKitchenFullyPrinted(o)
+      ? (isEn ? 'In kitchen' : '厨房制作中')
+      : (isEn ? 'Awaiting kitchen' : '待送厨房');
+  }
+  if (isCustomerQrTakeout(o)) {
+    return isOrderKitchenFullyPrinted(o)
+      ? (isEn ? 'In kitchen' : '厨房制作中')
+      : (isEn ? 'Awaiting kitchen' : '待送厨房');
+  }
+  const fs = o.fulfillmentStatus;
+  if (fs === 'kitchen' || fs === 'ready') return isEn ? 'In kitchen' : '厨房制作中';
+  if (fs === 'fulfilled') return isEn ? 'Fulfilled' : '已取/已送';
+  return isEn ? 'Awaiting kitchen' : '待送厨房';
+}
+
+function paymentStatusLabel(o: OrderRow, isEn: boolean): string {
+  const ps = o.paymentStatus;
+  if (ps === 'paid') return isEn ? 'Paid' : '已付';
+  if (ps === 'partial') return isEn ? 'Partial' : '部分已付';
+  if (ps === 'refunded') return isEn ? 'Refunded' : '已退';
+  if (o.status === 'paid_online' || o.status === 'checked_out') return isEn ? 'Paid' : '已付';
+  return isEn ? 'Unpaid' : '未付';
+}
+
+/** 外卖：是否已在服务端标记厨房已打印（kitchenPrintedQty 满额） */
+function takeoutKitchenPrintedOnOrder(o: OrderRow): boolean {
+  return o.type === 'takeout' && isOrderKitchenFullyPrinted(o);
+}
+
 /** 收银端创建的外卖在 checked_out 下不再要求先点「打印厨房」 */
 function isTakeoutCheckedOutKitchenStepDone(o: OrderRow, printedIds: Record<string, true>): boolean {
   if (o.type !== 'takeout' || o.status !== 'checked_out') return false;
   if (o.takeoutPlacementSource === 'cashier') return true;
-  return !!printedIds[o._id];
+  return takeoutKitchenPrintedOnOrder(o) || !!printedIds[o._id];
+}
+
+function isTakeoutKitchenPrintDone(o: OrderRow, _printedIds: Record<string, true>): boolean {
+  return isTakeoutKitchenReleased(o);
+}
+
+function isPhonePlacementKitchenStepDone(o: OrderRow, printedIds: Record<string, true>): boolean {
+  const prepaid =
+    o.phoneCardPaidAtPlacement || o.placementPrepaidMethod === 'card' || o.placementPrepaidMethod === 'member';
+  if (o.type !== 'phone' || !prepaid) return false;
+  let hasFood = false;
+  for (const it of o.items || []) {
+    if (it.lineKind === 'delivery_fee' || it.refunded) continue;
+    hasFood = true;
+    const q = it.quantity;
+    const p = Math.max(0, Math.min(Number(it.kitchenPrintedQty) || 0, q));
+    if (p < q) return false;
+  }
+  return hasFood || !!printedIds[o._id];
 }
 
 /** 堂食 pending：未出厨房、未部分结账时可整单取消 */
@@ -130,6 +212,16 @@ function dineInAllowCancelPending(o: OrderRow): boolean {
     if ((Number(it.kitchenPrintedQty) || 0) > 0) return false;
     if ((Number(it.settledQty) || 0) > 0) return false;
   }
+  return true;
+}
+
+/** pending 单：未付/未送厨房/司机未取走时可取消（与 DELETE /api/orders/:id 一致） */
+function pendingOrderAllowCancel(o: OrderRow): boolean {
+  if (o.status !== 'pending') return false;
+  if (o.type === 'dine_in') return dineInAllowCancelPending(o);
+  if (isOrderKitchenFullyPrinted(o)) return false;
+  if (o.type === 'delivery' && o.deliveryStage === 'picked_up_by_driver') return false;
+  if (o.paymentStatus === 'paid' || o.paymentStatus === 'partial') return false;
   return true;
 }
 
@@ -892,7 +984,11 @@ export default function UnifiedOrderCenter() {
       };
       await printBuiltReceipt(receiptData, config, { bundleDiscounts, copies: 1 });
 
-      if (kitchenTicket === 'full_mark_all' && isPayAfterDineIn) {
+      const shouldMarkKitchenAll =
+        (kitchenTicket === 'full_mark_all' && isPayAfterDineIn)
+        || (kitchenTicket === 'auto' && (src.type === 'takeout' || src.type === 'phone' || src.type === 'delivery'));
+
+      if (shouldMarkKitchenAll) {
         const mark = await apiFetch(`/api/orders/${src._id}/kitchen-printed-all`, {
           method: 'POST',
           headers: { Authorization: `Bearer ${token}` },
@@ -904,6 +1000,8 @@ export default function UnifiedOrderCenter() {
               ? `Could not mark kitchen printed: ${errBody?.error?.message || mark.status}`
               : `未能标记厨房已打印：${errBody?.error?.message || mark.status}`,
           );
+        } else {
+          await fetchAll();
         }
       }
     },
@@ -1279,14 +1377,28 @@ export default function UnifiedOrderCenter() {
     [fetchAll, isEn, token],
   );
 
-  const handleDeliveryPrintAndCook = useCallback(async (order: OrderRow) => {
-    await printOrderTicket(order, 'full_no_mark');
-    await setDeliveryStage(order._id, 'accepted');
-  }, [printOrderTicket, setDeliveryStage]);
+  const handleDeliveryKitchenRelease = useCallback(async (order: OrderRow) => {
+    setBusyId(order._id);
+    try {
+      await printOrderTicket(order, 'auto');
+      const stage = order.deliveryStage;
+      if (!stage || stage === 'new') {
+        await setDeliveryStage(order._id, 'accepted');
+      } else {
+        await fetchAll();
+      }
+    } finally {
+      setBusyId(null);
+    }
+  }, [fetchAll, printOrderTicket, setDeliveryStage]);
 
   const handleDeliveryDriverPickup = useCallback(async (order: OrderRow) => {
+    if (!isOrderKitchenFullyPrinted(order)) {
+      alert(isEn ? 'Send the order to the kitchen first.' : '请先送厨房制作，再安排司机取餐。');
+      return;
+    }
     await setDeliveryStage(order._id, 'picked_up_by_driver');
-  }, [setDeliveryStage]);
+  }, [isEn, setDeliveryStage]);
 
   const grouped = useMemo(() => {
     const byType: Record<OrderType, OrderRow[]> = { dine_in: [], takeout: [], phone: [], delivery: [] };
@@ -1331,6 +1443,19 @@ export default function UnifiedOrderCenter() {
       }));
   }, [grouped.dine_in, dineInPayAfter]);
 
+  const handleCustomerTakeoutKitchen = useCallback(
+    async (order: OrderRow) => {
+      setBusyId(order._id);
+      try {
+        await printOrderTicket(order);
+        await fetchAll();
+      } finally {
+        setBusyId(null);
+      }
+    },
+    [fetchAll, printOrderTicket],
+  );
+
   const L = {
     title: isEn ? 'Order Center' : '订单中心',
     refresh: isEn ? 'Refresh' : '刷新',
@@ -1339,6 +1464,11 @@ export default function UnifiedOrderCenter() {
     fallbackMode: isEn ? 'Fallback Mode' : '回退模式',
     empty: isEn ? 'No orders' : '暂无',
     paymentAndPrint: isEn ? 'Payment & Printing' : '收款与出单',
+    fulfillmentLine: isEn ? 'Fulfillment' : '履约',
+    paymentLine: isEn ? 'Payment' : '收款',
+    sendToKitchen: isEn ? 'Send to kitchen' : '送厨房制作',
+    kitchenPreparing: isEn ? 'Kitchen is preparing' : '厨房制作中',
+    dualTrackIndependentHint: isEn ? 'Fulfillment and payment can be handled in any order' : '履约与收款可分别操作，互不影响',
     deliveryStage: isEn ? 'Delivery Stage' : '配送阶段',
     checkout: isEn ? 'Checkout' : '结账',
     cancel: isEn ? 'Cancel' : '取消',
@@ -1370,6 +1500,7 @@ export default function UnifiedOrderCenter() {
     deliverySource: isEn ? 'Source' : '来源',
     stage: isEn ? 'Stage' : '阶段',
     printAndCook: isEn ? 'Print Ticket & Start Cooking' : '打印小票并开始制作',
+    deliveryKitchenBeforeDriver: isEn ? 'Kitchen must start before driver pickup' : '须先出厨房单，再安排司机取餐',
     driverPickedUp: isEn ? 'Driver Picked Up' : '司机取走',
     waitDriverCash: isEn ? 'Driver picked up. Wait for driver to return and pay; payment completes the order.' : '司机已取走，等待司机回店结账；结账即完成订单。',
     cashierCollectHint: isEn ? 'Cashier collects payment after driver returns. Payment means delivered and completed.' : '司机回店后由 cashier 收款；收款即代表已送达并完成。',
@@ -1797,6 +1928,18 @@ export default function UnifiedOrderCenter() {
                 ]
                   .filter(Boolean)
                   .join(' · ');
+                const paidBannerKind = memberWalletPaidUi
+                  ? 'member'
+                  : (isPhoneCardPlacementPrepaid && o.status === 'paid_online')
+                    ? 'phone_card'
+                    : isOnlinePaidFlow
+                      ? 'online'
+                      : null;
+                const payLabel = paymentStatusLabel(o, isEn);
+                const showLegacyStatusChip = !paidBannerKind;
+                const showPaymentTrackBadge =
+                  (o.dualTrackVersion === 1 || o.paymentStatus)
+                  && (!paidBannerKind || payLabel === (isEn ? 'Unpaid' : '未付'));
                 return (
                 <div
                   key={o._id}
@@ -1847,6 +1990,7 @@ export default function UnifiedOrderCenter() {
                         🖨 {L.printReceipt}
                       </button>
                     </div>
+                    {showLegacyStatusChip ? (
                     <span
                       style={{
                         fontSize: 12,
@@ -1867,7 +2011,38 @@ export default function UnifiedOrderCenter() {
                     >
                       {o.status}
                     </span>
-                    {memberWalletPaidUi ? (
+                    ) : null}
+                    {o.dualTrackVersion === 1 || o.fulfillmentStatus ? (
+                      <span
+                        style={{
+                          fontSize: 10,
+                          fontWeight: 600,
+                          padding: '2px 6px',
+                          borderRadius: 8,
+                          background: '#E3F2FD',
+                          color: '#1565C0',
+                        }}
+                        title={L.fulfillmentLine}
+                      >
+                        {fulfillmentStatusLabel(o, isEn)}
+                      </span>
+                    ) : null}
+                    {showPaymentTrackBadge ? (
+                        <span
+                          style={{
+                            fontSize: 10,
+                            fontWeight: 600,
+                            padding: '2px 6px',
+                            borderRadius: 8,
+                            background: payLabel === (isEn ? 'Unpaid' : '未付') ? '#FFF3E0' : '#E8F5E9',
+                            color: payLabel === (isEn ? 'Unpaid' : '未付') ? '#E65100' : '#2E7D32',
+                          }}
+                          title={L.paymentLine}
+                        >
+                          {payLabel}
+                        </span>
+                    ) : null}
+                    {!paidBannerKind && memberWalletPaidUi ? (
                       <span
                         style={{
                           fontSize: 10,
@@ -1882,7 +2057,7 @@ export default function UnifiedOrderCenter() {
                       >
                         {L.memberPaidBadge}
                       </span>
-                    ) : isPhoneCardPlacementPrepaid && o.status === 'paid_online' ? (
+                    ) : !paidBannerKind && isPhoneCardPlacementPrepaid && o.status === 'paid_online' ? (
                       <span
                         style={{
                           fontSize: 10,
@@ -1897,7 +2072,7 @@ export default function UnifiedOrderCenter() {
                       >
                         {L.phoneCardPaidBadge}
                       </span>
-                    ) : isOnlinePaidFlow ? (
+                    ) : !paidBannerKind && isOnlinePaidFlow ? (
                       <span
                         style={{
                           fontSize: 10,
@@ -2026,39 +2201,97 @@ export default function UnifiedOrderCenter() {
                   )}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 'auto' }} onClick={(e) => e.stopPropagation()}>
                     {o.type === 'delivery' ? (
-                      <div style={{ padding: 8, border: '1px solid #e6e6e6', borderRadius: 8, background: '#fff' }}>
-                        <div style={{ fontSize: 11, color: '#666', marginBottom: 6, fontWeight: 600 }}>{L.deliveryStage}</div>
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                          {(!o.deliveryStage || o.deliveryStage === 'new') ? (
+                      !isOrderKitchenFullyPrinted(o) ? (
+                        <div
+                          style={{
+                            padding: 8,
+                            border: '1px solid #BBDEFB',
+                            borderRadius: 8,
+                            background: '#F5FAFF',
+                          }}
+                        >
+                          <div style={{ fontSize: 11, color: '#1565C0', marginBottom: 6, fontWeight: 600 }}>{L.fulfillmentLine}</div>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'stretch' }}>
                             <button
-                              className="btn btn-outline"
-                              style={{ fontSize: 12 }}
+                              className="btn btn-primary"
+                              style={{ fontSize: 12, minWidth: 198 }}
                               disabled={busyId === o._id}
-                              onClick={() => void handleDeliveryPrintAndCook(o)}
+                              onClick={() => void handleDeliveryKitchenRelease(o)}
                             >
-                              {L.printAndCook}
+                              {busyId === o._id
+                                ? L.processing
+                                : (!o.deliveryStage || o.deliveryStage === 'new')
+                                  ? L.printAndCook
+                                  : L.sendToKitchen}
                             </button>
-                          ) : null}
-                          {o.deliveryStage === 'accepted' ? (
-                            <button
-                              className="btn btn-outline"
-                              style={{ fontSize: 12 }}
-                              disabled={busyId === o._id}
-                              onClick={() => void handleDeliveryDriverPickup(o)}
-                            >
-                              {L.driverPickedUp}
-                            </button>
-                          ) : null}
-                          {o.deliveryStage === 'picked_up_by_driver' && o.status === 'pending' ? (
-                            <span style={{ fontSize: 11, color: '#666', alignSelf: 'center' }}>{L.waitDriverCash}</span>
-                          ) : null}
+                            {pendingOrderAllowCancel(o) ? (
+                              <button
+                                className="btn btn-ghost"
+                                style={{ fontSize: 12, color: 'var(--red-primary)', minWidth: 96, alignSelf: 'stretch' }}
+                                disabled={busyId === o._id}
+                                onClick={() => void cancelPending(o._id)}
+                              >
+                                {L.cancel}
+                              </button>
+                            ) : null}
+                          </div>
+                          <div style={{ fontSize: 11, color: '#666', marginTop: 6 }}>{L.deliveryKitchenBeforeDriver}</div>
                         </div>
-                      </div>
+                      ) : (
+                        <div style={{ padding: 8, border: '1px solid #e6e6e6', borderRadius: 8, background: '#fff' }}>
+                          <div style={{ fontSize: 11, color: '#666', marginBottom: 6, fontWeight: 600 }}>{L.deliveryStage}</div>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                            {o.deliveryStage === 'accepted' ? (
+                              <button
+                                className="btn btn-primary"
+                                style={{ fontSize: 12 }}
+                                disabled={busyId === o._id}
+                                onClick={() => void handleDeliveryDriverPickup(o)}
+                              >
+                                {L.driverPickedUp}
+                              </button>
+                            ) : null}
+                            {o.deliveryStage === 'picked_up_by_driver' && o.status === 'pending' ? (
+                              <span style={{ fontSize: 11, color: '#666', alignSelf: 'center' }}>{L.waitDriverCash}</span>
+                            ) : null}
+                          </div>
+                        </div>
+                      )
                     ) : null}
 
                     {o.type !== 'delivery' || (
                       (o.deliveryStage === 'picked_up_by_driver' && o.status === 'pending')
+                      || (o.fulfillmentStatus === 'fulfilled' && o.paymentStatus === 'unpaid')
                     ) ? (
+                      <>
+                        {isCustomerQrTakeout(o) && o.status === 'pending' ? (
+                          <div
+                            style={{
+                              padding: 8,
+                              border: '1px solid #BBDEFB',
+                              borderRadius: 8,
+                              background: '#F5FAFF',
+                              marginBottom: 8,
+                            }}
+                          >
+                            <div style={{ fontSize: 11, color: '#1565C0', marginBottom: 6, fontWeight: 600 }}>{L.fulfillmentLine}</div>
+                            {!isTakeoutKitchenReleased(o) ? (
+                              <>
+                                <button
+                                  className="btn btn-primary"
+                                  style={{ fontSize: 12, minWidth: 198 }}
+                                  disabled={busyId === o._id}
+                                  onClick={() => void handleCustomerTakeoutKitchen(o)}
+                                >
+                                  {busyId === o._id ? L.processing : L.sendToKitchen}
+                                </button>
+                                <div style={{ fontSize: 11, color: '#666', marginTop: 6 }}>{L.dualTrackIndependentHint}</div>
+                              </>
+                            ) : (
+                              <div style={{ fontSize: 12, fontWeight: 600, color: '#2E7D32' }}>{L.kitchenPreparing}</div>
+                            )}
+                          </div>
+                        ) : null}
                       <div
                         style={{
                           padding: 8,
@@ -2068,7 +2301,7 @@ export default function UnifiedOrderCenter() {
                           minHeight: o.type === 'takeout' ? 84 : undefined,
                         }}
                       >
-                        <div style={{ fontSize: 11, color: '#666', marginBottom: 6, fontWeight: 600 }}>{L.paymentAndPrint}</div>
+                        <div style={{ fontSize: 11, color: '#666', marginBottom: 6, fontWeight: 600 }}>{L.paymentLine}</div>
                         <div
                           style={{
                             display: 'flex',
@@ -2083,9 +2316,9 @@ export default function UnifiedOrderCenter() {
                               <button className="btn btn-ghost" style={{ fontSize: 12, color: 'var(--red-primary)', minWidth: o.type === 'takeout' ? 96 : undefined }} disabled={busyId === o._id} onClick={() => void cancelPending(o._id)}>{L.cancel}</button>
                             </>
                           ) : null}
-                          {o.type === 'phone' && o.status === 'paid_online' && o.phoneCardPaidAtPlacement ? (
+                          {o.type === 'phone' && o.status === 'paid_online' && (o.phoneCardPaidAtPlacement || o.placementPrepaidMethod) ? (
                             <>
-                              {!placementCardKitchenPrintedIds[o._id] ? (
+                              {!isPhonePlacementKitchenStepDone(o, placementCardKitchenPrintedIds) ? (
                                 <button
                                   className="btn btn-outline"
                                   style={{ fontSize: 12, minWidth: 198 }}
@@ -2137,7 +2370,7 @@ export default function UnifiedOrderCenter() {
                           ) : null}
                           {o.type === 'takeout' && o.status === 'paid_online' ? (
                             <>
-                              {!takeoutKitchenTicketPrintedIds[o._id] ? (
+                              {!isTakeoutKitchenPrintDone(o, takeoutKitchenTicketPrintedIds) ? (
                                 <button
                                   className="btn btn-outline"
                                   style={{ fontSize: 12, minWidth: 198 }}
@@ -2166,6 +2399,7 @@ export default function UnifiedOrderCenter() {
                           <div style={{ fontSize: 11, color: '#666', marginTop: 6 }}>{L.cashierCollectHint}</div>
                         ) : null}
                       </div>
+                      </>
                     ) : null}
                   </div>
                 </div>
@@ -2625,9 +2859,9 @@ export default function UnifiedOrderCenter() {
                   {busyId === detailModalOrder._id ? L.processing : L.printAndKitchenDone}
                 </button>
               ) : null}
-              {detailModalOrder.type === 'dine_in' &&
-              detailModalOrder.status === 'pending' &&
-              dineInAllowCancelPending(detailModalOrder) ? (
+              {(detailModalOrder.type === 'dine_in'
+                ? dineInAllowCancelPending(detailModalOrder)
+                : pendingOrderAllowCancel(detailModalOrder)) ? (
                 <button
                   type="button"
                   className="btn btn-outline"

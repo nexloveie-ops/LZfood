@@ -69,6 +69,16 @@ const OrderSchema = new mongoose.Schema({
   /** 外卖：收银端 JWT 创建为 cashier；顾客端匿名/非本店店员为 customer（订单中心「已结账」后是否跳过厨房打印步） */
   takeoutPlacementSource: { type: String, enum: ['cashier', 'customer'] },
   status: { type: String, enum: ['pending', 'paid_online', 'checked_out', 'completed', 'refunded', 'checked_out-hide', 'completed-hide'], default: 'pending' },
+  /** Dual-track v1: payment line (new orders only; legacy orders derive on read). */
+  paymentStatus: { type: String, enum: ['unpaid', 'partial', 'paid', 'refunded'] },
+  /** Dual-track v1: fulfillment line. */
+  fulfillmentStatus: { type: String, enum: ['ordered', 'kitchen', 'ready', 'fulfilled', 'cancelled'] },
+  /** Set to 1 when paymentStatus/fulfillmentStatus are authoritative for this order. */
+  dualTrackVersion: { type: Number },
+  /**
+   * 收银电话单/电话送餐：下单时已付款方式（刷卡或会员）；与 phoneCardPaidAtPlacement 并存兼容旧单。
+   */
+  placementPrepaidMethod: { type: String, enum: ['card', 'member'] },
   memberId: { type: mongoose.Schema.Types.ObjectId, ref: 'Member' },
   /** 送餐客户档案（CustomerProfile），非会员也可关联 */
   customerProfileId: { type: mongoose.Schema.Types.ObjectId, ref: 'CustomerProfile' },

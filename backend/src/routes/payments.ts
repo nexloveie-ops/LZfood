@@ -16,6 +16,7 @@ import {
   markDineInKitchenPrintedQtyFull,
 } from '../utils/dineInMarkLinesFullySettled';
 import { voidNotifyCustomerOrderEvent } from '../modules/customer-notifications/dispatcher';
+import { syncDualTrackBeforeSave } from '../utils/orderDualTrack';
 
 function paymentModels() {
   return getModels() as {
@@ -143,6 +144,8 @@ router.post('/confirm', async (req: Request, res: Response, next: NextFunction) 
       order.status = 'paid_online';
     }
 
+    const wfSync = order.type === 'dine_in' ? await getDineInWorkflowModeForStore(req.storeId!) : undefined;
+    syncDualTrackBeforeSave(order, { dineInWorkflowMode: wfSync });
     await order.save();
 
     io.to(storeIoRoom(req.storeId!)).emit('order:updated', order);
@@ -276,6 +279,7 @@ router.post('/finalize', async (req: Request, res: Response, next: NextFunction)
     } else {
       order.status = 'checked_out';
     }
+    syncDualTrackBeforeSave(order, { dineInWorkflowMode: wfFin });
     await order.save();
 
     io.to(storeIoRoom(req.storeId!)).emit('order:updated', order);

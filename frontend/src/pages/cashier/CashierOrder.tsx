@@ -1426,6 +1426,7 @@ export default function CashierOrder() {
         orderBody.appliedBundles = matchedBundles.map(b => ({ offerId: b.offer._id, name: b.offer.name, nameEn: b.offer.nameEn, discount: b.savings }));
       }
       if (phoneCardPaidAtPlacement) {
+        orderBody.placementPrepaidMethod = 'card';
         orderBody.phoneCardPaidAtPlacement = true;
       }
       const orderRes = await apiFetch('/api/orders', {
@@ -1529,6 +1530,7 @@ export default function CashierOrder() {
         orderBody.customerProfileId = profileIdRaw;
       }
       if (phoneCardPaidAtPlacement) {
+        orderBody.placementPrepaidMethod = 'card';
         orderBody.phoneCardPaidAtPlacement = true;
       }
       const orderRes = await apiFetch('/api/orders', {
@@ -1936,6 +1938,7 @@ export default function CashierOrder() {
       // Step 1: Create order
       const orderBody: Record<string, unknown> = { type: orderType, items: buildGroupedItems() };
       if (orderType === 'dine_in') { orderBody.tableNumber = 0; orderBody.seatNumber = 0; }
+      if (orderType === 'takeout') orderBody.staffTakeoutPlacement = true;
       if (matchedBundles.length > 0) {
         orderBody.appliedBundles = matchedBundles.map(b => ({ offerId: b.offer._id, name: b.offer.name, nameEn: b.offer.nameEn, discount: b.savings }));
       }
@@ -2600,26 +2603,27 @@ export default function CashierOrder() {
             </div>
           </div>
           {(orderType === 'phone' || orderType === 'delivery') && (
-            <label
-              style={{
-                display: 'flex',
-                alignItems: 'flex-start',
-                gap: 8,
-                fontSize: 12,
-                color: '#333',
-                marginBottom: 10,
-                cursor: 'pointer',
-                lineHeight: 1.45,
-              }}
-            >
-              <input
-                type="checkbox"
-                checked={phoneCardPaidAtPlacement}
-                onChange={(e) => setPhoneCardPaidAtPlacement(e.target.checked)}
-                style={{ marginTop: 2, flexShrink: 0 }}
-              />
-              <span>{t('cashier.phoneCardPaidAtPlacementHint')}</span>
-            </label>
+            <div style={{ marginBottom: 10 }}>
+              <label
+                style={{
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  gap: 8,
+                  fontSize: 12,
+                  color: '#333',
+                  cursor: 'pointer',
+                  lineHeight: 1.45,
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={phoneCardPaidAtPlacement}
+                  onChange={(e) => setPhoneCardPaidAtPlacement(e.target.checked)}
+                  style={{ marginTop: 2, flexShrink: 0 }}
+                />
+                <span>{t('cashier.placementPrepaidLabel')}</span>
+              </label>
+            </div>
           )}
           <button
             className="btn btn-primary"

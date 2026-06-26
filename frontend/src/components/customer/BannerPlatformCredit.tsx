@@ -1,5 +1,7 @@
 import { useTranslation } from 'react-i18next';
 
+const PLATFORM_CONTACT_EMAIL = 'info@lztechserve.com';
+
 type Props = {
   variant?: 'onGradient' | 'onLight';
   /** 左侧店铺名（与当前语言一致）；不传则仅右侧平台署名 */
@@ -15,7 +17,7 @@ export default function BannerPlatformCredit({
   storeSubtitle,
 }: Props) {
   const { t, i18n } = useTranslation();
-  const email = t('portal.contactEmail');
+  const email = PLATFORM_CONTACT_EMAIL;
   const onLight = variant === 'onLight';
   const lang = i18n.language || '';
   const wb = lang.startsWith('zh')

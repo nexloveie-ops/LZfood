@@ -21,6 +21,9 @@ import {
   markDineInFoodLinesFullySettled,
   markDineInKitchenPrintedQtyFull,
 } from '../utils/dineInMarkLinesFullySettled';
+import {
+  syncDualTrackBeforeSave,
+} from '../utils/orderDualTrack';
 
 function staffMayDebitMemberWithoutPin(req: Request): boolean {
   const u = req.user;
@@ -74,6 +77,7 @@ async function finalizeSeatOrderCheckedOut(
     doc.memberPhoneSnapshot = patch.memberPhoneSnapshot ?? '';
     doc.memberCreditUsed = patch.memberCreditUsed ?? 0;
   }
+  syncDualTrackBeforeSave(doc, { dineInWorkflowMode: dineInWf });
   await doc.save();
   return payFirstDineInFullyClosed ? 'completed' : 'checked_out';
 }
@@ -351,17 +355,18 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
         }
         try {
           await Order.findOneAndUpdate({ _id: orderId, storeId: req.storeId }, { $set: prePaySet });
-          if (order.type === 'dine_in' && dineInWf === 'pay_after') {
-            const doc2 = await Order.findOne({ _id: orderId, storeId: req.storeId });
-            if (doc2) {
+          const doc2 = await Order.findOne({ _id: orderId, storeId: req.storeId });
+          if (doc2) {
+            if (order.type === 'dine_in' && dineInWf === 'pay_after') {
               for (const line of doc2.items as { lineKind?: string; refunded?: boolean; quantity: number; settledQty?: number }[]) {
                 if (line.lineKind === 'delivery_fee') continue;
                 if (line.refunded) continue;
                 line.settledQty = line.quantity;
               }
-              doc2.markModified('items');
-              await doc2.save();
             }
+            doc2.markModified('items');
+            syncDualTrackBeforeSave(doc2, { dineInWorkflowMode: dineInWf });
+            await doc2.save();
           }
         } catch (e) {
           await creditMemberWallet({
@@ -622,6 +627,7 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
         markDineInKitchenPrintedQtyFull(doc);
         doc.markModified('items');
       }
+      syncDualTrackBeforeSave(doc, { dineInWorkflowMode: 'pay_after' });
       await doc.save();
 
       if (doc.status === 'checked_out') {
@@ -789,6 +795,7 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
             }
           }
           order.markModified('items');
+          syncDualTrackBeforeSave(order, { dineInWorkflowMode: 'pay_after' });
           await order.save();
           savedIds.push(order._id);
         }
@@ -1211,6 +1218,7 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
           if (allRefunded) {
             order.status = 'refunded';
           }
+          syncDualTrackBeforeSave(order);
           await order.save();
         }
       } else {
@@ -1230,6 +1238,7 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
             }
           }
           order.status = 'refunded';
+          syncDualTrackBeforeSave(order);
           await order.save();
         }
       }

@@ -5,7 +5,7 @@ import { apiFetch } from '../api/client';
 import { useStoreSlug } from '../context/StoreContext';
 
 export interface RestaurantConfig {
-  /** 堂食流程：pay_first（默认）| pay_after（后结，能力迭代中） */
+  /** 堂食流程：pay_first（先付）| pay_after（跑账模式） */
   dine_in_workflow_mode?: 'pay_first' | 'pay_after';
   restaurant_name_zh?: string;
   restaurant_name_en?: string;
