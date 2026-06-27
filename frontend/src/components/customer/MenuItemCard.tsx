@@ -84,12 +84,7 @@ export default function MenuItemCard({
 
   return (
     <>
-      <div style={{
-        display: 'flex', gap: 14, background: 'var(--bg-white, #FFFDF8)',
-        borderRadius: 12, padding: 14,
-        boxShadow: '0 1px 4px rgba(44,24,16,0.06)',
-        border: quantity && quantity > 0 ? '2px solid var(--red-primary)' : '1px solid rgba(232,213,184,0.5)',
-        position: 'relative', overflow: 'hidden',
+      <div className={`menu-item-card${quantity && quantity > 0 ? ' menu-item-card--selected' : ''}`} style={{
         opacity: unavailable ? 0.55 : 1,
         transition: 'transform 0.15s',
       }}>
@@ -113,21 +108,15 @@ export default function MenuItemCard({
 
         {/* Image — <img> + lazy so off-screen rows don’t download full photos; background-image loads everything eagerly */}
         <div
+          className="menu-item-card__thumb"
           onClick={photoUrl ? (e) => { e.stopPropagation(); setShowPhoto(true); } : undefined}
           style={{
-            width: 100,
-            height: 100,
-            borderRadius: 8,
-            flexShrink: 0,
-            position: 'relative',
-            overflow: 'hidden',
-            background: 'linear-gradient(135deg, #f5e6d0, #edd9c0)',
+            cursor: photoUrl ? 'zoom-in' : undefined,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             fontSize: 36,
             filter: unavailable ? 'grayscale(60%)' : 'none',
-            cursor: photoUrl ? 'zoom-in' : undefined,
           }}
         >
           {!photoUrl ? (
@@ -162,9 +151,8 @@ export default function MenuItemCard({
 
         {/* Body */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-          <div style={{
-            fontFamily: "'Noto Serif SC', serif", fontSize: 16, fontWeight: 600,
-            color: 'var(--text-dark)', marginBottom: 2,
+          <div className="menu-item-card__name" style={{
+            marginBottom: 2,
             display: 'flex', alignItems: 'center', gap: 6,
           }}>
             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
@@ -209,13 +197,11 @@ export default function MenuItemCard({
           )}
 
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 'auto' }}>
-            <div style={{
-              fontSize: 20, fontWeight: 700, color: 'var(--red-primary)',
-              fontFamily: "'Noto Serif SC', serif",
-            }}>
+            <div className="menu-item-card__price">
               <span style={{ fontSize: 13, fontWeight: 500, marginRight: 1 }}>€</span>{price}
             </div>
             <button
+              className="menu-item-card__add"
               onClick={handleAddClick}
               disabled={unavailable}
               style={{
@@ -242,6 +228,7 @@ export default function MenuItemCard({
                 >−</button>
                 <span style={{ width: 28, textAlign: 'center', fontSize: 14, fontWeight: 700 }}>{quantity}</span>
                 <button
+                  className="menu-item-card__stepper-btn--plus"
                   onClick={handleAddClick}
                   disabled={unavailable}
                   style={{

@@ -26,6 +26,7 @@ export default function BannerPlatformCredit({
 
   return (
     <div
+      className="banner-platform-credit"
       style={{
         position: 'absolute',
         top: 8,
@@ -53,6 +54,7 @@ export default function BannerPlatformCredit({
           }}
         >
           <div
+            className="banner-platform-credit__store"
             style={{
               fontWeight: 700,
               fontSize: 12,
@@ -68,6 +70,7 @@ export default function BannerPlatformCredit({
           </div>
           {storeSubtitle ? (
             <div
+              className="banner-platform-credit__store-sub"
               style={{
                 fontSize: 9,
                 fontWeight: 500,
@@ -95,6 +98,7 @@ export default function BannerPlatformCredit({
         }}
       >
         <div
+          className="banner-platform-credit__company"
           style={{
             fontWeight: 700,
             marginBottom: 2,
@@ -105,6 +109,7 @@ export default function BannerPlatformCredit({
         </div>
         <div>
           <a
+            className="banner-platform-credit__email"
             href={`mailto:${email}`}
             style={{
               color: onLight ? 'var(--blue, #1565c0)' : '#F0D68A',

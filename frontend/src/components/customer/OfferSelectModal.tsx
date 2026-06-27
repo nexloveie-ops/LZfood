@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import type { CartItemOption } from '../../context/CartContext';
 import type { OfferData } from '../../utils/bundleMatcher';
 import { getOptionalMinSelect, getOptionalMaxSelect, optionalMaxReached, optionalSelectionValid } from '../../utils/optionGroupLimits';
+import '../../styles/customer-order-saas.css';
 
 interface OptionChoice {
   _id: string;
@@ -241,10 +242,10 @@ export default function OfferSelectModal({ offer, menuItems, categories, lang, o
         aria-modal="true"
         aria-labelledby="offer-modal-title"
         onClick={(e) => e.stopPropagation()}
+        className="option-sheet"
         style={{
           position: 'relative',
           zIndex: 1,
-          background: '#fff',
           borderRadius: '16px 16px 0 0',
           width: '100%',
           maxWidth: 430,
@@ -254,26 +255,15 @@ export default function OfferSelectModal({ offer, menuItems, categories, lang, o
           flexDirection: 'column',
           overflow: 'hidden',
           boxShadow: '0 -8px 32px rgba(0,0,0,0.18)',
-          paddingBottom: 'env(safe-area-inset-bottom, 0px)',
         }}
       >
-        <div
-          style={{
-            flexShrink: 0,
-            padding: '12px 16px 10px',
-            borderBottom: '1px solid #eee',
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'flex-start',
-            gap: 12,
-          }}
-        >
+        <div className="option-sheet__header">
           <div style={{ minWidth: 0, flex: 1 }}>
-            <div id="offer-modal-title" style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-dark)' }}>
+            <div id="offer-modal-title" className="option-sheet__title">
               🎁 {lang === 'zh-CN' ? offer.name : (offer.nameEn || offer.name)}
             </div>
             {(offer.description || offer.descriptionEn) && (
-              <div style={{ fontSize: 12, color: 'var(--text-light)', marginTop: 4, lineHeight: 1.35 }}>
+              <div style={{ fontSize: 12, color: 'var(--os-muted, #64748b)', marginTop: 4, lineHeight: 1.35 }}>
                 {lang === 'zh-CN' ? offer.description : (offer.descriptionEn || offer.description)}
               </div>
             )}
@@ -282,39 +272,13 @@ export default function OfferSelectModal({ offer, menuItems, categories, lang, o
             type="button"
             onClick={onClose}
             aria-label={t('customer.closeOptionSheet')}
-            style={{
-              flexShrink: 0,
-              width: 44,
-              height: 44,
-              marginTop: -4,
-              marginRight: -4,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              background: 'var(--bg, #f5f5f5)',
-              border: 'none',
-              borderRadius: 12,
-              fontSize: 20,
-              color: 'var(--text-dark)',
-              cursor: 'pointer',
-            }}
+            className="option-sheet__close"
           >
             ✕
           </button>
         </div>
 
-        <div
-          style={{
-            flex: 1,
-            minHeight: 0,
-            overflowY: 'auto',
-            overflowX: 'hidden',
-            WebkitOverflowScrolling: 'touch',
-            overscrollBehavior: 'contain',
-            touchAction: 'pan-y',
-            padding: '12px 16px',
-          }}
-        >
+        <div className="option-sheet__body">
           {offer.slots.map((slot, idx) => {
             const isItem = slot.type === 'item';
             const catName = !isItem && slot.categoryId
@@ -325,37 +289,37 @@ export default function OfferSelectModal({ offer, menuItems, categories, lang, o
             const selectedMi = selectedItemId ? menuItems.find(m => m._id === selectedItemId) : null;
 
             return (
-              <div key={idx} style={{ marginBottom: 16 }}>
-                <div style={{ fontSize: 12, color: 'var(--text-light)', marginBottom: 6 }}>
-                  {idx + 1}. {isItem ? t('common.item', 'Item') : (catName || t('common.category', 'Category'))}
+              <div key={idx} className="option-group" style={{ marginBottom: 12 }}>
+                <div className="option-group__head" style={{ marginBottom: 8 }}>
+                  <span className="option-group__title" style={{ fontSize: 13 }}>
+                    {idx + 1}. {isItem ? t('common.item', 'Item') : (catName || t('common.category', 'Category'))}
+                  </span>
                 </div>
 
                 {isItem ? (
-                  <div style={{
-                    padding: '12px 14px', borderRadius: 10,
-                    background: '#E8F5E9', border: '2px solid #4CAF50',
-                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                  }}>
+                  <div className="offer-slot-fixed">
                     <span style={{ fontWeight: 600, fontSize: 14 }}>
                       ✓ {selectedMi ? getName(selectedMi.translations) : 'Unknown'}
                     </span>
-                    <span style={{ fontSize: 13, color: 'var(--text-light)' }}>€{selectedMi?.price || 0}</span>
+                    <span style={{ fontSize: 13, color: 'var(--os-muted, #64748b)' }}>€{selectedMi?.price || 0}</span>
                   </div>
                 ) : (
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8 }}>
+                  <div className="option-group__choices">
                     {menuItems.filter(m => m.categoryId === slot.categoryId && !excluded.has(m._id) && !m.isSoldOut).map(mi => {
                       const selected = selections[idx] === mi._id;
                       return (
-                        <div key={mi._id} onClick={() => selectItem(idx, mi._id)} style={{
-                          padding: '10px 8px', borderRadius: 10, cursor: 'pointer',
-                          textAlign: 'center', transition: 'all 0.12s', minWidth: 0,
-                          border: selected ? '2px solid var(--red-primary)' : '1px solid #ddd',
-                          background: selected ? 'var(--red-light, #FFF5F5)' : '#fafafa',
-                        }}>
-                          <div style={{ fontSize: 13, fontWeight: selected ? 700 : 500, lineHeight: 1.3, color: selected ? 'var(--red-primary)' : 'var(--text-dark)', wordBreak: 'break-word' }}>
+                        <div
+                          key={mi._id}
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => selectItem(idx, mi._id)}
+                          className={`option-choice${selected ? ' option-choice--selected' : ''}`}
+                        >
+                          <span className="option-choice__check" aria-hidden>✓</span>
+                          <div className="option-choice__label">
                             {getName(mi.translations)}
+                            <span className="option-choice__extra">€{mi.price}</span>
                           </div>
-                          <div style={{ fontSize: 11, color: 'var(--text-light)', marginTop: 2 }}>€{mi.price}</div>
                         </div>
                       );
                     })}
@@ -363,18 +327,19 @@ export default function OfferSelectModal({ offer, menuItems, categories, lang, o
                 )}
 
                 {selectedMi?.optionGroups && selectedMi.optionGroups.length > 0 && (
-                  <div style={{ marginTop: 10, paddingLeft: 4 }}>
+                  <div style={{ marginTop: 10 }}>
                     {selectedMi.optionGroups.map(group => (
-                      <div key={group._id} style={{ marginBottom: 12 }}>
-                        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                          {getName(group.translations)}
-                          {group.required
-                            ? <span style={{ fontSize: 10, color: '#fff', background: 'var(--red-primary)', padding: '1px 5px', borderRadius: 4 }}>{t('admin.required')}</span>
-                            : <span style={{ fontSize: 10, color: 'var(--text-light)', padding: '1px 5px', borderRadius: 4, border: '1px solid var(--border)' }}>多选</span>
-                          }
+                      <div key={group._id} className="option-group" style={{ marginBottom: 10 }}>
+                        <div className="option-group__head">
+                          <span className="option-group__title">{getName(group.translations)}</span>
+                          {group.required ? (
+                            <span className="option-group__badge option-group__badge--required">{t('admin.required')}</span>
+                          ) : (
+                            <span className="option-group__badge option-group__badge--optional">{t('customer.multiSelect', { defaultValue: '多选' })}</span>
+                          )}
                         </div>
                         {!group.required && (getOptionalMinSelect(group) > 0 || getOptionalMaxSelect(group) > 0) && (
-                          <div style={{ fontSize: 10, color: 'var(--text-light)', marginBottom: 6 }}>
+                          <div className="option-group__hint">
                             {getOptionalMaxSelect(group) === 0
                               ? t('customer.optionalAtLeast', { count: getOptionalMinSelect(group) })
                               : getOptionalMinSelect(group) === 0
@@ -382,38 +347,27 @@ export default function OfferSelectModal({ offer, menuItems, categories, lang, o
                                 : t('customer.optionalBetween', { min: getOptionalMinSelect(group), max: getOptionalMaxSelect(group) })}
                           </div>
                         )}
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 6 }}>
+                        <div className="option-group__choices">
                           {group.choices.map(choice => {
                             const selected = group.required
                               ? singleOpts[key]?.[group._id] === choice._id
                               : (multiOpts[key]?.[group._id] || []).includes(choice._id);
                             return (
-                              <div key={choice._id}
+                              <div
+                                key={choice._id}
+                                role="button"
+                                tabIndex={0}
                                 onClick={() => group.required
                                   ? toggleSingle(key, group._id, choice._id)
                                   : toggleMulti(key, group, choice._id)
                                 }
-                                style={{
-                                  padding: '8px 6px', borderRadius: 8, cursor: 'pointer', minWidth: 0,
-                                  textAlign: 'center', transition: 'all 0.12s',
-                                  border: selected ? '2px solid var(--red-primary)' : '1px solid #ddd',
-                                  background: selected ? 'var(--red-light, #FFF5F5)' : '#fafafa',
-                                }}>
-                                <div
-                                  style={{
-                                    fontSize: 12,
-                                    fontWeight: selected ? 700 : 500,
-                                    lineHeight: 1.35,
-                                    color: selected ? 'var(--red-primary)' : 'var(--text-dark)',
-                                    wordBreak: 'break-word',
-                                    textAlign: 'center',
-                                  }}
-                                >
+                                className={`option-choice${selected ? ' option-choice--selected' : ''}`}
+                              >
+                                <span className="option-choice__check" aria-hidden>✓</span>
+                                <div className="option-choice__label">
                                   {getName(choice.translations)}
                                   {(choice.extraPrice || 0) > 0 && (
-                                    <span style={{ whiteSpace: 'nowrap', fontWeight: 600, color: 'var(--red-primary)', fontSize: 11 }}>
-                                      {` +€${choice.extraPrice}`}
-                                    </span>
+                                    <span className="option-choice__extra">{`+€${choice.extraPrice}`}</span>
                                   )}
                                 </div>
                               </div>
@@ -429,33 +383,12 @@ export default function OfferSelectModal({ offer, menuItems, categories, lang, o
           })}
         </div>
 
-        <div
-          style={{
-            flexShrink: 0,
-            padding: '10px 16px 16px',
-            borderTop: '1px solid #eee',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 10,
-          }}
-        >
+        <div className="option-sheet__footer">
           <button
             type="button"
             onClick={handleConfirm}
             disabled={!allSelected || !allOptionsValid}
-            className="btn btn-primary"
-            style={{
-              width: '100%',
-              padding: '14px 0',
-              fontSize: 15,
-              letterSpacing: 1,
-              opacity: (allSelected && allOptionsValid) ? 1 : 0.5,
-              cursor: (allSelected && allOptionsValid) ? 'pointer' : 'not-allowed',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 8,
-            }}
+            className="option-sheet__confirm"
           >
             {t('customer.confirmAdd', 'Add to Cart')}
             <span style={{ fontWeight: 700 }}>€{(offer.bundlePrice + totalOptionExtra).toFixed(2)}</span>
@@ -463,8 +396,7 @@ export default function OfferSelectModal({ offer, menuItems, categories, lang, o
           <button
             type="button"
             onClick={onClose}
-            className="btn btn-outline"
-            style={{ width: '100%', padding: '12px 0', fontSize: 14 }}
+            className="option-sheet__cancel"
           >
             {t('common.cancel')}
           </button>

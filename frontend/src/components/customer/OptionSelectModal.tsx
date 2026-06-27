@@ -7,6 +7,7 @@ import {
   type BomAvailabilitySnapshot,
   isModalChoiceSelectable,
 } from '../../utils/bomAvailability';
+import '../../styles/customer-order-saas.css';
 
 interface OptionChoice {
   _id: string;
@@ -201,6 +202,7 @@ export default function OptionSelectModal({
         aria-modal="true"
         aria-labelledby="option-modal-title"
         onClick={(e) => e.stopPropagation()}
+        className={`option-sheet${isCashier ? ' option-sheet--cashier' : ''}`}
         style={{
           position: 'relative',
           zIndex: 1,
@@ -214,76 +216,36 @@ export default function OptionSelectModal({
           flexDirection: 'column',
           overflow: 'hidden',
           boxShadow: isCashier ? '0 12px 40px rgba(0,0,0,0.22)' : '0 -8px 32px rgba(0,0,0,0.18)',
-          paddingBottom: 'env(safe-area-inset-bottom, 0px)',
         }}
       >
-        {/* Header — flexShrink:0 so long option lists never push ✕ off-screen */}
-        <div
-          style={{
-            flexShrink: 0,
-            padding: isCashier ? '14px 20px 12px' : '12px 16px 10px',
-            borderBottom: '1px solid var(--border, #eee)',
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'flex-start',
-            gap: 12,
-          }}
-        >
+        <div className="option-sheet__header">
           <div style={{ minWidth: 0, flex: 1 }}>
-            <div id="option-modal-title" style={{ fontSize: isCashier ? 18 : 16, fontWeight: 700, color: 'var(--text-dark)', lineHeight: 1.25 }}>
-              {itemName}
-            </div>
-            <div style={{ fontSize: 14, color: 'var(--red-primary)', fontWeight: 600, marginTop: 2 }}>€{price}</div>
+            <div id="option-modal-title" className="option-sheet__title">{itemName}</div>
+            <div className="option-sheet__price">€{price}</div>
           </div>
           <button
             type="button"
             onClick={onClose}
             aria-label={t('customer.closeOptionSheet')}
-            style={{
-              flexShrink: 0,
-              width: 44,
-              height: 44,
-              marginTop: -4,
-              marginRight: -4,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              background: 'var(--bg, #f5f5f5)',
-              border: 'none',
-              borderRadius: 12,
-              fontSize: 20,
-              color: 'var(--text-dark)',
-              cursor: 'pointer',
-            }}
+            className="option-sheet__close"
           >
             ✕
           </button>
         </div>
 
-        {/* Option groups — minHeight:0 + overscroll-behavior stops scroll chaining to menu */}
-        <div
-          style={{
-            flex: 1,
-            minHeight: 0,
-            overflowY: 'auto',
-            overflowX: 'hidden',
-            WebkitOverflowScrolling: 'touch',
-            overscrollBehavior: 'contain',
-            touchAction: 'pan-y',
-            padding: isCashier ? '14px 20px' : '12px 16px',
-          }}
-        >
+        <div className="option-sheet__body">
           {optionGroups.map(group => (
-            <div key={group._id} style={{ marginBottom: isCashier ? 16 : 20 }}>
-              <div style={{ fontSize: isCashier ? 15 : 14, fontWeight: 700, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                {getName(group.translations)}
-                {group.required
-                  ? <span style={{ fontSize: 11, color: '#fff', background: 'var(--red-primary)', padding: '1px 6px', borderRadius: 4 }}>{t('admin.required')}</span>
-                  : <span style={{ fontSize: 11, color: 'var(--text-light)', padding: '1px 6px', borderRadius: 4, border: '1px solid var(--border)' }}>多选</span>
-                }
+            <div key={group._id} className="option-group">
+              <div className="option-group__head">
+                <span className="option-group__title">{getName(group.translations)}</span>
+                {group.required ? (
+                  <span className="option-group__badge option-group__badge--required">{t('admin.required')}</span>
+                ) : (
+                  <span className="option-group__badge option-group__badge--optional">{t('customer.multiSelect', { defaultValue: '多选' })}</span>
+                )}
               </div>
               {!group.required && (getOptionalMinSelect(group) > 0 || getOptionalMaxSelect(group) > 0) && (
-                <div style={{ fontSize: 11, color: 'var(--text-light)', marginBottom: 8 }}>
+                <div className="option-group__hint">
                   {getOptionalMaxSelect(group) === 0
                     ? t('customer.optionalAtLeast', { count: getOptionalMinSelect(group) })
                     : getOptionalMinSelect(group) === 0
@@ -291,63 +253,36 @@ export default function OptionSelectModal({
                       : t('customer.optionalBetween', { min: getOptionalMinSelect(group), max: getOptionalMaxSelect(group) })}
                 </div>
               )}
-              <div style={{ display: 'grid', gridTemplateColumns: isCashier ? 'repeat(4, minmax(0, 1fr))' : 'repeat(2, minmax(0, 1fr))', gap: isCashier ? 10 : 8 }}>
+              <div className="option-group__choices">
                 {group.choices.map(choice => {
                   const selected = group.required
                     ? singleSelections[group._id] === choice._id
                     : (multiSelections[group._id] || []).includes(choice._id);
                   const disabled = isChoiceDisabled(group._id, choice._id, selected);
                   return (
-                    <div key={choice._id}
+                    <div
+                      key={choice._id}
+                      role="button"
+                      tabIndex={disabled ? -1 : 0}
                       onClick={() => {
                         if (disabled) return;
                         group.required ? toggleSingle(group._id, choice._id) : toggleMulti(group._id, choice._id);
                       }}
-                      style={{
-                        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-                        padding: '10px 8px', borderRadius: 10,
-                        cursor: disabled ? 'not-allowed' : 'pointer',
-                        transition: 'all 0.12s',
-                        border: selected ? '2px solid var(--red-primary)' : '1px solid var(--border, #ddd)',
-                        background: disabled
-                          ? 'var(--bg, #eee)'
-                          : selected ? 'var(--red-light, #FFF5F5)' : 'var(--bg, #fafafa)',
-                        textAlign: 'center', minHeight: 52,
-                        minWidth: 0,
-                        opacity: disabled ? 0.45 : 1,
-                      }}>
-                      <div
-                        style={{
-                          fontSize: 13,
-                          fontWeight: selected ? 700 : 500,
-                          lineHeight: 1.35,
-                          color: disabled
-                            ? 'var(--text-light, #999)'
-                            : selected ? 'var(--red-primary)' : 'var(--text-dark)',
-                          wordBreak: 'break-word',
-                          textAlign: 'center',
-                        }}
-                      >
+                      className={`option-choice${selected ? ' option-choice--selected' : ''}${disabled ? ' option-choice--disabled' : ''}`}
+                    >
+                      <span className="option-choice__check" aria-hidden>✓</span>
+                      <div className="option-choice__label">
                         {getName(choice.translations)}
                         {disabled && (
-                          <div style={{ fontSize: 10, marginTop: 4, color: 'var(--text-light)' }}>
+                          <div className="option-choice__unavailable">
                             {t('customer.bomChoiceUnavailable', { defaultValue: '缺货' })}
                           </div>
                         )}
                         {((choice.extraPrice || 0) > 0
                           || (choice.originalPrice != null && choice.originalPrice > (choice.extraPrice || 0))) && (
-                          <span style={{ whiteSpace: 'nowrap', fontWeight: 600, color: 'var(--red-primary)', fontSize: 12 }}>
-                            {' '}
+                          <span className="option-choice__extra">
                             {choice.originalPrice != null && choice.originalPrice > (choice.extraPrice || 0) && (
-                              <span style={{
-                                fontSize: 10,
-                                color: 'var(--text-light)',
-                                textDecoration: 'line-through',
-                                fontWeight: 500,
-                                marginRight: 4,
-                              }}>
-                                +€{choice.originalPrice}
-                              </span>
+                              <span className="option-choice__extra-strike">+€{choice.originalPrice}</span>
                             )}
                             {(choice.extraPrice || 0) > 0 ? `+€${choice.extraPrice}` : ''}
                           </span>
@@ -361,35 +296,12 @@ export default function OptionSelectModal({
           ))}
         </div>
 
-        {/* Footer — explicit cancel when ✕ is hard to reach */}
-        <div
-          style={{
-            flexShrink: 0,
-            padding: isCashier ? '12px 20px 16px' : '10px 16px 16px',
-            borderTop: '1px solid var(--border, #eee)',
-            display: 'flex',
-            flexDirection: isCashier ? 'row' : 'column',
-            gap: 10,
-          }}
-        >
+        <div className="option-sheet__footer">
           <button
             type="button"
             onClick={handleConfirm}
             disabled={!canConfirm}
-            className="btn btn-primary"
-            style={{
-              width: isCashier ? 'auto' : '100%',
-              flex: isCashier ? 1 : undefined,
-              padding: isCashier ? '14px 16px' : '14px 0',
-              fontSize: 15,
-              letterSpacing: 1,
-              opacity: canConfirm ? 1 : 0.5,
-              cursor: canConfirm ? 'pointer' : 'not-allowed',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 8,
-            }}
+            className="option-sheet__confirm"
           >
             {t('customer.confirmAdd')}
             <span style={{ fontWeight: 700 }}>€{(price + totalExtra).toFixed(2)}</span>
@@ -397,8 +309,7 @@ export default function OptionSelectModal({
           <button
             type="button"
             onClick={onClose}
-            className="btn btn-outline"
-            style={{ width: isCashier ? 'auto' : '100%', flex: isCashier ? '0 0 120px' : undefined, padding: isCashier ? '14px 16px' : '12px 0', fontSize: 14 }}
+            className="option-sheet__cancel"
           >
             {t('common.cancel')}
           </button>

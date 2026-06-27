@@ -9,11 +9,13 @@ import { useRestaurantConfig } from '../../hooks/useRestaurantConfig';
 import { useBusinessStatus } from '../../hooks/useBusinessStatus';
 import { apiFetch } from '../../api/client';
 import BannerPlatformCredit from '../../components/customer/BannerPlatformCredit';
+import CustomerMenuToolbar from '../../components/customer/CustomerMenuToolbar';
 import { useCustomerMenuBootstrap } from '../../context/CustomerMenuBootstrapContext';
 import {
   type BomAvailabilitySnapshot,
   emptyBomSnapshot,
 } from '../../utils/bomAvailability';
+import '../../styles/customer-order-saas.css';
 
 interface Category { _id: string; sortOrder: number; translations: { locale: string; name: string }[]; }
 interface AllergenData { _id: string; icon: string; }
@@ -83,13 +85,10 @@ export default function MenuView({ storeFrontEmbed = false }: { storeFrontEmbed?
   // Banner carousel index
   // Banner carousel index + countdown
   const [bannerIndex, setBannerIndex] = useState(0);
-  const [countdownKey, setCountdownKey] = useState(0);
   useEffect(() => {
     if (activeOffers.length <= 1) return;
-    setCountdownKey(k => k + 1);
     const timer = setInterval(() => {
       setBannerIndex(prev => (prev + 1) % activeOffers.length);
-      setCountdownKey(k => k + 1);
     }, 5000);
     return () => clearInterval(timer);
   }, [activeOffers.length]);
@@ -258,175 +257,119 @@ export default function MenuView({ storeFrontEmbed = false }: { storeFrontEmbed?
     );
   }
 
-  const hideEntireHero = storeFrontEmbed && activeOffers.length === 0;
-  const showTitleBlock = !storeFrontEmbed;
+  const compactHero = storeFrontEmbed && activeOffers.length === 0;
+  const heroVariant = storeFrontEmbed ? 'onLight' : 'onLight';
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, minWidth: 0, overflow: 'hidden' }}>
-      {/* Hero — hides on scroll down, shows on scroll up; storefront embed skips branded title when parent already showed it */}
-      <div style={{
-        position: 'relative',
-        height: heroHidden ? 0 : (hideEntireHero ? 0 : (activeOffers.length > 0 ? 'auto' : 140)),
-        minHeight: heroHidden ? 0 : (hideEntireHero ? 0 : 140),
-        flexShrink: 0,
-        background: 'linear-gradient(135deg, #8B1A1A 0%, #C41E24 50%, #D4342A 100%)',
-        display: hideEntireHero ? 'none' : 'flex',
-        flexDirection: 'column', justifyContent: 'flex-end', padding: heroHidden ? 0 : (showTitleBlock ? 20 : 12), overflow: 'hidden',
-        transition: 'min-height 0.3s ease, padding 0.3s ease',
-      }}>
-        {!hideEntireHero && !heroHidden ? (
-          <BannerPlatformCredit
-            variant="onGradient"
-            storeTitle={storeFrontEmbed ? heroTitle : undefined}
-            storeSubtitle={storeFrontEmbed && heroSub ? heroSub : undefined}
-          />
-        ) : null}
-        {showTitleBlock ? (
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
-            <div style={{ position: 'relative', zIndex: 1, color: '#fff', paddingRight: 'min(200px, 42vw)' }}>
-              <h1 style={{ fontFamily: "'Noto Serif SC', serif", fontSize: 24, fontWeight: 700, letterSpacing: 3, marginBottom: 2 }}>{heroTitle}</h1>
-              {heroSub ? (
-                <div style={{ fontSize: 11, fontWeight: 300, letterSpacing: 5, color: '#F0D68A' }}>{heroSub}</div>
-              ) : null}
+    <div className="menu-page">
+      <div
+        className={`menu-hero ${storeFrontEmbed ? 'menu-hero--embed' : 'menu-hero--standalone'}${compactHero ? ' menu-hero--compact' : ''}`}
+        style={{
+          height: heroHidden ? 0 : 'auto',
+          minHeight: heroHidden ? 0 : undefined,
+          padding: heroHidden ? 0 : undefined,
+          display: heroHidden ? 'none' : 'flex',
+          flexDirection: 'column',
+        }}
+      >
+        {!heroHidden ? (
+          <>
+            <CustomerMenuToolbar />
+            <div className="menu-hero-head">
+              <div className="menu-store-block">
+                <h1 className="menu-store-title">{heroTitle}</h1>
+                {heroSub ? <div className="menu-store-subtitle">{heroSub}</div> : null}
+              </div>
+              <BannerPlatformCredit variant={heroVariant} />
             </div>
-          </div>
-        ) : null}
-        {/* Active offers — compact; stays below platform credit (z-index) */}
-        {activeOffers.length > 0 && !heroHidden && (
-          <div
-            style={{ marginTop: showTitleBlock ? 10 : 6, position: 'relative', zIndex: 1 }}
-            onTouchStart={(e) => {
-              const touch = e.touches[0];
-              (e.currentTarget as HTMLDivElement).dataset.touchStartX = String(touch.clientX);
-            }}
-            onTouchEnd={(e) => {
-              const startX = parseFloat((e.currentTarget as HTMLDivElement).dataset.touchStartX || '0');
-              const endX = e.changedTouches[0].clientX;
-              const diff = startX - endX;
-              if (Math.abs(diff) > 40 && activeOffers.length > 1) {
-                if (diff > 0) {
-                  // swipe left → next
-                  setBannerIndex(prev => (prev + 1) % activeOffers.length);
-                  setCountdownKey(k => k + 1);
-                } else {
-                  // swipe right → prev
-                  setBannerIndex(prev => (prev - 1 + activeOffers.length) % activeOffers.length);
-                  setCountdownKey(k => k + 1);
-                }
-              }
-            }}
-          >
-            {activeOffers.map((offer, idx) => (
-              <div key={offer._id} onClick={() => setSelectedOffer(offer)} style={{
-                background: 'rgba(255,255,255,0.15)', backdropFilter: 'blur(4px)',
-                borderRadius: 8, padding: '6px 10px',
-                border: '1px solid rgba(240,214,138,0.3)',
-                cursor: 'pointer',
-                opacity: idx === bannerIndex ? 1 : 0,
-                position: idx === 0 ? 'relative' : 'absolute',
-                top: idx === 0 ? undefined : 0,
-                left: idx === 0 ? undefined : 0,
-                right: idx === 0 ? undefined : 0,
-                transition: 'opacity 0.6s ease',
-                pointerEvents: idx === bannerIndex ? 'auto' : 'none',
-                marginLeft: 'max(0px, env(safe-area-inset-left))',
-                marginRight: 'max(0px, env(safe-area-inset-right))',
-              }}>
-                <div style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  textAlign: 'center',
-                  gap: 3,
-                  paddingLeft: 4,
-                  paddingRight: 4,
-                  maxWidth: '100%',
-                  boxSizing: 'border-box',
-                }}>
-                  <div style={{ color: '#F0D68A', fontSize: 11, fontWeight: 700, lineHeight: 1.3 }}>
-                    🎁 {lang === 'zh-CN' ? offer.name : (offer.nameEn || offer.name)}
-                  </div>
-                  {(offer.description || offer.descriptionEn) && (
-                    <div style={{
-                      color: 'rgba(255,255,255,0.88)',
-                      fontSize: 10,
-                      lineHeight: 1.35,
-                      maxWidth: 'min(280px, 86vw)',
-                      maxHeight: 32,
-                      overflow: 'hidden',
-                      display: '-webkit-box',
-                      WebkitLineClamp: 2,
-                      WebkitBoxOrient: 'vertical',
-                    }}>
-                      {lang === 'zh-CN' ? offer.description : (offer.descriptionEn || offer.description)}
+            {activeOffers.length > 0 ? (
+              <div
+                className="menu-offer-wrap"
+                onTouchStart={(e) => {
+                  const touch = e.touches[0];
+                  (e.currentTarget as HTMLDivElement).dataset.touchStartX = String(touch.clientX);
+                }}
+                onTouchEnd={(e) => {
+                  const startX = parseFloat((e.currentTarget as HTMLDivElement).dataset.touchStartX || '0');
+                  const endX = e.changedTouches[0].clientX;
+                  const diff = startX - endX;
+                  if (Math.abs(diff) > 40 && activeOffers.length > 1) {
+                    if (diff > 0) {
+                      setBannerIndex(prev => (prev + 1) % activeOffers.length);
+                    } else {
+                      setBannerIndex(prev => (prev - 1 + activeOffers.length) % activeOffers.length);
+                    }
+                  }
+                }}
+              >
+                {activeOffers.map((offer, idx) => (
+                  <div
+                    key={offer._id}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => setSelectedOffer(offer)}
+                    className="menu-offer-card"
+                    style={{
+                      opacity: idx === bannerIndex ? 1 : 0,
+                      position: idx === 0 ? 'relative' : 'absolute',
+                      top: idx === 0 ? undefined : 0,
+                      left: idx === 0 ? undefined : 0,
+                      right: idx === 0 ? undefined : 0,
+                      transition: 'opacity 0.4s ease',
+                      pointerEvents: idx === bannerIndex ? 'auto' : 'none',
+                    }}
+                  >
+                    <div className="menu-offer-card__title">
+                      🎁 {lang === 'zh-CN' ? offer.name : (offer.nameEn || offer.name)}
                     </div>
-                  )}
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-                    <div style={{ color: '#fff', fontSize: 15, fontWeight: 700, fontFamily: "'Noto Serif SC', serif" }}>
-                      €{offer.bundlePrice.toFixed(2)}
-                    </div>
-                    {activeOffers.length > 1 && idx === bannerIndex && (
-                      <svg width="16" height="16" viewBox="0 0 20 20" style={{ transform: 'rotate(-90deg)', flexShrink: 0 }}>
-                        <circle cx="10" cy="10" r="8" fill="none" stroke="rgba(255,255,255,0.25)" strokeWidth="2" />
-                        <circle
-                          key={countdownKey}
-                          cx="10" cy="10" r="8" fill="none" stroke="#F0D68A" strokeWidth="2"
-                          strokeDasharray={`${2 * Math.PI * 8}`}
-                          strokeDashoffset={`${2 * Math.PI * 8}`}
-                          strokeLinecap="round"
-                          style={{ animation: 'bannerCountdown 5s linear forwards' }}
-                        />
-                      </svg>
-                    )}
-                    <style>{`@keyframes bannerCountdown { from { stroke-dashoffset: ${2 * Math.PI * 8}; } to { stroke-dashoffset: 0; } }`}</style>
+                    {(offer.description || offer.descriptionEn) ? (
+                      <div className="menu-offer-card__desc">
+                        {lang === 'zh-CN' ? offer.description : (offer.descriptionEn || offer.description)}
+                      </div>
+                    ) : null}
+                    <div className="menu-offer-card__price">€{offer.bundlePrice.toFixed(2)}</div>
                   </div>
-                </div>
-              </div>
-            ))}
-            {/* Dots indicator */}
-            {activeOffers.length > 1 && (
-              <div style={{ display: 'flex', justifyContent: 'center', gap: 5, marginTop: 6 }}>
-                {activeOffers.map((_, idx) => (
-                  <div key={idx} onClick={(e) => { e.stopPropagation(); setBannerIndex(idx); }} style={{
-                    width: idx === bannerIndex ? 16 : 6, height: 6, borderRadius: 3,
-                    background: idx === bannerIndex ? '#F0D68A' : 'rgba(255,255,255,0.4)',
-                    cursor: 'pointer', transition: 'all 0.3s ease',
-                  }} />
                 ))}
+                {activeOffers.length > 1 ? (
+                  <div className="menu-offer-dots">
+                    {activeOffers.map((_, idx) => (
+                      <div
+                        key={idx}
+                        role="presentation"
+                        onClick={(e) => { e.stopPropagation(); setBannerIndex(idx); }}
+                        className={`menu-offer-dot${idx === bannerIndex ? ' menu-offer-dot--active' : ''}`}
+                      />
+                    ))}
+                  </div>
+                ) : null}
               </div>
-            )}
-          </div>
-        )}
+            ) : null}
+          </>
+        ) : null}
       </div>
 
-      {/* Sticky Category Tabs */}
-      <div ref={tabsRef} style={{
-        display: 'flex', gap: 0, padding: '0 16px', background: 'var(--bg-white, #fff)',
-        borderBottom: '2px solid var(--border-light, #E8D5B8)', overflowX: 'auto', overflowY: 'hidden', flexShrink: 0,
-        position: 'sticky', top: 0, zIndex: 10, WebkitOverflowScrolling: 'touch', maxWidth: '100%',
-      }}>
+      <div className="menu-tabs-row">
+        <div ref={tabsRef} className="menu-tabs">
         {categories.map(cat => (
           <button
             key={cat._id}
             id={`tab-${cat._id}`}
+            type="button"
             onClick={() => handleTabClick(cat._id)}
-            style={{
-              flexShrink: 0, padding: '14px 18px', fontSize: 14,
-              fontWeight: activeCategory === cat._id ? 600 : 500,
-              color: activeCategory === cat._id ? 'var(--red-primary, #C41E24)' : 'var(--text-light, #999)',
-              border: 'none', background: 'none', cursor: 'pointer', whiteSpace: 'nowrap',
-              borderBottom: activeCategory === cat._id ? '3px solid var(--red-primary, #C41E24)' : '3px solid transparent',
-              transition: 'color 0.2s, border-color 0.2s',
-            }}
+            className={`menu-tab${activeCategory === cat._id ? ' menu-tab--active' : ''}`}
           >
             {getName(cat.translations)}
           </button>
         ))}
+        </div>
+        {heroHidden ? (
+          <div className="menu-tabs__actions">
+            <CustomerMenuToolbar variant="actions" />
+          </div>
+        ) : null}
       </div>
 
-      {/* Scrollable Content — all categories rendered continuously */}
-      <div ref={scrollContainerRef} onScroll={handleScroll} style={{ flex: 1, minHeight: 0, minWidth: 0, overflowX: 'hidden', overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
+      <div ref={scrollContainerRef} onScroll={handleScroll} className="menu-scroll">
         {categories.map((cat, catIndex) => {
           const catItems = itemsByCategory.get(cat._id) || [];
           return (
@@ -435,21 +378,8 @@ export default function MenuView({ storeFrontEmbed = false }: { storeFrontEmbed?
               data-cat-id={cat._id}
               ref={(el) => { if (el) sectionRefs.current.set(cat._id, el); }}
             >
-              {/* Section Header */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '20px 20px 12px', minWidth: 0 }}>
-                <div style={{ flex: '1 1 0', minWidth: 0, height: 1, background: 'linear-gradient(90deg, transparent, #D4A853, transparent)' }} />
-                <h2 style={{
-                  fontFamily: "'Noto Serif SC', serif", fontSize: 18, fontWeight: 600,
-                  color: 'var(--text-dark, #2C1810)', letterSpacing: 4, whiteSpace: 'nowrap',
-                  flexShrink: 1, minWidth: 0, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis',
-                }}>
-                  {getName(cat.translations)}
-                </h2>
-                <div style={{ flex: '1 1 0', minWidth: 0, height: 1, background: 'linear-gradient(90deg, transparent, #D4A853, transparent)' }} />
-              </div>
-
-              {/* Items */}
-              <div style={{ padding: '0 16px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <h2 className="menu-section-title">{getName(cat.translations)}</h2>
+              <div className="menu-items-list">
                 {catItems.length > 0 ? catItems.map((item, itemIndex) => (
                   <MenuItemCard
                     key={item._id}
@@ -483,7 +413,6 @@ export default function MenuView({ storeFrontEmbed = false }: { storeFrontEmbed?
           );
         })}
 
-        {/* Footer */}
         <div style={{ height: 20 }} />
       </div>
 
