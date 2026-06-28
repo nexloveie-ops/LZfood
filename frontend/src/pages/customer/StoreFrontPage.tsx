@@ -7,7 +7,6 @@ import { useStoreSlug } from '../../context/StoreContext';
 import type { OfferData } from '../../utils/bundleMatcher';
 import { useCustomerMenuBootstrap } from '../../context/CustomerMenuBootstrapContext';
 import MenuView from './MenuView';
-import BannerPlatformCredit from '../../components/customer/BannerPlatformCredit';
 import CustomerMenuToolbar from '../../components/customer/CustomerMenuToolbar';
 import '../../styles/customer-order-saas.css';
 
@@ -125,7 +124,6 @@ export default function StoreFrontPage() {
                     ) : null}
                   </div>
                 </div>
-                <BannerPlatformCredit variant="onLight" />
               </div>
             </section>
 
