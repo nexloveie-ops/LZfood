@@ -347,9 +347,9 @@ export default function CartPage() {
 
   if (items.length === 0) {
     return (
-      <div style={{ position: 'relative', width: '100%', minHeight: '60vh', paddingTop: 36 }}>
-        <BannerPlatformCredit variant="onLight" />
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '50vh', gap: 16 }}>
+      <div className="cart-page">
+        <div className="cart-empty">
+          <BannerPlatformCredit variant="onLight" />
           <span style={{ fontSize: 48, opacity: 0.3 }}>🛒</span>
           <p style={{ color: 'var(--text-light)' }}>{t('customer.emptyCart')}</p>
           <button className="btn btn-primary" onClick={() => navigate(menuBasePath)}>
@@ -361,28 +361,25 @@ export default function CartPage() {
   }
 
   return (
-    <div style={{ padding: 16, paddingBottom: 120, paddingTop: 40, position: 'relative' }}>
-      <BannerPlatformCredit variant="onLight" />
-      <h2 style={{ fontFamily: "'Noto Serif SC', serif", fontSize: 20, marginBottom: 16, color: 'var(--text-dark)', display: 'flex', alignItems: 'center', gap: 10 }}>
-        <button onClick={() => navigate(menuBasePath)} style={{
-          background: 'none', border: 'none', cursor: 'pointer', fontSize: 18,
-          color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', padding: 0,
-        }}>←</button>
-        {t('customer.cart')}
-      </h2>
+    <div className="cart-page">
+      <div className="cart-scroll">
+        <BannerPlatformCredit variant="onLight" />
+        <h2 className="cart-title">
+          <button onClick={() => navigate(menuBasePath)} style={{
+            background: 'none', border: 'none', cursor: 'pointer', fontSize: 18,
+            color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', padding: 0,
+          }}>←</button>
+          {t('customer.cart')}
+        </h2>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div className="cart-items">
         {items.map(item => {
           const key = getItemKey(item);
           const optExtra = (item.options || []).reduce((s, o) => s + o.extraPrice, 0);
           const lockedFloor = typeof item.lockedBaselineQty === 'number' ? item.lockedBaselineQty : null;
           const atLockedFloor = lockedFloor != null && item.quantity <= lockedFloor;
           return (
-            <div key={key} style={{
-              display: 'flex', alignItems: 'center', gap: 12,
-              background: 'var(--bg-white)', borderRadius: 10, padding: '12px 14px',
-              border: '1px solid rgba(232,213,184,0.5)',
-            }}>
+            <div key={key} className="cart-item">
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--text-dark)' }}>{getItemName(item.names)}</div>
                 {item.options && item.options.length > 0 && (
@@ -600,13 +597,9 @@ export default function CartPage() {
         </div>
       )}
 
-      {/* Fixed bottom bar */}
-      <div style={{
-        position: 'fixed', bottom: 0, left: '50%', transform: 'translateX(-50%)',
-        maxWidth: 430, width: '100%', padding: '16px 20px',
-        background: 'var(--bg-white)', borderTop: '2px solid var(--border-light)',
-        display: 'flex', justifyContent: 'space-between', alignItems: 'center', zIndex: 100,
-      }}>
+      </div>
+
+      <div className="cart-footer">
         <div>
           <div style={{ fontSize: 12, color: 'var(--text-light)' }}>{t('customer.totalAmount')} · {totalItems} {t('customer.quantity')}</div>
           {bundleTotals.bundleDiscount > 0 && (

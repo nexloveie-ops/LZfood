@@ -10,6 +10,7 @@
     "seed:store": "ts-node scripts/seed-lzfood-store.ts",
     "import:menu-backup": "ts-node scripts/import-menu-from-backup.ts",
     "migrate:singlestore-menu": "ts-node scripts/migrate-singlestore-menu-to-lzfood.ts",
+    "copy:menu-between-stores": "ts-node scripts/copy-menu-between-stores.ts",
     "purge:store-orders": "ts-node scripts/purge-store-orders.ts",
     "sales:overview": "ts-node scripts/sales-data-overview.ts",
     "import:legacy-orders": "ts-node scripts/import-legacy-store-orders.ts",
