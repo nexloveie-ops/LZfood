@@ -316,6 +316,8 @@
     "continueOrder": "Continue ordering",
     "printReceiptBtn": "🖨️ Print receipt",
     "orderSoldOutBadge": "Sold out",
+    "orderSoldOutNotice": "This item is sold out and cannot be added.",
+    "orderContainsSoldOut": "The order includes sold-out items ({{names}}). Remove them and try again.",
     "deliveryNotEnabledPlan": "Delivery is not enabled on this plan.",
     "errFillGuestPhone": "Enter the guest phone number.",
     "errDeliveryNeedFields": "Delivery orders need name, phone, postcode, and address.",

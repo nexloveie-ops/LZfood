@@ -316,6 +316,8 @@
     "continueOrder": "继续点单",
     "printReceiptBtn": "🖨️ 打印小票",
     "orderSoldOutBadge": "售罄",
+    "orderSoldOutNotice": "该菜品已售罄，无法添加",
+    "orderContainsSoldOut": "订单含已售罄菜品（{{names}}），请移除后重试",
     "deliveryNotEnabledPlan": "当前套餐未开通送餐功能",
     "errFillGuestPhone": "请填写客人电话",
     "errDeliveryNeedFields": "送餐订单需填写姓名、电话、邮编、地址",

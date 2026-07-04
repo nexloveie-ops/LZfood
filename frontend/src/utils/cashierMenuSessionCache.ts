@@ -13,6 +13,7 @@ export interface CashierMenuSessionEntry {
     translations: Array<{ locale: string; name: string; description?: string }>;
     optionGroups?: unknown[];
     isSoldOut?: boolean;
+    soldOutUntil?: string | null;
     inventoryTracked?: boolean;
     inventory?: {
       baseUnit?: string;
@@ -22,6 +23,9 @@ export interface CashierMenuSessionEntry {
   }>;
   fetchedAt: number;
 }
+
+/** 菜单缓存超过此毫秒数视为过期，进页/聚焦时会后台刷新售罄等字段 */
+export const CASHIER_MENU_CACHE_MAX_AGE_MS = 60_000;
 
 const cache = new Map<string, CashierMenuSessionEntry>();
 

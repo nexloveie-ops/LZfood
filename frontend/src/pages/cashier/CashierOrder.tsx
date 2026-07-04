@@ -18,6 +18,7 @@ import {
   getCashierMenuSessionCache,
   setCashierMenuSessionCache,
   patchCashierMenuInventoryQty,
+  CASHIER_MENU_CACHE_MAX_AGE_MS,
 } from '../../utils/cashierMenuSessionCache';
 import {
   DELIVERY_FEE_RULES_CONFIG_KEY,
@@ -408,18 +409,14 @@ export default function CashierOrder() {
     }
   }, []);
 
-  /** 全店菜单：进页一次拉分类 + 全部菜品（方案 A 长列表滚动） */
-  const mergeMenuItems = useCallback((incoming: MenuItem[]) => {
-    setMenuItems((prev) => {
-      const map = new Map(prev.map((i) => [i._id, i]));
-      for (const row of incoming) map.set(row._id, row);
-      return Array.from(map.values());
-    });
-  }, []);
-
-  const fetchMenu = useCallback(async () => {
+  /** 全店菜单：缓存秒开 + 始终后台刷新（售罄/库存与后台同步） */
+  const fetchMenu = useCallback(async (opts?: { force?: boolean }): Promise<MenuItem[]> => {
     const cacheKey = cashierMenuSessionCacheKey(getConfiguredStoreSlug(), lang);
     const cached = getCashierMenuSessionCache(cacheKey);
+    const cacheFresh = !opts?.force
+      && cached
+      && Date.now() - cached.fetchedAt < CASHIER_MENU_CACHE_MAX_AGE_MS;
+
     if (cached && cached.menuItems.length > 0) {
       setCategories(cached.categories as Category[]);
       setMenuItems(cached.menuItems as MenuItem[]);
@@ -430,20 +427,37 @@ export default function CashierOrder() {
       } else {
         setActiveCat('');
       }
-      setMenuLoading(false);
-      return;
+      if (cacheFresh) {
+        setMenuLoading(false);
+        void (async () => {
+          try {
+            const itemsRes = await apiFetch(`/api/menu/items?lang=${encodeURIComponent(lang)}`);
+            if (!itemsRes.ok) return;
+            const items: MenuItem[] = await itemsRes.json();
+            setMenuItems(items);
+            setCashierMenuSessionCache(cacheKey, {
+              categories: cached!.categories,
+              menuItems: items,
+            });
+          } catch {
+            /* background refresh — ignore */
+          }
+        })();
+        return cached.menuItems as MenuItem[];
+      }
+    } else {
+      setMenuLoading(true);
+      setMenuItems([]);
+      categorySectionRefs.current = {};
     }
 
-    setMenuLoading(true);
-    setMenuItems([]);
-    categorySectionRefs.current = {};
     try {
       const [catRes, itemsRes] = await Promise.all([
         apiFetch(`/api/menu/categories?lang=${encodeURIComponent(lang)}`),
         apiFetch(`/api/menu/items?lang=${encodeURIComponent(lang)}`),
       ]);
-      let cats: Category[] = [];
-      let items: MenuItem[] = [];
+      let cats: Category[] = cached?.categories as Category[] ?? [];
+      let items: MenuItem[] = cached?.menuItems as MenuItem[] ?? [];
       if (catRes.ok) {
         cats = await catRes.json();
         setCategories(cats);
@@ -460,6 +474,7 @@ export default function CashierOrder() {
       if (cats.length > 0 || items.length > 0) {
         setCashierMenuSessionCache(cacheKey, { categories: cats, menuItems: items });
       }
+      return items;
     } finally {
       setMenuLoading(false);
     }
@@ -748,6 +763,13 @@ export default function CashierOrder() {
     void fetchBomSnapshot();
   }, [fetchMenu, fetchBomSnapshot]);
 
+  /** 窗口重新聚焦时强制刷新菜单（售罄可能在其它标签页被修改） */
+  useEffect(() => {
+    const onFocus = () => { void fetchMenu({ force: true }); };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [fetchMenu]);
+
   useEffect(() => {
     if (!canInventoryTracking || !token) {
       setInvSummary(new Map());
@@ -969,20 +991,14 @@ export default function CashierOrder() {
         const mids = new Set(lines.map((l) => l.menuItemId));
         const needMerge = [...mids].some((id) => !menuItems.some((m) => m._id === id));
         if (needMerge) {
-          const cached = getCashierMenuSessionCache(cashierMenuSessionCacheKey(getConfiguredStoreSlug(), lang));
-          if (cached && cached.menuItems.length > 0) {
-            mergeMenuItems(cached.menuItems as MenuItem[]);
-          } else {
-            const res = await apiFetch(`/api/menu/items?lang=${encodeURIComponent(lang)}`);
-            if (res.ok) mergeMenuItems(await res.json());
-          }
+          await fetchMenu();
         }
         setOrder((prev) => [...prev, ...lines]);
       } finally {
         setImportingActiveOrderId(null);
       }
     },
-    [lang, menuItems, mergeMenuItems],
+    [menuItems, fetchMenu, lang],
   );
 
   const computeInvAvailability = (item: MenuItem): { remaining: number; blocked: boolean; color: 'red' | 'orange' | 'green' | null } => {
@@ -1017,17 +1033,46 @@ export default function CashierOrder() {
     return isItemServingBlocked(itemBom, bomSnapshot.materials, orderBomDemand);
   };
 
-  const addToOrder = (item: MenuItem) => {
-    if (item.isSoldOut) return;
+  const rejectItemAdd = (item: MenuItem): boolean => {
+    if (item.isSoldOut) {
+      alert(t('cashier.orderSoldOutNotice'));
+      return true;
+    }
     const av = computeInvAvailability(item);
     if (av.blocked) {
       alert(t('cashier.invOutOfStockNotice', { defaultValue: '该菜品库存不足' }));
-      return;
+      return true;
     }
     if (computeBomItemBlocked(item)) {
       alert(t('cashier.invOutOfStockNotice', { defaultValue: '该菜品库存不足' }));
-      return;
+      return true;
     }
+    return false;
+  };
+
+  /** 提交前校验：购物车是否含售罄菜（强制拉最新菜单） */
+  const findSoldOutInOrder = (lines: OrderLine[], items: MenuItem[]): string[] => {
+    const byId = new Map(items.map((m) => [m._id, m]));
+    const names = new Set<string>();
+    for (const line of lines) {
+      const mi = byId.get(line.menuItemId);
+      if (mi?.isSoldOut) names.add(line.name);
+    }
+    return [...names];
+  };
+
+  const ensureOrderNotSoldOut = useCallback(async (): Promise<boolean> => {
+    const freshItems = await fetchMenu({ force: true });
+    const soldOutNames = findSoldOutInOrder(order, freshItems);
+    if (soldOutNames.length > 0) {
+      setError(t('cashier.orderContainsSoldOut', { names: soldOutNames.join('、') }));
+      return false;
+    }
+    return true;
+  }, [fetchMenu, order, t]);
+
+  const addToOrder = (item: MenuItem) => {
+    if (rejectItemAdd(item)) return;
     if (item.optionGroups && item.optionGroups.length > 0) { setOptionModal(item); return; }
     setOrder((prev) => [
       ...prev,
@@ -1041,6 +1086,7 @@ export default function CashierOrder() {
   };
 
   const addToOrderWithOptions = (item: MenuItem, cartOptions: CartItemOption[]) => {
+    if (rejectItemAdd(item)) return;
     const options: OrderItemOption[] = cartOptions.map(o => ({
       groupId: o.groupId,
       choiceId: o.choiceId,
@@ -1151,9 +1197,6 @@ export default function CashierOrder() {
     const av = computeInvAvailability(item);
     const bomBlocked = computeBomItemBlocked(item);
     const invBlocked = av.blocked || bomBlocked;
-    const invBorder = av.color === 'red' ? '2px solid #C62828'
-      : av.color === 'orange' ? '2px solid #E65100'
-      : null;
     const cardClass = [
       'cashier-menu-card',
       qty > 0 ? 'is-selected' : '',
@@ -1165,7 +1208,9 @@ export default function CashierOrder() {
         key={item._id}
         className={cardClass}
         onClick={() => addToOrder(item)}
-        style={qty > 0 ? undefined : invBorder ? { border: invBorder } : undefined}
+        style={qty > 0 ? undefined : !item.isSoldOut && invBlocked && av.color === 'red' ? { border: '2px solid #C62828' }
+          : !item.isSoldOut && invBlocked && av.color === 'orange' ? { border: '2px solid #E65100' }
+          : undefined}
       >
         {qty > 0 && <span className="cashier-menu-card-qty">{qty}</span>}
         {item.isSoldOut && (
@@ -1176,7 +1221,7 @@ export default function CashierOrder() {
         {item.optionGroups && item.optionGroups.length > 0 && (
           <div className="cashier-menu-card-meta">⚙ {t('customer.selectOptions')}</div>
         )}
-        {item.inventoryTracked && (
+        {item.inventoryTracked && !item.isSoldOut && (
           <div
             className="cashier-menu-card-inv"
             style={{
@@ -1412,6 +1457,7 @@ export default function CashierOrder() {
     setPaying(true);
     setError('');
     try {
+      if (!(await ensureOrderNotSoldOut())) return;
       const orderBody: Record<string, unknown> = {
         type: 'phone',
         items: buildGroupedItems(),
@@ -1504,6 +1550,7 @@ export default function CashierOrder() {
     setPaying(true);
     setError('');
     try {
+      if (!(await ensureOrderNotSoldOut())) return;
       const orderBody: Record<string, unknown> = {
         type: 'delivery',
         deliverySource: 'phone',
@@ -1767,6 +1814,7 @@ export default function CashierOrder() {
     setPaying(true);
     setError('');
     try {
+      if (!(await ensureOrderNotSoldOut())) return;
       const orderBody: Record<string, unknown> = {
         type: 'dine_in',
         tableNumber: tableNum,
@@ -1909,6 +1957,7 @@ export default function CashierOrder() {
         return;
       }
     }
+    if (!(await ensureOrderNotSoldOut())) return;
     handleOpenPayment();
   };
 
@@ -1935,6 +1984,7 @@ export default function CashierOrder() {
           return;
         }
       }
+      if (!(await ensureOrderNotSoldOut())) return;
       // Step 1: Create order
       const orderBody: Record<string, unknown> = { type: orderType, items: buildGroupedItems() };
       if (orderType === 'dine_in') { orderBody.tableNumber = 0; orderBody.seatNumber = 0; }
