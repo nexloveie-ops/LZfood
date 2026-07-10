@@ -3,35 +3,70 @@ import { MongoMemoryServer } from 'mongodb-memory-server';
 import express from 'express';
 import http from 'http';
 import request from 'supertest';
+import jwt from 'jsonwebtoken';
 import { Server as SocketIOServer } from 'socket.io';
 import { io as ioClient, Socket as ClientSocket } from 'socket.io-client';
 import { createOrdersRouter } from './orders';
 import { errorHandler } from '../middleware/errorHandler';
-import { MenuCategory } from '../models/MenuCategory';
-import { MenuItem } from '../models/MenuItem';
-import { Order } from '../models/Order';
-import { DailyOrderCounter } from '../models/DailyOrderCounter';
+import { getJwtSecret } from '../middleware/auth';
+import { Role } from '../middleware/permissions';
+import { registerLZFoodModels } from '../models-lzfood';
+import { getModels } from '../getModels';
 
 let mongoServer: MongoMemoryServer;
 let app: express.Express;
 let httpServer: http.Server;
 let io: SocketIOServer;
 let categoryId: string;
+const TEST_STORE_ID = new mongoose.Types.ObjectId();
+let cashierToken: string;
+
+let MenuCategory: any;
+let MenuItem: any;
+let Order: any;
+let Checkout: any;
+let DailyOrderCounter: any;
+
+function bindTestModels(): void {
+  const m = getModels();
+  MenuCategory = m.MenuCategory;
+  MenuItem = m.MenuItem;
+  Order = m.Order;
+  Checkout = m.Checkout;
+  DailyOrderCounter = m.DailyOrderCounter;
+}
 
 beforeAll(async () => {
   mongoServer = await MongoMemoryServer.create({
     instance: { launchTimeout: 60000 },
   });
   await mongoose.connect(mongoServer.getUri());
+  registerLZFoodModels(mongoose.connection);
+  bindTestModels();
 
   app = express();
   app.use(express.json());
+  app.use((req, _res, next) => {
+    req.storeId = TEST_STORE_ID;
+    next();
+  });
 
   httpServer = http.createServer(app);
   io = new SocketIOServer(httpServer, { cors: { origin: '*' } });
 
   app.use('/api/orders', createOrdersRouter(io));
   app.use(errorHandler);
+
+  cashierToken = jwt.sign(
+    {
+      userId: 'cashier-id',
+      username: 'cashier',
+      role: Role.CASHIER,
+      storeId: TEST_STORE_ID.toString(),
+    },
+    getJwtSecret(),
+    { expiresIn: '1h' },
+  );
 
   await new Promise<void>((resolve) => {
     httpServer.listen(0, resolve);
@@ -51,6 +86,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   const cat = await MenuCategory.create({
+    storeId: TEST_STORE_ID,
     sortOrder: 1,
     translations: [{ locale: 'en-US', name: 'Main Course' }],
   });
@@ -59,6 +95,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await Order.deleteMany({});
+  await Checkout.deleteMany({});
   await MenuItem.deleteMany({});
   await MenuCategory.deleteMany({});
   await DailyOrderCounter.deleteMany({});
@@ -66,6 +103,7 @@ afterEach(async () => {
 
 async function createMenuItem(overrides: Record<string, unknown> = {}) {
   return MenuItem.create({
+    storeId: TEST_STORE_ID,
     categoryId,
     price: 25,
     translations: [{ locale: 'zh-CN', name: '宫保鸡丁' }, { locale: 'en-US', name: 'Kung Pao Chicken' }],
@@ -1188,5 +1226,146 @@ describe('dual-track order workflow', () => {
     expect(stageRes.status).toBe(200);
     expect(stageRes.body.status).toBe('pending');
     expect(stageRes.body.fulfillmentStatus).toBe('fulfilled');
+  });
+});
+
+describe('DELETE /api/orders/:id', () => {
+  it('allows customer to delete pending unpaid order without auth', async () => {
+    const item = await createMenuItem();
+    const order = await Order.create({
+      storeId: TEST_STORE_ID,
+      type: 'takeout',
+      status: 'pending',
+      paymentStatus: 'unpaid',
+      items: [{ menuItemId: item._id, quantity: 1, unitPrice: 10, itemName: 'x' }],
+    });
+
+    const res = await request(app).delete(`/api/orders/${order._id}`);
+    expect(res.status).toBe(200);
+    expect(await Order.findById(order._id)).toBeNull();
+  });
+
+  it('allows customer to delete pending order even after kitchen printed', async () => {
+    const item = await createMenuItem();
+    const order = await Order.create({
+      storeId: TEST_STORE_ID,
+      type: 'takeout',
+      status: 'pending',
+      paymentStatus: 'unpaid',
+      items: [{
+        menuItemId: item._id,
+        quantity: 2,
+        unitPrice: 10,
+        itemName: 'x',
+        kitchenPrintedQty: 2,
+      }],
+    });
+
+    const res = await request(app).delete(`/api/orders/${order._id}`);
+    expect(res.status).toBe(200);
+    expect(await Order.findById(order._id)).toBeNull();
+  });
+
+  it('returns 403 when customer deletes checked_out order without staff token', async () => {
+    const item = await createMenuItem();
+    const order = await Order.create({
+      storeId: TEST_STORE_ID,
+      type: 'takeout',
+      status: 'checked_out',
+      paymentStatus: 'paid',
+      items: [{ menuItemId: item._id, quantity: 1, unitPrice: 10, itemName: 'x' }],
+    });
+
+    const res = await request(app).delete(`/api/orders/${order._id}`);
+    expect(res.status).toBe(403);
+    expect(res.body.error.code).toBe('FORBIDDEN');
+    expect(await Order.findById(order._id)).not.toBeNull();
+  });
+
+  it('allows staff to delete checked_out order and linked checkout', async () => {
+    const item = await createMenuItem();
+    const order = await Order.create({
+      storeId: TEST_STORE_ID,
+      type: 'dine_in',
+      tableNumber: 3,
+      seatNumber: 1,
+      status: 'checked_out',
+      paymentStatus: 'paid',
+      items: [{
+        menuItemId: item._id,
+        quantity: 1,
+        unitPrice: 10,
+        itemName: 'x',
+        kitchenPrintedQty: 1,
+        settledQty: 1,
+      }],
+    });
+    const checkout = await Checkout.create({
+      storeId: TEST_STORE_ID,
+      type: 'table',
+      tableNumber: 3,
+      totalAmount: 10,
+      paymentMethod: 'cash',
+      orderIds: [order._id],
+    });
+
+    const res = await request(app)
+      .delete(`/api/orders/${order._id}`)
+      .set('Authorization', `Bearer ${cashierToken}`);
+
+    expect(res.status).toBe(200);
+    expect(await Order.findById(order._id)).toBeNull();
+    expect(await Checkout.findById(checkout._id)).toBeNull();
+  });
+
+  it('returns 403 when customer deletes pending order with partial payment', async () => {
+    const item = await createMenuItem();
+    const order = await Order.create({
+      storeId: TEST_STORE_ID,
+      type: 'dine_in',
+      tableNumber: 2,
+      seatNumber: 1,
+      status: 'pending',
+      paymentStatus: 'partial',
+      items: [{
+        menuItemId: item._id,
+        quantity: 2,
+        unitPrice: 10,
+        itemName: 'x',
+        settledQty: 1,
+      }],
+    });
+
+    const res = await request(app).delete(`/api/orders/${order._id}`);
+    expect(res.status).toBe(403);
+    expect(await Order.findById(order._id)).not.toBeNull();
+  });
+});
+
+describe('PUT /api/orders/:id/items staff QR edit', () => {
+  it('returns 409 when staff edits customer takeout after kitchen printed', async () => {
+    const item = await createMenuItem();
+    const order = await Order.create({
+      storeId: TEST_STORE_ID,
+      type: 'takeout',
+      status: 'pending',
+      paymentStatus: 'unpaid',
+      takeoutPlacementSource: 'customer',
+      items: [{
+        menuItemId: item._id,
+        quantity: 1,
+        unitPrice: 10,
+        itemName: 'x',
+        kitchenPrintedQty: 1,
+      }],
+    });
+
+    const res = await request(app)
+      .put(`/api/orders/${order._id}/items`)
+      .set('Authorization', `Bearer ${cashierToken}`)
+      .send({ items: [{ menuItemId: item._id.toString(), quantity: 2 }] });
+
+    expect(res.status).toBe(409);
+    expect(res.body.error.code).toBe('ORDER_NOT_MODIFIABLE');
   });
 });

@@ -53,6 +53,10 @@ import {
   resolveTakeoutPlacementSource,
   syncDualTrackBeforeSave,
 } from '../utils/orderDualTrack';
+import {
+  cashierMayEditQrOrder,
+  isCustomerQrOrderForEdit,
+} from '../utils/cashierQrOrderEdit';
 
 const KITCHEN_PRINT_ORDER_TYPES = new Set(['dine_in', 'takeout', 'phone', 'delivery']);
 
@@ -67,10 +71,31 @@ function isStaffCashierOrOwner(req: Request): boolean {
   );
 }
 
+/** pending 且未付：顾客可自助 DELETE；其余状态须收银/店主 */
+function customerMaySelfCancelOrder(order: {
+  status?: string;
+  paymentStatus?: string;
+  stripePaymentIntentId?: string;
+  memberCreditUsed?: number;
+  placementPrepaidMethod?: string;
+  phoneCardPaidAtPlacement?: boolean;
+}): boolean {
+  const st = String(order.status || 'pending');
+  if (st !== 'pending') return false;
+  if (order.stripePaymentIntentId) return false;
+  if (order.phoneCardPaidAtPlacement) return false;
+  if (order.placementPrepaidMethod) return false;
+  if ((Number(order.memberCreditUsed) || 0) > 0.001) return false;
+  const ps = String(order.paymentStatus || 'unpaid');
+  if (ps === 'paid' || ps === 'partial') return false;
+  return true;
+}
+
 function orderModels() {
   return getModels() as {
     MenuItem: mongoose.Model<any>;
     Order: mongoose.Model<any>;
+    Checkout: mongoose.Model<any>;
     DailyOrderCounter: mongoose.Model<any>;
     SystemConfig: mongoose.Model<any>;
     CustomerProfile: mongoose.Model<any>;
@@ -1556,6 +1581,17 @@ export function createOrdersRouter(io: SocketIOServer): Router {
         });
       }
 
+      const staffAllowed = isStaffCashierOrOwner(req);
+      if (staffAllowed && isCustomerQrOrderForEdit(order)) {
+        const dineInWf = await getDineInWorkflowModeForStore(req.storeId!);
+        if (!cashierMayEditQrOrder(order, dineInWf)) {
+          throw createAppError(
+            'ORDER_NOT_MODIFIABLE',
+            'Only pending unpaid QR orders not yet sent to kitchen can be edited by staff',
+          );
+        }
+      }
+
       const { items } = req.body;
 
       // Validate items array
@@ -1595,7 +1631,6 @@ export function createOrdersRouter(io: SocketIOServer): Router {
       const menuItemMap = new Map(menuItems.map((m) => [m._id.toString(), m as MenuItemForOrder]));
 
       // Build updated order items with price/name snapshots
-      const staffAllowed = isStaffCashierOrOwner(req);
       const orderItems = await buildOrderItemsPayload(req.storeId!, items, menuItemMap, staffAllowed);
       appendDeliveryFeeLineToOrderItems(
         orderItems as Record<string, unknown>[],
@@ -1727,10 +1762,10 @@ export function createOrdersRouter(io: SocketIOServer): Router {
     }
   });
 
-  // DELETE /api/orders/:id — Cancel/delete a pending order
-  router.delete('/:id', async (req: Request, res: Response, next: NextFunction) => {
+  // DELETE /api/orders/:id — Hard-delete order (+ linked checkouts). Staff any stage; customer pending unpaid only.
+  router.delete('/:id', optionalAuthMiddleware, async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { Order } = orderModels();
+      const { Order, Checkout } = orderModels();
       const id = req.params.id as string;
       if (!mongoose.Types.ObjectId.isValid(id)) {
         throw createAppError('VALIDATION_ERROR', 'Invalid order ID');
@@ -1741,56 +1776,11 @@ export function createOrdersRouter(io: SocketIOServer): Router {
         throw createAppError('NOT_FOUND', 'Order not found');
       }
 
-      if (order.status !== 'pending') {
-        throw createAppError('ORDER_NOT_MODIFIABLE', 'Only pending orders can be cancelled', {
-          currentStatus: order.status,
-        });
-      }
-
-      const lines = (order.items || []) as Array<{
-        lineKind?: string;
-        refunded?: boolean;
-        quantity: number;
-        kitchenPrintedQty?: number;
-        settledQty?: number;
-      }>;
-
-      if (order.type === 'dine_in') {
-        for (const it of lines) {
-          if (it.lineKind === 'delivery_fee' || it.refunded) continue;
-          if ((Number(it.kitchenPrintedQty) || 0) > 0) {
-            throw createAppError(
-              'ORDER_NOT_MODIFIABLE',
-              'Cannot cancel dine-in order: kitchen ticket already printed',
-              { reason: 'kitchen_printed' },
-            );
-          }
-          if ((Number(it.settledQty) || 0) > 0) {
-            throw createAppError(
-              'ORDER_NOT_MODIFIABLE',
-              'Cannot cancel dine-in order: partial payment already applied',
-              { reason: 'settled_qty' },
-            );
-          }
-        }
-      } else {
-        for (const it of lines) {
-          if (it.lineKind === 'delivery_fee' || it.refunded) continue;
-          if ((Number(it.kitchenPrintedQty) || 0) > 0) {
-            throw createAppError(
-              'ORDER_NOT_MODIFIABLE',
-              'Cannot cancel order: kitchen ticket already printed',
-              { reason: 'kitchen_printed' },
-            );
-          }
-        }
-        if (order.type === 'delivery' && order.deliveryStage === 'picked_up_by_driver') {
-          throw createAppError(
-            'ORDER_NOT_MODIFIABLE',
-            'Cannot cancel delivery order: driver already picked up',
-            { reason: 'driver_picked_up' },
-          );
-        }
+      if (!customerMaySelfCancelOrder(order) && !isStaffCashierOrOwner(req)) {
+        throw createAppError(
+          'FORBIDDEN',
+          'Only staff can cancel orders that have been paid or are no longer pending',
+        );
       }
 
       const orderLean = typeof order.toObject === 'function' ? order.toObject() : order;
@@ -1800,6 +1790,7 @@ export function createOrdersRouter(io: SocketIOServer): Router {
         event: 'order_cancelled',
       });
 
+      await Checkout.deleteMany({ storeId: req.storeId, orderIds: order._id });
       await Order.findOneAndDelete({ _id: id, storeId: req.storeId });
 
       io.to(storeIoRoom(req.storeId!)).emit('order:cancelled', { orderId: id, tableNumber: order.tableNumber });

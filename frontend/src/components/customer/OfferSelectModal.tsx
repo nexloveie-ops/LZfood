@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import type { CartItemOption } from '../../context/CartContext';
 import type { OfferData } from '../../utils/bundleMatcher';
+import { isCustomerMenuItemSoldOut } from '../../utils/menuItemAvailability';
 import { getOptionalMinSelect, getOptionalMaxSelect, optionalMaxReached, optionalSelectionValid } from '../../utils/optionGroupLimits';
 import '../../styles/customer-order-saas.css';
 
@@ -29,6 +30,8 @@ interface MenuItem {
   translations: { locale: string; name: string }[];
   optionGroups?: OptionGroup[];
   isSoldOut?: boolean;
+  inventoryTracked?: boolean;
+  inventory?: { currentQty?: number; perServing?: number };
 }
 
 interface Category {
@@ -305,7 +308,7 @@ export default function OfferSelectModal({ offer, menuItems, categories, lang, o
                   </div>
                 ) : (
                   <div className="option-group__choices">
-                    {menuItems.filter(m => m.categoryId === slot.categoryId && !excluded.has(m._id) && !m.isSoldOut).map(mi => {
+                    {menuItems.filter(m => m.categoryId === slot.categoryId && !excluded.has(m._id) && !isCustomerMenuItemSoldOut(m)).map(mi => {
                       const selected = selections[idx] === mi._id;
                       return (
                         <div

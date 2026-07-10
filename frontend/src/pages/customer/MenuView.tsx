@@ -15,6 +15,7 @@ import {
   type BomAvailabilitySnapshot,
   emptyBomSnapshot,
 } from '../../utils/bomAvailability';
+import { isCustomerMenuItemSoldOut } from '../../utils/menuItemAvailability';
 import '../../styles/customer-order-saas.css';
 
 interface Category { _id: string; sortOrder: number; translations: { locale: string; name: string }[]; }
@@ -22,6 +23,8 @@ interface AllergenData { _id: string; icon: string; }
 interface MenuItemData {
   _id: string; categoryId: string; price: number; calories?: number;
   avgWaitMinutes?: number; photoUrl?: string; arFileUrl?: string; isSoldOut?: boolean;
+  inventoryTracked?: boolean;
+  inventory?: { currentQty?: number; perServing?: number };
   translations: { locale: string; name: string; description?: string }[];
   allergenIds?: string[];
   optionGroups?: {
@@ -393,7 +396,7 @@ export default function MenuView({ storeFrontEmbed = false }: { storeFrontEmbed?
                     photoUrl={item.photoUrl}
                     photoFetchPriority={catIndex === 0 && itemIndex < 8 ? 'high' : 'auto'}
                     arFileUrl={item.arFileUrl}
-                    isSoldOut={item.isSoldOut}
+                    isSoldOut={isCustomerMenuItemSoldOut(item)}
                     allergenIcons={(item.allergenIds || []).map(aid => allergens.find(a => a._id === aid)?.icon).filter((x): x is string => !!x)}
                     optionGroups={item.optionGroups}
                     quantity={getCartQty(item._id)}

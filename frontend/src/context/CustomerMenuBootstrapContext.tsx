@@ -18,6 +18,8 @@ export interface CustomerMenuItem {
   photoUrl?: string;
   arFileUrl?: string;
   isSoldOut?: boolean;
+  inventoryTracked?: boolean;
+  inventory?: { currentQty?: number; perServing?: number };
   translations: { locale: string; name: string; description?: string }[];
   allergenIds?: string[];
   optionGroups?: {

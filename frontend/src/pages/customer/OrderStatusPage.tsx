@@ -53,14 +53,26 @@ interface PostOrderAdBanner {
 /** 下单后在本页即可展示广告（含待支付） */
 const POST_ORDER_AD_STATUSES = new Set(['pending', 'paid_online', 'checked_out', 'completed']);
 
-/** 堂食 pending：未出厨房、未部分结账时可整单取消（与 DELETE /api/orders/:id 一致） */
-function dineInPendingCustomerMayCancelWholeOrder(o: Order): boolean {
-  if (o.type !== 'dine_in' || o.status !== 'pending') return true;
+/** 堂食 pending：已出厨房或已有部分结账（加菜/锁行基准，与取消无关） */
+function dineInKitchenOrSettlementStarted(o: Order): boolean {
+  if (o.type !== 'dine_in' || o.status !== 'pending') return false;
   for (const it of o.items || []) {
     if (it.lineKind === 'delivery_fee' || it.refunded) continue;
-    if ((Number(it.kitchenPrintedQty) || 0) > 0) return false;
-    if ((Number(it.settledQty) || 0) > 0) return false;
+    if ((Number(it.kitchenPrintedQty) || 0) > 0) return true;
+    if ((Number(it.settledQty) || 0) > 0) return true;
   }
+  return false;
+}
+
+/** pending 且未付：顾客可自助取消（与 DELETE /api/orders/:id 一致） */
+function customerMaySelfCancelOrder(o: Order): boolean {
+  if (o.status !== 'pending') return false;
+  if (o.stripePaymentIntentId) return false;
+  if (o.phoneCardPaidAtPlacement) return false;
+  if (o.placementPrepaidMethod) return false;
+  if ((Number(o.memberCreditUsed) || 0) > 0.001) return false;
+  const ps = String(o.paymentStatus || 'unpaid');
+  if (ps === 'paid' || ps === 'partial') return false;
   return true;
 }
 
@@ -260,7 +272,7 @@ export default function OrderStatusPage() {
       const useLockedLineBaselines =
         order.type === 'dine_in' &&
         order.status === 'pending' &&
-        (!dineInPendingCustomerMayCancelWholeOrder(order) ||
+        (dineInKitchenOrSettlementStarted(order) ||
           (config.dine_in_workflow_mode === 'pay_after' && !!order.dineInStaffLockedAt));
 
       const cartItems: CartItem[] = order.items
@@ -323,11 +335,11 @@ export default function OrderStatusPage() {
   if (!order) return <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-light)' }}>{t('customer.orderNotFound')}</div>;
 
   const isPending = order.status === 'pending';
-  const dineInMayCancel = dineInPendingCustomerMayCancelWholeOrder(order);
+  const maySelfCancel = customerMaySelfCancelOrder(order);
   const showDineInPrimaryAsAddDishes =
     order.type === 'dine_in' &&
     isPending &&
-    (!dineInMayCancel ||
+    (dineInKitchenOrSettlementStarted(order) ||
       (config.dine_in_workflow_mode === 'pay_after' && !!order.dineInStaffLockedAt));
   const isPaidOnline = order.status === 'paid_online';
   /** 扫码送餐：Stripe 成功后订单为 checked_out 且已写 Checkout，顾客仍显示「已支付」 */
@@ -514,7 +526,7 @@ export default function OrderStatusPage() {
                 {t('customer.backToMenu')}
               </button>
             </div>
-            {dineInMayCancel && (
+            {maySelfCancel && (
             <button
               onClick={async () => {
                 if (!confirm(t('customer.confirmCancel'))) return;

@@ -2,28 +2,34 @@
  * 新订单提示音（美团风格）：
  *   钟声 (Web Audio 合成正弦) → ~150ms 间隙 → 人声播报 (mp3, macOS Tingting/婷婷 离线 TTS)
  *
- * - 钟声两种 motif 区分订单类型：
+ * - 钟声 motif 区分订单类型：
  *     堂食 dine-in: 高→低 "叮咚"  (A5 → E5)
  *     外卖 takeout: 等高两声 "叮叮" (A5 × 2)
- * - mp3 文件位于 `frontend/public/sounds/order-{dinein|takeout}.mp3`，约 28KB / 3.5s。
- * - mp3 加载失败 / 不支持时，自动回退到"只播钟声"，不会让 CashierLayout 那条 toast 通知静默。
- * - 浏览器自动播放策略：必须在用户首次手势后才能出声 —— 进入收银端后任一 click/touchstart 调用
- *   `unlockAudio()` 一次性解锁；解锁过程顺手 preload 两个 mp3，避免首单延迟。
+ *     送餐 delivery: 中→低 "叮咚" (G5 → C5)
+ * - mp3 位于 `frontend/public/sounds/order-{dinein|takeout|delivery}.mp3`
+ * - mp3 加载失败时仍播钟声；须用户手势后 `unlockAudio()` 解锁自动播放。
  */
+
+export type OrderSoundPayload = {
+  _id?: string;
+  type?: string;
+  status?: string;
+  deliverySource?: 'phone' | 'qr' | string;
+};
 
 let audioCtx: AudioContext | null = null;
 let unlocked = false;
 
-/** preload 后的两个 `<audio>` 元素，命中后直接 `play()`，避免每次 new 一个 */
-const voiceCache: Partial<Record<'dineIn' | 'takeout', HTMLAudioElement>> = {};
-const VOICE_SRC: Record<'dineIn' | 'takeout', string> = {
+type VoiceKind = 'dineIn' | 'takeout' | 'delivery';
+
+const voiceCache: Partial<Record<VoiceKind, HTMLAudioElement>> = {};
+const VOICE_SRC: Record<VoiceKind, string> = {
   dineIn: '/sounds/order-dinein.mp3',
   takeout: '/sounds/order-takeout.mp3',
+  delivery: '/sounds/order-delivery.mp3',
 };
-/** 钟声尾部 → 语音开头的间隙，毫秒。太短会撞钟声尾部余响，太长又拖沓 */
 const CHIME_TO_VOICE_GAP_MS = 150;
 
-/** 任一用户手势调用一次：解锁 AudioContext，并 preload 语音 mp3 */
 export function unlockAudio() {
   if (unlocked) return;
   try {
@@ -38,8 +44,7 @@ export function unlockAudio() {
   }
   unlocked = true;
 
-  /** 预热 HTMLAudioElement，避免首条订单出现「叮咚……（数百 ms 网络等待）……您有新的…」的撕裂感 */
-  (Object.keys(VOICE_SRC) as ('dineIn' | 'takeout')[]).forEach((k) => {
+  (Object.keys(VOICE_SRC) as VoiceKind[]).forEach((k) => {
     if (voiceCache[k]) return;
     const a = new Audio(VOICE_SRC[k]);
     a.preload = 'auto';
@@ -67,8 +72,7 @@ function playTone(frequency: number, startTime: number, duration: number, ctx: A
   osc.stop(startTime + duration);
 }
 
-/** 播放预热好的语音；克隆节点保证多单连击不会被上一条 cut 掉 */
-function playVoice(kind: 'dineIn' | 'takeout'): void {
+function playVoice(kind: VoiceKind): void {
   const cached = voiceCache[kind];
   const audio = cached ? (cached.cloneNode(true) as HTMLAudioElement) : new Audio(VOICE_SRC[kind]);
   audio.volume = 1.0;
@@ -77,28 +81,71 @@ function playVoice(kind: 'dineIn' | 'takeout'): void {
   });
 }
 
-/** 堂食：钟声「叮咚」(A5→E5) + 0.15s 间隙 + 语音「您有一个新的堂食订单」 */
+/** 堂食：钟声「叮咚」(A5→E5) + 语音「您有一个新的堂食订单」 */
 export function playDineInSound() {
   const ctx = getCtx();
   let chimeMs = 0;
   if (ctx) {
     const now = ctx.currentTime;
-    playTone(880, now, 0.25, ctx);        // 叮 (A5)
-    playTone(660, now + 0.25, 0.35, ctx); // 咚 (E5)
-    chimeMs = (0.25 + 0.35) * 1000;       // 600ms
+    playTone(880, now, 0.25, ctx);
+    playTone(660, now + 0.25, 0.35, ctx);
+    chimeMs = (0.25 + 0.35) * 1000;
   }
   setTimeout(() => playVoice('dineIn'), chimeMs + CHIME_TO_VOICE_GAP_MS);
 }
 
-/** 外卖：钟声「叮叮」(A5×2) + 0.15s 间隙 + 语音「您有一个新的外卖订单」 */
+/** 外卖：钟声「叮叮」(A5×2) + 语音「您有一个新的外卖订单」 */
 export function playTakeoutSound() {
   const ctx = getCtx();
   let chimeMs = 0;
   if (ctx) {
     const now = ctx.currentTime;
-    playTone(880, now, 0.2, ctx);        // 叮 (A5)
-    playTone(880, now + 0.3, 0.2, ctx);  // 叮 (A5)
-    chimeMs = (0.3 + 0.2) * 1000;        // 500ms
+    playTone(880, now, 0.2, ctx);
+    playTone(880, now + 0.3, 0.2, ctx);
+    chimeMs = (0.3 + 0.2) * 1000;
   }
   setTimeout(() => playVoice('takeout'), chimeMs + CHIME_TO_VOICE_GAP_MS);
+}
+
+/** 送餐：钟声「叮咚」(G5→C5) + 语音「您有一个新的送餐订单」 */
+export function playDeliverySound() {
+  const ctx = getCtx();
+  let chimeMs = 0;
+  if (ctx) {
+    const now = ctx.currentTime;
+    playTone(784, now, 0.22, ctx);
+    playTone(523, now + 0.28, 0.38, ctx);
+    chimeMs = (0.28 + 0.38) * 1000;
+  }
+  setTimeout(() => playVoice('delivery'), chimeMs + CHIME_TO_VOICE_GAP_MS);
+}
+
+/** order:new 是否应播报（扫码送餐 pending 仅下单不播，等付款后 order:updated 再播） */
+export function shouldPlayNewOrderSound(order: OrderSoundPayload): boolean {
+  if (order.type === 'delivery') {
+    const src = String(order.deliverySource || '').toLowerCase();
+    const st = String(order.status || 'pending');
+    if (src === 'qr' && st === 'pending') return false;
+    return true;
+  }
+  return true;
+}
+
+/** 扫码送餐付款成功：pending → paid_online / checked_out */
+export function shouldPlayDeliveryPaidSound(
+  order: OrderSoundPayload,
+  prevStatus: string | undefined,
+): boolean {
+  if (order.type !== 'delivery') return false;
+  if (String(order.deliverySource || '').toLowerCase() !== 'qr') return false;
+  const st = String(order.status || '');
+  const wasUnpaid = !prevStatus || prevStatus === 'pending';
+  const nowPaidish = st === 'paid_online' || st === 'checked_out';
+  return wasUnpaid && nowPaidish;
+}
+
+export function playNewOrderSound(order: OrderSoundPayload): void {
+  if (order.type === 'delivery') playDeliverySound();
+  else if (order.type === 'takeout') playTakeoutSound();
+  else playDineInSound();
 }

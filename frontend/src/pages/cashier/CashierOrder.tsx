@@ -1,7 +1,9 @@
 import { useEffect, useState, useCallback, useMemo, useRef, type CSSProperties } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../../context/AuthContext';
 import { apiFetch, getConfiguredStoreSlug } from '../../api/client';
+import { cashierMayEditQrOrder } from '../../utils/cashierQrOrderEdit';
 import CashierMemberCheckoutBlock, {
   buildMemberFullWalletCheckoutBody,
   canMemberFullWalletPay,
@@ -252,6 +254,8 @@ interface FrequentItemRow {
 export default function CashierOrder() {
   const { t, i18n } = useTranslation();
   const { token, hasFeature } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const editOrderIdParam = searchParams.get('editOrderId')?.trim() || '';
   const canDelivery = hasFeature('cashier.delivery.page');
   const canMemberWallet = hasFeature('cashier.member.wallet');
   const canInventoryTracking = hasFeature('inventory.tracking');
@@ -395,6 +399,12 @@ export default function CashierOrder() {
     dineInOrderNumber?: string;
     tableNumber: number;
   } | null>(null);
+  /** 从订单中心载入的扫码待改单 */
+  const [editingOrderId, setEditingOrderId] = useState<string | null>(null);
+  const [editOrderLabel, setEditOrderLabel] = useState('');
+  const [editOrderLoading, setEditOrderLoading] = useState(false);
+  const [editOrderLoadError, setEditOrderLoadError] = useState('');
+  const editLoadGenRef = useRef(0);
 
   const refreshDineInWorkflowMode = useCallback(async (): Promise<'pay_first' | 'pay_after'> => {
     try {
@@ -494,6 +504,80 @@ export default function CashierOrder() {
     if (p.postalCode?.trim()) setDeliveryPostalCode(p.postalCode.trim());
     setDeliveryCustomerCollapsed(true);
   }, []);
+
+  const exitEditMode = useCallback(() => {
+    setEditingOrderId(null);
+    setEditOrderLabel('');
+    setEditOrderLoadError('');
+    setOrder([]);
+    setSearchParams({}, { replace: true });
+  }, [setSearchParams]);
+
+  useEffect(() => {
+    if (!editOrderIdParam) {
+      setEditingOrderId(null);
+      setEditOrderLabel('');
+      return;
+    }
+    if (!token) return;
+    const gen = ++editLoadGenRef.current;
+    setEditOrderLoading(true);
+    setEditOrderLoadError('');
+    void (async () => {
+      try {
+        const [orderRes, wf] = await Promise.all([
+          apiFetch(`/api/orders/${editOrderIdParam}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          }),
+          refreshDineInWorkflowMode(),
+        ]);
+        if (gen !== editLoadGenRef.current) return;
+        if (!orderRes.ok) {
+          setEditOrderLoadError(t('cashier.editOrderLoadFailed', '无法载入订单'));
+          return;
+        }
+        const orderData = (await orderRes.json()) as ActiveDineInOrderRow & {
+          type?: string;
+          status?: string;
+          paymentStatus?: string;
+          stripePaymentIntentId?: string;
+          memberCreditUsed?: number;
+          placementPrepaidMethod?: string;
+          phoneCardPaidAtPlacement?: boolean;
+          takeoutPlacementSource?: 'cashier' | 'customer';
+          dailyOrderNumber?: number;
+          items: ActiveDineInOrderRow['items'];
+        };
+        if (!cashierMayEditQrOrder(orderData, wf)) {
+          setEditOrderLoadError(t('cashier.editOrderNotEligible', '该订单不可修改（须 pending、未付款、未送厨房）'));
+          return;
+        }
+        const ot = orderData.type === 'takeout' ? 'takeout' : 'dine_in';
+        await fetchMenu();
+        if (gen !== editLoadGenRef.current) return;
+        const lines = buildLinesFromActiveDineInOrders([{ ...orderData, _id: editOrderIdParam }], lang);
+        if (lines.length === 0) {
+          setEditOrderLoadError(t('cashier.editOrderEmpty', '订单无菜品可载入'));
+          return;
+        }
+        setOrderType(ot);
+        setOrder(lines);
+        setEditingOrderId(editOrderIdParam);
+        const label = orderData.dineInOrderNumber
+          ? `#${orderData.dineInOrderNumber}`
+          : orderData.dailyOrderNumber != null
+            ? `#${orderData.dailyOrderNumber}`
+            : editOrderIdParam.slice(-6).toUpperCase();
+        setEditOrderLabel(label);
+      } catch {
+        if (gen === editLoadGenRef.current) {
+          setEditOrderLoadError(t('cashier.editOrderLoadFailed', '无法载入订单'));
+        }
+      } finally {
+        if (gen === editLoadGenRef.current) setEditOrderLoading(false);
+      }
+    })();
+  }, [editOrderIdParam, token, lang, fetchMenu, refreshDineInWorkflowMode, t]);
 
   useEffect(() => {
     if (orderType !== 'delivery' || !token) {
@@ -1424,6 +1508,7 @@ export default function CashierOrder() {
   };
 
   const switchOrderType = (next: 'dine_in' | 'takeout' | 'phone' | 'delivery') => {
+    if (editingOrderId) return;
     setOrderType(next);
     setError('');
     setDeliveryCustomerProfileId('');
@@ -1938,6 +2023,11 @@ export default function CashierOrder() {
 
   const handlePrimaryAction = async () => {
     if (order.length === 0) return;
+    if (editingOrderId) {
+      if (!(await ensureOrderNotSoldOut())) return;
+      handleOpenPayment();
+      return;
+    }
     if (orderType === 'phone') {
       await handlePhoneOrder();
       return;
@@ -1985,6 +2075,22 @@ export default function CashierOrder() {
         }
       }
       if (!(await ensureOrderNotSoldOut())) return;
+      let targetOrderId: string;
+
+      if (editingOrderId) {
+        const updateRes = await apiFetch(`/api/orders/${editingOrderId}/items`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ items: buildGroupedItems() }),
+        });
+        if (!updateRes.ok) {
+          const d = await updateRes.json().catch(() => null);
+          throw new Error(d?.error?.message || t('common.error'));
+        }
+        const updateData = await updateRes.json();
+        applyInventoryUpdates(updateData?.inventoryUpdates || []);
+        targetOrderId = editingOrderId;
+      } else {
       // Step 1: Create order
       const orderBody: Record<string, unknown> = { type: orderType, items: buildGroupedItems() };
       if (orderType === 'dine_in') { orderBody.tableNumber = 0; orderBody.seatNumber = 0; }
@@ -2001,6 +2107,8 @@ export default function CashierOrder() {
       if (!orderRes.ok) { const d = await orderRes.json().catch(() => null); throw new Error(d?.error?.message || t('common.error')); }
       const orderData = await orderRes.json();
       applyInventoryUpdates(orderData?.inventoryUpdates || []);
+      targetOrderId = String(orderData._id);
+      }
 
       // Step 2: Checkout immediately
       let checkoutBody: Record<string, unknown>;
@@ -2020,7 +2128,7 @@ export default function CashierOrder() {
         checkoutBody.couponAmount = selectedCoupon.amount;
       }
 
-      const checkoutRes = await apiFetch(`/api/checkout/seat/${orderData._id}`, {
+      const checkoutRes = await apiFetch(`/api/checkout/seat/${targetOrderId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify(checkoutBody),
@@ -2036,6 +2144,11 @@ export default function CashierOrder() {
       setReceiptBundleDiscounts(matchedBundles.map(b => ({ name: b.offer.name, nameEn: b.offer.nameEn, discount: b.savings })));
       setShowPayment(false);
       setOrder([]);
+      if (editingOrderId) {
+        setEditingOrderId(null);
+        setEditOrderLabel('');
+        setSearchParams({}, { replace: true });
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : t('common.error'));
     } finally {
@@ -2182,7 +2295,30 @@ export default function CashierOrder() {
 
       {/* Right: Order Panel */}
       <div style={{ width: 320, flexShrink: 0, background: 'var(--bg-white)', borderLeft: '2px solid var(--border)', display: 'flex', flexDirection: 'column' }}>
-        <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)' }}>
+        {editOrderLoading ? (
+          <div style={{ padding: '10px 12px', fontSize: 12, color: 'var(--text-light)', borderBottom: '1px solid var(--border)' }}>
+            {t('cashier.editOrderLoading', '正在载入订单…')}
+          </div>
+        ) : null}
+        {editOrderLoadError ? (
+          <div style={{ padding: '10px 12px', fontSize: 12, color: '#C62828', borderBottom: '1px solid #ffcdd2', background: '#ffebee' }}>
+            <div style={{ marginBottom: 8 }}>{editOrderLoadError}</div>
+            <button type="button" className="btn btn-outline" style={{ fontSize: 11, padding: '4px 10px' }} onClick={exitEditMode}>
+              {t('cashier.editOrderExit', '退出')}
+            </button>
+          </div>
+        ) : null}
+        {editingOrderId && !editOrderLoading ? (
+          <div style={{ padding: '10px 12px', fontSize: 12, borderBottom: '1px solid #BBDEFB', background: '#E3F2FD', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontWeight: 600, color: '#1565C0' }}>
+              {t('cashier.editOrderBanner', '修改扫码订单 {{label}}', { label: editOrderLabel })}
+            </span>
+            <button type="button" className="btn btn-ghost" style={{ fontSize: 11, padding: '2px 8px', color: '#666' }} onClick={exitEditMode}>
+              {t('cashier.editOrderExit', '退出')}
+            </button>
+          </div>
+        ) : null}
+        <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)', opacity: editingOrderId ? 0.45 : 1, pointerEvents: editingOrderId ? 'none' : 'auto' }}>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
             <button
               type="button"
@@ -2678,10 +2814,12 @@ export default function CashierOrder() {
           <button
             className="btn btn-primary"
             onClick={() => void handlePrimaryAction()}
-            disabled={order.length === 0 || paying}
+            disabled={order.length === 0 || paying || editOrderLoading || !!editOrderLoadError}
             style={{ width: '100%', fontSize: 15, padding: '12px 0', letterSpacing: 1 }}
           >
-            {orderType === 'phone'
+            {editingOrderId
+              ? t('cashier.editOrderSaveCheckout', '保存并结账')
+              : orderType === 'phone'
               ? t('cashier.createPhoneOrder')
               : orderType === 'delivery'
                 ? t('cashier.placeOrderCheckout')

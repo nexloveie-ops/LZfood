@@ -3,7 +3,14 @@ import { useAuth } from '../context/AuthContext';
 import { useTranslation } from 'react-i18next';
 import { useState, useEffect, useCallback } from 'react';
 import { connectStoreSocket } from '../api/storeSocket';
-import { playDineInSound, playTakeoutSound, unlockAudio } from '../utils/orderSound';
+import {
+  playDeliverySound,
+  playNewOrderSound,
+  shouldPlayDeliveryPaidSound,
+  shouldPlayNewOrderSound,
+  unlockAudio,
+  type OrderSoundPayload,
+} from '../utils/orderSound';
 import { printHtmlReceipt } from '../utils/posPrint';
 import LanguageSwitcher from '../components/LanguageSwitcher';
 import { useRestaurantConfig } from '../hooks/useRestaurantConfig';
@@ -46,14 +53,35 @@ export default function CashierLayout() {
   useEffect(() => {
     const query = user?.storeId ? { storeId: user.storeId } : {};
     const socket = connectStoreSocket(query);
-    socket.on('order:new', (order: { type?: string }) => {
+    const deliveryStatusRef = new Map<string, string>();
+
+    const pushToast = (order: OrderSoundPayload) => {
       const text = `新订单：${order?.type || 'unknown'} · ${new Date().toLocaleTimeString()}`;
       const id = `${Date.now()}-${Math.random()}`;
       setToasts((prev) => [...prev, { id, text }]);
       setTimeout(() => setToasts((prev) => prev.filter((t2) => t2.id !== id)), 5000);
-      if (order?.type === 'takeout') playTakeoutSound();
-      else playDineInSound();
+    };
+
+    socket.on('order:new', (order: OrderSoundPayload) => {
+      pushToast(order);
+      if (shouldPlayNewOrderSound(order)) playNewOrderSound(order);
+      if (order.type === 'delivery' && order._id) {
+        deliveryStatusRef.set(String(order._id), String(order.status || 'pending'));
+      }
     });
+
+    socket.on('order:updated', (order: OrderSoundPayload) => {
+      if (order.type !== 'delivery' || !order._id) return;
+      const id = String(order._id);
+      const prev = deliveryStatusRef.get(id);
+      const st = String(order.status || '');
+      deliveryStatusRef.set(id, st);
+      if (shouldPlayDeliveryPaidSound(order, prev)) {
+        pushToast(order);
+        playDeliverySound();
+      }
+    });
+
     return () => {
       socket.disconnect();
     };

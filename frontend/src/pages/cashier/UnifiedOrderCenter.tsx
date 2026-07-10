@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { connectStoreSocket } from '../../api/storeSocket';
 import { useAuth } from '../../context/AuthContext';
 import { apiFetch } from '../../api/client';
+import { cashierMayEditQrOrder } from '../../utils/cashierQrOrderEdit';
 import { printBuiltReceipt, type BundleDiscountInfo } from '../../components/cashier/ReceiptPrint';
 import { type ReceiptOptionSnapshot, receiptOptionExtraEuro } from '../../utils/receiptOptionPrice';
 import { computeDineInUnsettledPayableEuro, computePartialDineInSettlementPreview, dineInHasUnsettledFoodLineQty } from '../../utils/orderPayableEuro';
@@ -204,25 +206,9 @@ function isPhonePlacementKitchenStepDone(o: OrderRow, printedIds: Record<string,
   return hasFood || !!printedIds[o._id];
 }
 
-/** 堂食 pending：未出厨房、未部分结账时可整单取消 */
-function dineInAllowCancelPending(o: OrderRow): boolean {
-  if (o.type !== 'dine_in' || o.status !== 'pending') return false;
-  for (const it of o.items || []) {
-    if (it.lineKind === 'delivery_fee' || it.refunded) continue;
-    if ((Number(it.kitchenPrintedQty) || 0) > 0) return false;
-    if ((Number(it.settledQty) || 0) > 0) return false;
-  }
-  return true;
-}
-
-/** pending 单：未付/未送厨房/司机未取走时可取消（与 DELETE /api/orders/:id 一致） */
-function pendingOrderAllowCancel(o: OrderRow): boolean {
-  if (o.status !== 'pending') return false;
-  if (o.type === 'dine_in') return dineInAllowCancelPending(o);
-  if (isOrderKitchenFullyPrinted(o)) return false;
-  if (o.type === 'delivery' && o.deliveryStage === 'picked_up_by_driver') return false;
-  if (o.paymentStatus === 'paid' || o.paymentStatus === 'partial') return false;
-  return true;
+function orderNeedsStaffCancelConfirm(o: OrderRow): boolean {
+  if (o.status !== 'pending') return true;
+  return o.paymentStatus === 'paid' || o.paymentStatus === 'partial';
 }
 
 /** 后结堂食：仍有未打厨房小票的菜品份数（顾客加菜等）；含 checked_out 以便订单中心在已结账仍待出厨房时继续展示 */
@@ -346,6 +332,8 @@ function isCustomerMemberWalletPrepaid(o: OrderRow): boolean {
 export default function UnifiedOrderCenter() {
   const { t, i18n } = useTranslation();
   const isEn = i18n.language?.startsWith('en');
+  const navigate = useNavigate();
+  const { storeSlug } = useParams<{ storeSlug: string }>();
   const { token, user, hasFeature } = useAuth();
   const canDelivery = hasFeature('cashier.delivery.page');
   const canMemberWallet = hasFeature('cashier.member.wallet');
@@ -355,6 +343,18 @@ export default function UnifiedOrderCenter() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [config, setConfig] = useState<RestaurantConfig>({});
   const dineInPayAfter = config.dine_in_workflow_mode === 'pay_after';
+  const dineInWorkflowMode = dineInPayAfter ? 'pay_after' as const : 'pay_first' as const;
+  const canEditInOrderTab = useCallback(
+    (o: OrderRow) => cashierMayEditQrOrder(o, dineInWorkflowMode),
+    [dineInWorkflowMode],
+  );
+  const openOrderForEdit = useCallback(
+    (order: OrderRow) => {
+      if (!canEditInOrderTab(order) || !storeSlug) return;
+      navigate(`/${storeSlug}/cashier/order?editOrderId=${order._id}`);
+    },
+    [canEditInOrderTab, navigate, storeSlug],
+  );
   const [loadHint, setLoadHint] = useState('');
   const [queueMode, setQueueMode] = useState<'unified' | 'fallback'>('unified');
   const [checkoutModalOrder, setCheckoutModalOrder] = useState<OrderRow | null>(null);
@@ -748,13 +748,17 @@ export default function UnifiedOrderCenter() {
     setTablePartialQtyByLineKey({});
   };
 
-  const cancelPending = useCallback(
-    async (orderId: string, onAfterSuccess?: () => void) => {
-      const msg = isEn ? 'Cancel this order?' : '确认取消该订单？';
+  const cancelOrder = useCallback(
+    async (order: OrderRow, onAfterSuccess?: () => void) => {
+      const msg = orderNeedsStaffCancelConfirm(order)
+        ? (isEn
+          ? 'Cancel and delete this order? Any payment must be refunded manually at the counter.'
+          : '确认取消并删除该订单？已收款需收银线下手动退款。')
+        : (isEn ? 'Cancel this order?' : '确认取消该订单？');
       if (!confirm(msg)) return;
-      setBusyId(orderId);
+      setBusyId(order._id);
       try {
-        const res = await apiFetch(`/api/orders/${orderId}`, {
+        const res = await apiFetch(`/api/orders/${order._id}`, {
           method: 'DELETE',
           headers: { Authorization: `Bearer ${token}` },
         });
@@ -1474,7 +1478,13 @@ export default function UnifiedOrderCenter() {
     cancel: isEn ? 'Cancel' : '取消',
     closeModal: isEn ? 'Close' : '关闭',
     cancelOrder: isEn ? 'Cancel order' : '取消订单',
-    dineInCancelHint: isEn ? 'Only before kitchen print & partial pay' : '仅未打厨房单且未部分结账时可整单取消',
+    loadToOrderTab: isEn ? 'Edit in order tab' : '载入点单修改',
+    loadToOrderTabHint: isEn
+      ? 'Pending, unpaid, not yet sent to kitchen'
+      : '仅 pending、未付款、未送厨房',
+    dineInCancelHint: isEn
+      ? 'Deletes order and checkout records; refund manually if already paid'
+      : '删除订单及结账记录；已收款请线下手动退款',
     markComplete: isEn ? 'Mark Complete' : '标记完成',
     printAndKitchenDone: isEn ? 'Print ticket & prep' : '打印小票并制作',
     printAndComplete: isEn ? 'Print & Complete' : '打印并完成',
@@ -1854,6 +1864,17 @@ export default function UnifiedOrderCenter() {
                                     {L.seatCheckout}
                                   </button>
                                 ) : null}
+                                {canEditInOrderTab(o) ? (
+                                  <button
+                                    className="btn btn-outline"
+                                    style={{ fontSize: 11, padding: '4px 8px', lineHeight: 1.2 }}
+                                    disabled={busyId === o._id}
+                                    title={L.loadToOrderTabHint}
+                                    onClick={() => openOrderForEdit(o)}
+                                  >
+                                    {L.loadToOrderTab}
+                                  </button>
+                                ) : null}
                                 {o.status === 'paid_online' ? (
                                   <button
                                     className="btn btn-primary"
@@ -1865,26 +1886,24 @@ export default function UnifiedOrderCenter() {
                                   </button>
                                 ) : null}
                               </div>
-                              {o.status === 'pending' && dineInAllowCancelPending(o) ? (
-                                <button
-                                  type="button"
-                                  className="btn btn-outline"
-                                  style={{
-                                    width: '100%',
-                                    fontSize: 11,
-                                    padding: '6px 8px',
-                                    lineHeight: 1.2,
-                                    borderColor: 'var(--red-primary)',
-                                    color: 'var(--red-primary)',
-                                    fontWeight: 600,
-                                  }}
-                                  disabled={busyId === o._id}
-                                  title={L.dineInCancelHint}
-                                  onClick={() => void cancelPending(o._id)}
-                                >
-                                  {L.cancelOrder}
-                                </button>
-                              ) : null}
+                              <button
+                                type="button"
+                                className="btn btn-outline"
+                                style={{
+                                  width: '100%',
+                                  fontSize: 11,
+                                  padding: '6px 8px',
+                                  lineHeight: 1.2,
+                                  borderColor: 'var(--red-primary)',
+                                  color: 'var(--red-primary)',
+                                  fontWeight: 600,
+                                }}
+                                disabled={busyId === o._id}
+                                title={L.dineInCancelHint}
+                                onClick={() => void cancelOrder(o)}
+                              >
+                                {L.cancelOrder}
+                              </button>
                             </div>
                           </div>
                         )})}
@@ -2224,16 +2243,14 @@ export default function UnifiedOrderCenter() {
                                   ? L.printAndCook
                                   : L.sendToKitchen}
                             </button>
-                            {pendingOrderAllowCancel(o) ? (
-                              <button
-                                className="btn btn-ghost"
-                                style={{ fontSize: 12, color: 'var(--red-primary)', minWidth: 96, alignSelf: 'stretch' }}
-                                disabled={busyId === o._id}
-                                onClick={() => void cancelPending(o._id)}
-                              >
-                                {L.cancel}
-                              </button>
-                            ) : null}
+                            <button
+                              className="btn btn-ghost"
+                              style={{ fontSize: 12, color: 'var(--red-primary)', minWidth: 96, alignSelf: 'stretch' }}
+                              disabled={busyId === o._id}
+                              onClick={() => void cancelOrder(o)}
+                            >
+                              {L.cancel}
+                            </button>
                           </div>
                           <div style={{ fontSize: 11, color: '#666', marginTop: 6 }}>{L.deliveryKitchenBeforeDriver}</div>
                         </div>
@@ -2277,14 +2294,28 @@ export default function UnifiedOrderCenter() {
                             <div style={{ fontSize: 11, color: '#1565C0', marginBottom: 6, fontWeight: 600 }}>{L.fulfillmentLine}</div>
                             {!isTakeoutKitchenReleased(o) ? (
                               <>
-                                <button
-                                  className="btn btn-primary"
-                                  style={{ fontSize: 12, minWidth: 198 }}
-                                  disabled={busyId === o._id}
-                                  onClick={() => void handleCustomerTakeoutKitchen(o)}
-                                >
-                                  {busyId === o._id ? L.processing : L.sendToKitchen}
-                                </button>
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'stretch' }}>
+                                  <button
+                                    className="btn btn-primary"
+                                    style={{ fontSize: 12, minWidth: 120, flex: '1 1 auto' }}
+                                    disabled={busyId === o._id}
+                                    onClick={() => void handleCustomerTakeoutKitchen(o)}
+                                  >
+                                    {busyId === o._id ? L.processing : L.sendToKitchen}
+                                  </button>
+                                  {canEditInOrderTab(o) ? (
+                                    <button
+                                      type="button"
+                                      className="btn btn-outline"
+                                      style={{ fontSize: 12, minWidth: 120, flex: '1 1 auto' }}
+                                      disabled={busyId === o._id}
+                                      title={L.loadToOrderTabHint}
+                                      onClick={() => openOrderForEdit(o)}
+                                    >
+                                      {L.loadToOrderTab}
+                                    </button>
+                                  ) : null}
+                                </div>
                                 <div style={{ fontSize: 11, color: '#666', marginTop: 6 }}>{L.dualTrackIndependentHint}</div>
                               </>
                             ) : (
@@ -2311,11 +2342,9 @@ export default function UnifiedOrderCenter() {
                           }}
                         >
                           {o.status === 'pending' ? (
-                            <>
-                              <button className="btn btn-primary" style={{ fontSize: 12, minWidth: o.type === 'takeout' ? 96 : undefined }} disabled={busyId === o._id} onClick={() => openCheckoutModal(o)}>{L.checkout}</button>
-                              <button className="btn btn-ghost" style={{ fontSize: 12, color: 'var(--red-primary)', minWidth: o.type === 'takeout' ? 96 : undefined }} disabled={busyId === o._id} onClick={() => void cancelPending(o._id)}>{L.cancel}</button>
-                            </>
+                            <button className="btn btn-primary" style={{ fontSize: 12, minWidth: o.type === 'takeout' ? 96 : undefined }} disabled={busyId === o._id} onClick={() => openCheckoutModal(o)}>{L.checkout}</button>
                           ) : null}
+                          <button className="btn btn-ghost" style={{ fontSize: 12, color: 'var(--red-primary)', minWidth: o.type === 'takeout' ? 96 : undefined }} disabled={busyId === o._id} onClick={() => void cancelOrder(o)}>{L.cancel}</button>
                           {o.type === 'phone' && o.status === 'paid_online' && (o.phoneCardPaidAtPlacement || o.placementPrepaidMethod) ? (
                             <>
                               {!isPhonePlacementKitchenStepDone(o, placementCardKitchenPrintedIds) ? (
@@ -2824,6 +2853,20 @@ export default function UnifiedOrderCenter() {
               <span style={{ fontSize: 18, fontWeight: 800, color: 'var(--red-primary)' }}>€{counterPayable(detailModalOrder, dineInPayAfter).toFixed(2)}</span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap' }}>
+              {canEditInOrderTab(detailModalOrder) ? (
+                <button
+                  type="button"
+                  className="btn btn-outline"
+                  disabled={busyId === detailModalOrder._id}
+                  title={L.loadToOrderTabHint}
+                  onClick={() => {
+                    openOrderForEdit(detailModalOrder);
+                    setDetailModalOrder(null);
+                  }}
+                >
+                  {L.loadToOrderTab}
+                </button>
+              ) : null}
               {config.dine_in_workflow_mode === 'pay_after' &&
               detailModalOrder.type === 'dine_in' &&
               detailModalOrder.status === 'pending' &&
@@ -2859,24 +2902,20 @@ export default function UnifiedOrderCenter() {
                   {busyId === detailModalOrder._id ? L.processing : L.printAndKitchenDone}
                 </button>
               ) : null}
-              {(detailModalOrder.type === 'dine_in'
-                ? dineInAllowCancelPending(detailModalOrder)
-                : pendingOrderAllowCancel(detailModalOrder)) ? (
-                <button
-                  type="button"
-                  className="btn btn-outline"
-                  style={{
-                    borderColor: 'var(--red-primary)',
-                    color: 'var(--red-primary)',
-                    fontWeight: 600,
-                  }}
-                  disabled={busyId === detailModalOrder._id}
-                  title={L.dineInCancelHint}
-                  onClick={() => void cancelPending(detailModalOrder._id, () => setDetailModalOrder(null))}
-                >
-                  {L.cancelOrder}
-                </button>
-              ) : null}
+              <button
+                type="button"
+                className="btn btn-outline"
+                style={{
+                  borderColor: 'var(--red-primary)',
+                  color: 'var(--red-primary)',
+                  fontWeight: 600,
+                }}
+                disabled={busyId === detailModalOrder._id}
+                title={L.dineInCancelHint}
+                onClick={() => void cancelOrder(detailModalOrder, () => setDetailModalOrder(null))}
+              >
+                {L.cancelOrder}
+              </button>
               {canNotifyCustomerReady(detailModalOrder) ? (
                 <button
                   type="button"
