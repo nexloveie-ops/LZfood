@@ -266,17 +266,10 @@ export default function MenuView({ storeFrontEmbed = false }: { storeFrontEmbed?
   return (
     <div className="menu-page">
       <div
-        className={`menu-hero ${storeFrontEmbed ? 'menu-hero--embed' : 'menu-hero--standalone'}${compactHero ? ' menu-hero--compact' : ''}`}
-        style={{
-          height: heroHidden ? 0 : 'auto',
-          minHeight: heroHidden ? 0 : undefined,
-          padding: heroHidden ? 0 : undefined,
-          display: heroHidden ? 'none' : 'flex',
-          flexDirection: 'column',
-        }}
+        className={`menu-hero ${storeFrontEmbed ? 'menu-hero--embed' : 'menu-hero--standalone'}${compactHero ? ' menu-hero--compact' : ''}${heroHidden ? ' menu-hero--hidden' : ''}`}
+        aria-hidden={heroHidden}
       >
-        {!heroHidden ? (
-          <>
+        <div className="menu-hero__inner">
             <CustomerMenuToolbar />
             <div className="menu-hero-head">
               <div className="menu-store-block">
@@ -347,8 +340,7 @@ export default function MenuView({ storeFrontEmbed = false }: { storeFrontEmbed?
                 ) : null}
               </div>
             ) : null}
-          </>
-        ) : null}
+        </div>
       </div>
 
       <div className="menu-tabs-row">

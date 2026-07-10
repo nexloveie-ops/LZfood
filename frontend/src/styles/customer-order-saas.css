@@ -42,7 +42,55 @@
   position: relative;
   flex-shrink: 0;
   overflow: hidden;
-  transition: min-height 0.3s ease, padding 0.3s ease;
+  display: grid;
+  grid-template-rows: 1fr;
+  transition:
+    grid-template-rows 0.42s cubic-bezier(0.32, 0.72, 0, 1),
+    padding 0.42s cubic-bezier(0.32, 0.72, 0, 1),
+    border-color 0.35s ease;
+}
+
+.menu-hero--hidden {
+  grid-template-rows: 0fr;
+  pointer-events: none;
+}
+
+.menu-hero--embed.menu-hero--hidden {
+  padding-bottom: 0;
+  border-bottom-color: transparent;
+}
+
+.menu-hero--standalone.menu-hero--hidden {
+  padding-top: 0;
+  padding-bottom: 0;
+  border-bottom-color: transparent;
+}
+
+.menu-hero__inner {
+  overflow: hidden;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  transition:
+    opacity 0.34s cubic-bezier(0.4, 0, 0.2, 1),
+    transform 0.42s cubic-bezier(0.32, 0.72, 0, 1);
+  opacity: 1;
+  transform: translateY(0);
+  will-change: opacity, transform;
+}
+
+.menu-hero--hidden .menu-hero__inner {
+  opacity: 0;
+  transform: translateY(-10px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .menu-hero,
+  .menu-hero__inner,
+  .menu-tabs__actions {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
 }
 
 .menu-hero--embed {
@@ -177,6 +225,18 @@
   flex-shrink: 0;
   gap: 8px;
   padding: 0 10px 0 4px;
+  animation: menu-tabs-actions-in 0.38s cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+
+@keyframes menu-tabs-actions-in {
+  from {
+    opacity: 0;
+    transform: translateX(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
 }
 
 .menu-tabs-row {
