@@ -336,8 +336,24 @@ export default function OrderStatusPage() {
     }
   };
 
-  if (loading) return <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-light)' }}>{t('customer.loadingOrder')}</div>;
-  if (!order) return <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-light)' }}>{t('customer.orderNotFound')}</div>;
+  if (loading) {
+    return (
+      <div className="order-status-page">
+        <div className="order-status-scroll" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          {t('customer.loadingOrder')}
+        </div>
+      </div>
+    );
+  }
+  if (!order) {
+    return (
+      <div className="order-status-page">
+        <div className="order-status-scroll" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-light)' }}>
+          {t('customer.orderNotFound')}
+        </div>
+      </div>
+    );
+  }
 
   const isPending = order.status === 'pending';
   const maySelfCancel = customerMaySelfCancelOrder(order);
@@ -365,7 +381,8 @@ export default function OrderStatusPage() {
         : 'var(--green)';
 
   return (
-    <div style={{ padding: '12px 16px', paddingBottom: 24 }}>
+    <div className="order-status-page">
+      <div className="order-status-scroll">
       {/* Status header — compact row to leave room for line items + ads */}
       <div style={{
         background: 'var(--bg-white)', borderRadius: 10, padding: '10px 14px', marginBottom: 12,
@@ -617,6 +634,8 @@ export default function OrderStatusPage() {
           ))}
         </div>
       )}
+
+      </div>
 
       {/* Payment Modal */}
       {showPayment && order && (
