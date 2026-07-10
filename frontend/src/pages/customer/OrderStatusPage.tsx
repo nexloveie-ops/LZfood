@@ -34,6 +34,11 @@ interface Order {
   dineInExposedToStaff?: boolean;
   dineInStaffLockedAt?: string;
   dineInGuestLabel?: string;
+  stripePaymentIntentId?: string;
+  phoneCardPaidAtPlacement?: boolean;
+  placementPrepaidMethod?: string;
+  memberCreditUsed?: number;
+  paymentStatus?: string;
 }
 
 interface PostOrderSlide {
