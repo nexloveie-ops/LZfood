@@ -14,6 +14,7 @@ import { useRestaurantConfig } from '../../hooks/useRestaurantConfig';
 import { useBusinessStatus } from '../../hooks/useBusinessStatus';
 import BannerPlatformCredit from '../../components/customer/BannerPlatformCredit';
 import { buildPickupSlotGroups, flattenPickupSlotGroups } from '../../utils/pickupSlots';
+import { isDineInCustomerFlow } from '../../utils/qrCode';
 
 export default function CartPage() {
   const { items, increaseQuantity, decreaseQuantity, removeItem, clearCart, totalAmount, totalItems, getItemKey, editOrderId, setEditOrderId } = useCart();
@@ -64,6 +65,9 @@ export default function CartPage() {
     const p = new URLSearchParams(searchParams);
     p.delete('return');
     const tail = p.toString() ? `?${p.toString()}` : '';
+    if (isDineInCustomerFlow(searchParams)) {
+      return `/${storeSlug ?? ''}/customer/menu${tail}`;
+    }
     return searchParams.get('return') === 'store'
       ? `/${storeSlug ?? ''}${tail}`
       : `/${storeSlug ?? ''}/customer/menu${tail}`;
@@ -197,13 +201,7 @@ export default function CartPage() {
     [pickupSlotOptions],
   );
 
-  const isDineInCart =
-    orderType !== 'takeout' &&
-    orderType !== 'delivery' &&
-    table != null &&
-    seat != null &&
-    !Number.isNaN(Number(table)) &&
-    !Number.isNaN(Number(seat));
+  const isDineInCart = isDineInCustomerFlow(searchParams);
   const showDineInGuestLabel =
     isDineInCart && !editOrderId && config.dine_in_workflow_mode === 'pay_after';
   const takeoutContactReady = pickupCustomerPhone.trim().length > 0;
@@ -247,7 +245,14 @@ export default function CartPage() {
       } else {
         // Create new order
         const body: Record<string, unknown> = { items: itemsPayload };
-        if (orderType === 'takeout') {
+        if (isDineInCart) {
+          body.type = 'dine_in';
+          body.tableNumber = Number(table);
+          body.seatNumber = Number(seat);
+          if (config.dine_in_workflow_mode === 'pay_after') {
+            body.dineInGuestLabel = dineInGuestLabel.trim().slice(0, 40);
+          }
+        } else if (orderType === 'takeout') {
           body.type = 'takeout';
           body.customerPhone = pickupCustomerPhone.trim();
           const pickupName = pickupCustomerName.trim();
@@ -281,13 +286,6 @@ export default function CartPage() {
           body.postalCode = deliveryPostalCode.trim();
           if (deliveryDistanceKm != null) {
             body.deliveryDistanceKm = deliveryDistanceKm;
-          }
-        } else {
-          body.type = 'dine_in';
-          body.tableNumber = Number(table);
-          body.seatNumber = Number(seat);
-          if (config.dine_in_workflow_mode === 'pay_after') {
-            body.dineInGuestLabel = dineInGuestLabel.trim().slice(0, 40);
           }
         }
         // Include bundle discount info

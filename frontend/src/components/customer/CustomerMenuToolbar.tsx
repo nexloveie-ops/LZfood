@@ -7,6 +7,7 @@ import { useRestaurantConfig } from '../../hooks/useRestaurantConfig';
 import { useStoreSlug } from '../../context/StoreContext';
 import { useCustomerMenuBootstrap } from '../../context/CustomerMenuBootstrapContext';
 import { matchBundles, calcBundleTotal } from '../../utils/bundleMatcher';
+import { isDineInCustomerFlow } from '../../utils/qrCode';
 
 type Props = {
   /** full: logo + actions; actions: language + cart only (sticky fallback) */
@@ -54,7 +55,10 @@ export default function CustomerMenuToolbar({ variant = 'full' }: Props) {
 
   const goToCart = () => {
     const p = new URLSearchParams(qs);
-    p.set('return', 'store');
+    // 堂食桌码：返回应回菜单，不要 return=store（否则会跳到门户主页）
+    if (!isDineInCustomerFlow(p)) {
+      p.set('return', 'store');
+    }
     const tail = p.toString() ? `?${p.toString()}` : '';
     navigate(`/${storeSlug}/customer/cart${tail}`);
   };

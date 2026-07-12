@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   encodeQRParams,
   encodeTakeoutQRParams,
+  isDineInCustomerFlow,
   parseQRParams,
 } from './qrCode';
 
@@ -81,6 +82,20 @@ describe('qrCode utilities', () => {
       const encoded = encodeTakeoutQRParams();
       const parsed = parseQRParams(encoded);
       expect(parsed).toEqual({ type: 'takeout' });
+    });
+  });
+
+  describe('isDineInCustomerFlow', () => {
+    it('returns true for valid table/seat without type', () => {
+      expect(isDineInCustomerFlow('table=3&seat=1')).toBe(true);
+    });
+
+    it('returns false when type=takeout even with table/seat', () => {
+      expect(isDineInCustomerFlow('table=3&seat=1&type=takeout')).toBe(false);
+    });
+
+    it('returns false when type=delivery even with table/seat', () => {
+      expect(isDineInCustomerFlow('table=3&seat=1&type=delivery')).toBe(false);
     });
   });
 });

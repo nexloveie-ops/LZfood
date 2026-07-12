@@ -83,6 +83,8 @@ export default function StoreFrontPage() {
 
   const setMode = (type: 'delivery' | 'takeout') => {
     const next = new URLSearchParams(searchParams);
+    next.delete('table');
+    next.delete('seat');
     next.set('type', type);
     setSearchParams(next, { replace: false });
   };

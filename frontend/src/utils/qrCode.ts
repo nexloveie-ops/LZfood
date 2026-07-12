@@ -93,3 +93,25 @@ export function parseQRParams(searchParams: URLSearchParams | string): QRParams 
 
   return { type: 'invalid' };
 }
+
+/** True when URL represents a dine-in table/seat flow (not takeout/delivery). */
+export function isDineInCustomerFlow(searchParams: URLSearchParams | string): boolean {
+  const params =
+    typeof searchParams === 'string'
+      ? new URLSearchParams(searchParams)
+      : searchParams;
+  if (params.get('type') === 'takeout' || params.get('type') === 'delivery') {
+    return false;
+  }
+  const tableStr = params.get('table');
+  const seatStr = params.get('seat');
+  if (tableStr === null || seatStr === null) return false;
+  const tableNumber = Number(tableStr);
+  const seatNumber = Number(seatStr);
+  return (
+    Number.isInteger(tableNumber) &&
+    Number.isInteger(seatNumber) &&
+    tableNumber > 0 &&
+    seatNumber > 0
+  );
+}
