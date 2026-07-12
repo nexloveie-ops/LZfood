@@ -13,6 +13,7 @@ import { apiFetch } from '../../api/client';
 import { useRestaurantConfig } from '../../hooks/useRestaurantConfig';
 import { useBusinessStatus } from '../../hooks/useBusinessStatus';
 import BannerPlatformCredit from '../../components/customer/BannerPlatformCredit';
+import CustomerMenuToolbar from '../../components/customer/CustomerMenuToolbar';
 import { buildPickupSlotGroups, flattenPickupSlotGroups } from '../../utils/pickupSlots';
 import { isDineInCustomerFlow } from '../../utils/qrCode';
 
@@ -23,7 +24,7 @@ export default function CartPage() {
   const [searchParams] = useSearchParams();
   const { t, i18n } = useTranslation();
   const lang = i18n.language;
-  const { config } = useRestaurantConfig();
+  const { config, displayName, displayNameOther } = useRestaurantConfig();
   const { loading: statusLoading, deliveryEnabled } = useBusinessStatus();
   const canDelivery = deliveryEnabled !== false;
   const storePhone = (config.restaurant_phone || '').trim();
@@ -205,6 +206,23 @@ export default function CartPage() {
   const showDineInGuestLabel =
     isDineInCart && !editOrderId && config.dine_in_workflow_mode === 'pay_after';
   const takeoutContactReady = pickupCustomerPhone.trim().length > 0;
+  const heroTitle = displayName || storeSlug || '';
+  const heroSub = displayNameOther;
+
+  const cartHeader = (
+    <div className="menu-hero menu-hero--embed menu-hero--compact menu-hero--cart">
+      <div className="menu-hero__inner">
+        <CustomerMenuToolbar />
+        <div className="menu-hero-head">
+          <div className="menu-store-block">
+            <h1 className="menu-store-title">{heroTitle}</h1>
+            {heroSub ? <div className="menu-store-subtitle">{heroSub}</div> : null}
+          </div>
+          <BannerPlatformCredit variant="onLight" />
+        </div>
+      </div>
+    </div>
+  );
 
   const getPickupContactError = (): string => {
     if (!pickupCustomerPhone.trim()) return t('customer.pickupPhoneRequired');
@@ -346,8 +364,8 @@ export default function CartPage() {
   if (items.length === 0) {
     return (
       <div className="cart-page">
+        {cartHeader}
         <div className="cart-empty">
-          <BannerPlatformCredit variant="onLight" />
           <span style={{ fontSize: 48, opacity: 0.3 }}>🛒</span>
           <p style={{ color: 'var(--text-light)' }}>{t('customer.emptyCart')}</p>
           <button className="btn btn-primary" onClick={() => navigate(menuBasePath)}>
@@ -360,8 +378,8 @@ export default function CartPage() {
 
   return (
     <div className="cart-page">
+      {cartHeader}
       <div className="cart-scroll">
-        <BannerPlatformCredit variant="onLight" />
         <h2 className="cart-title">
           <button onClick={() => navigate(menuBasePath)} style={{
             background: 'none', border: 'none', cursor: 'pointer', fontSize: 18,

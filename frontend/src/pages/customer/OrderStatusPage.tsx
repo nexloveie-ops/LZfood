@@ -410,7 +410,10 @@ export default function OrderStatusPage() {
     isPending &&
     (dineInKitchenOrSettlementStarted(order) ||
       (config.dine_in_workflow_mode === 'pay_after' && !!order.dineInStaffLockedAt));
-  const hideBackToMenuForActiveDineIn = order.type === 'dine_in' && isPending;
+  const hideBackToMenu =
+    order.type === 'takeout' ||
+    order.type === 'delivery' ||
+    (order.type === 'dine_in' && isPending);
   const modifyOrderLabel = showDineInPrimaryAsAddDishes ? t('customer.addDishes') : t('customer.modifyOrder');
   const isPaidOnline = order.status === 'paid_online';
   /** 扫码送餐：Stripe 成功后订单为 checked_out 且已写 Checkout，顾客仍显示「已支付」 */
@@ -623,9 +626,13 @@ export default function OrderStatusPage() {
             >
               <span style={{ fontSize: 20 }}>👛</span> {t('customer.memberWalletPay')} · €{computeCustomerFacingPayableEuro(order, config.dine_in_workflow_mode === 'pay_after').toFixed(2)}
             </button>
-            {hideBackToMenuForActiveDineIn ? (
+            {hideBackToMenu ? (
               <div style={{ display: 'flex', gap: 10 }}>
-                <button className="btn btn-primary" style={{ flex: 1 }} onClick={handleModifyOrder}>
+                <button
+                  className="btn btn-primary"
+                  style={{ flex: maySelfCancel ? 1 : undefined, width: maySelfCancel ? undefined : '100%' }}
+                  onClick={handleModifyOrder}
+                >
                   {modifyOrderLabel}
                 </button>
                 {maySelfCancel ? (
@@ -673,7 +680,7 @@ export default function OrderStatusPage() {
             )}
           </>
         )}
-        {(isPaidOnline || isDeliveryPaidCheckout) && (
+        {(isPaidOnline || isDeliveryPaidCheckout) && order.type !== 'takeout' && order.type !== 'delivery' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             <button className="btn btn-outline" style={{ width: '100%' }} onClick={() => navigate(menuHref)}>
               {t('customer.backToMenu')}
@@ -685,9 +692,11 @@ export default function OrderStatusPage() {
             <p style={{ color: 'var(--text-light)', fontSize: 13, textAlign: 'center', width: '100%' }}>
               {t('customer.orderNotModifiable')}
             </p>
-            <button className="btn btn-outline" style={{ width: '100%' }} onClick={() => navigate(menuHref)}>
-              {t('customer.backToMenu')}
-            </button>
+            {order.type !== 'takeout' && order.type !== 'delivery' ? (
+              <button className="btn btn-outline" style={{ width: '100%' }} onClick={() => navigate(menuHref)}>
+                {t('customer.backToMenu')}
+              </button>
+            ) : null}
           </div>
         )}
       </div>
