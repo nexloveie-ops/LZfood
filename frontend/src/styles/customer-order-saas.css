@@ -35,7 +35,50 @@
   min-height: 0;
   min-width: 0;
   overflow: hidden;
+  position: relative;
   background: var(--co-bg, #f8fafc);
+}
+
+.menu-scroll-top-fab {
+  position: absolute;
+  left: 14px;
+  bottom: 14px;
+  z-index: 15;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 1px solid var(--co-border, #e2e8f0);
+  background: var(--co-surface, #fff);
+  color: var(--co-text, #0f172a);
+  box-shadow: 0 2px 12px rgba(15, 23, 42, 0.14);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.2s ease;
+  animation: menu-scroll-top-fab-in 0.22s ease both;
+}
+
+.menu-scroll-top-fab:active {
+  transform: scale(0.96);
+}
+
+.menu-scroll-top-fab__icon {
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+@keyframes menu-scroll-top-fab-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .menu-hero {
@@ -83,8 +126,10 @@
 @media (prefers-reduced-motion: reduce) {
   .menu-hero,
   .menu-hero__inner,
-  .menu-tabs__actions {
+  .menu-tabs__actions,
+  .menu-scroll-top-fab {
     transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
   }
 }
 

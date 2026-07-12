@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useParams, useSearchParams, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useCart } from '../../context/CartContext';
@@ -27,7 +27,7 @@ interface OrderItem {
 interface AppliedBundle { offerId?: string; name: string; nameEn?: string; discount: number; }
 interface Order {
   _id: string; type: string; tableNumber?: number; seatNumber?: number;
-  dailyOrderNumber?: number; status: string; items: OrderItem[];
+  dailyOrderNumber?: number; dineInOrderNumber?: string; status: string; items: OrderItem[];
   appliedBundles?: AppliedBundle[];
   deliveryFeeEuro?: number;
   pickupSlotLabel?: string;
@@ -79,6 +79,40 @@ function customerMaySelfCancelOrder(o: Order): boolean {
   const ps = String(o.paymentStatus || 'unpaid');
   if (ps === 'paid' || ps === 'partial') return false;
   return true;
+}
+
+function customerOrderTypeLabel(type: string, t: (key: string) => string): string {
+  switch (type) {
+    case 'dine_in':
+      return t('customer.orderTypeLabelDineIn');
+    case 'takeout':
+      return t('customer.orderTypeLabelTakeout');
+    case 'delivery':
+      return t('customer.orderTypeLabelDelivery');
+    default:
+      return type;
+  }
+}
+
+function customerOrderTypeBadgeStyle(type: string): { background: string; color: string } {
+  switch (type) {
+    case 'dine_in':
+      return { background: 'rgba(196, 30, 36, 0.12)', color: '#c41e24' };
+    case 'delivery':
+      return { background: 'rgba(29, 78, 216, 0.12)', color: '#1d4ed8' };
+    default:
+      return { background: 'rgba(196, 30, 36, 0.12)', color: '#c41e24' };
+  }
+}
+
+function formatCustomerOrderNumber(order: Order): string {
+  if (order.type === 'dine_in' && order.dineInOrderNumber?.trim()) {
+    return order.dineInOrderNumber.trim();
+  }
+  if (order.dailyOrderNumber != null) {
+    return `#${order.dailyOrderNumber}`;
+  }
+  return order._id.slice(-8).toUpperCase();
 }
 
 function PostOrderAdCarousel({ slides, lang }: { slides: PostOrderSlide[]; lang: string }) {
@@ -192,8 +226,13 @@ export default function OrderStatusPage() {
   const [showPayment, setShowPayment] = useState(false);
   const [showMemberWallet, setShowMemberWallet] = useState(false);
   const [postOrderAds, setPostOrderAds] = useState<PostOrderAdBanner[]>([]);
-  const qs = searchParams.toString();
-  const menuHref = storeSlug ? `/${storeSlug}/customer/menu${qs ? `?${qs}` : ''}` : '/';
+  const menuHref = useMemo(() => {
+    if (!storeSlug) return '/';
+    const p = new URLSearchParams(searchParams);
+    p.set('fromOrder', '1');
+    const q = p.toString();
+    return `/${storeSlug}/customer/menu${q ? `?${q}` : ''}`;
+  }, [storeSlug, searchParams]);
 
   const fetchOrder = useCallback(async () => {
     try {
@@ -336,6 +375,15 @@ export default function OrderStatusPage() {
     }
   };
 
+  const handleCancelOrder = async () => {
+    if (!order) return;
+    if (!confirm(t('customer.confirmCancel'))) return;
+    try {
+      const res = await apiFetch(`/api/orders/${order._id}`, { method: 'DELETE' });
+      if (res.ok) navigate(menuHref, { replace: true });
+    } catch { /* ignore */ }
+  };
+
   if (loading) {
     return (
       <div className="order-status-page">
@@ -362,23 +410,24 @@ export default function OrderStatusPage() {
     isPending &&
     (dineInKitchenOrSettlementStarted(order) ||
       (config.dine_in_workflow_mode === 'pay_after' && !!order.dineInStaffLockedAt));
+  const hideBackToMenuForActiveDineIn = order.type === 'dine_in' && isPending;
+  const modifyOrderLabel = showDineInPrimaryAsAddDishes ? t('customer.addDishes') : t('customer.modifyOrder');
   const isPaidOnline = order.status === 'paid_online';
   /** 扫码送餐：Stripe 成功后订单为 checked_out 且已写 Checkout，顾客仍显示「已支付」 */
   const isDeliveryPaidCheckout = order.type === 'delivery' && order.status === 'checked_out';
-  const statusLabel = order.status === 'pending'
-    ? t('customer.statusPending')
-    : isPaidOnline || isDeliveryPaidCheckout
-      ? t('customer.statusPaidOnline')
-      : order.status === 'checked_out'
-        ? t('customer.statusCheckedOut')
-        : t('customer.statusCompleted');
-  const statusColor = order.status === 'pending'
-    ? 'var(--gold-primary)'
-    : isPaidOnline || isDeliveryPaidCheckout
-      ? '#2E7D32'
-      : order.status === 'checked_out'
-        ? 'var(--blue)'
-        : 'var(--green)';
+  const orderTypeLabel = customerOrderTypeLabel(order.type, t);
+  const orderTypeBadgeStyle = customerOrderTypeBadgeStyle(order.type);
+  const orderNumberDisplay = formatCustomerOrderNumber(order);
+  const showOrderPlacedBanner = isPending;
+  const isCustomerPaid = isPaidOnline || isDeliveryPaidCheckout;
+  const showOrderPaidBanner = isCustomerPaid;
+  const orderPlacedHint =
+    order.type === 'dine_in' && config.dine_in_workflow_mode === 'pay_after'
+      ? t('customer.orderPlacedDineInPayAfterHint')
+      : t('customer.orderPlacedPendingPayHint');
+  const orderPaidHint = order.type === 'delivery'
+    ? t('customer.orderPaidDeliveryHint')
+    : t('customer.orderPaidKitchenHint');
 
   return (
     <div className="order-status-page">
@@ -392,7 +441,7 @@ export default function OrderStatusPage() {
         <div style={{ minWidth: 0, textAlign: 'left' }}>
           <div style={{ fontSize: 11, color: 'var(--text-light)', lineHeight: 1.2, marginBottom: 2 }}>{t('customer.orderNumber')}</div>
           <div style={{ fontSize: 15, fontWeight: 700, fontFamily: "'Noto Serif SC', serif", lineHeight: 1.2 }}>
-            {order.dailyOrderNumber ? `#${order.dailyOrderNumber}` : order._id.slice(-8).toUpperCase()}
+            {orderNumberDisplay}
           </div>
           {order.type === 'dine_in' && order.dineInGuestLabel?.trim() ? (
             <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>
@@ -402,10 +451,44 @@ export default function OrderStatusPage() {
         </div>
         <span style={{
           display: 'inline-block', padding: '3px 10px', borderRadius: 14,
-          background: statusColor + '20', color: statusColor, fontWeight: 600, fontSize: 12,
+          background: orderTypeBadgeStyle.background, color: orderTypeBadgeStyle.color, fontWeight: 600, fontSize: 12,
           flexShrink: 0,
-        }}>{statusLabel}</span>
+        }}>{orderTypeLabel}</span>
       </div>
+
+      {showOrderPlacedBanner ? (
+        <div style={{
+          marginBottom: 12,
+          padding: '12px 14px',
+          borderRadius: 10,
+          background: '#E8F5E9',
+          border: '1px solid #A5D6A7',
+          fontSize: 13,
+          lineHeight: 1.55,
+          color: '#1B5E20',
+          textAlign: 'center',
+        }}>
+          <div style={{ fontWeight: 700, marginBottom: 6, fontSize: 14 }}>✅ {t('customer.orderPlacedSuccessTitle')}</div>
+          <p style={{ margin: 0 }}>{orderPlacedHint}</p>
+        </div>
+      ) : null}
+
+      {showOrderPaidBanner ? (
+        <div style={{
+          marginBottom: 12,
+          padding: '12px 14px',
+          borderRadius: 10,
+          background: '#E8F5E9',
+          border: '1px solid #A5D6A7',
+          fontSize: 13,
+          lineHeight: 1.55,
+          color: '#1B5E20',
+          textAlign: 'center',
+        }}>
+          <div style={{ fontWeight: 700, marginBottom: 6, fontSize: 14 }}>✅ {t('customer.orderPaidSuccessTitle')}</div>
+          <p style={{ margin: 0 }}>{orderPaidHint}</p>
+        </div>
+      ) : null}
 
       {order.type === 'takeout' && order.pickupSlotLabel?.trim() ? (
         <div style={{
@@ -417,7 +500,7 @@ export default function OrderStatusPage() {
           fontSize: 13,
           color: '#1565c0',
         }}>
-          {lang === 'en-US' ? 'Pickup (approx.)' : '预约取餐'}：<strong>{order.pickupSlotLabel.trim()}</strong>
+          {t('customer.orderPickupSlotLabel')}：<strong>{order.pickupSlotLabel.trim()}</strong>
         </div>
       ) : null}
 
@@ -540,38 +623,58 @@ export default function OrderStatusPage() {
             >
               <span style={{ fontSize: 20 }}>👛</span> {t('customer.memberWalletPay')} · €{computeCustomerFacingPayableEuro(order, config.dine_in_workflow_mode === 'pay_after').toFixed(2)}
             </button>
-            <div style={{ display: 'flex', gap: 10 }}>
-              <button className="btn btn-primary" style={{ flex: 1 }} onClick={handleModifyOrder}>
-                {showDineInPrimaryAsAddDishes ? t('customer.addDishes') : t('customer.modifyOrder')}
-              </button>
-              <button className="btn btn-outline" style={{ flex: 1 }} onClick={() => navigate(menuHref)}>
-                {t('customer.backToMenu')}
-              </button>
-            </div>
-            {maySelfCancel && (
-            <button
-              onClick={async () => {
-                if (!confirm(t('customer.confirmCancel'))) return;
-                try {
-                  const res = await apiFetch(`/api/orders/${order._id}`, { method: 'DELETE' });
-                  if (res.ok) navigate(menuHref, { replace: true });
-                } catch { /* ignore */ }
-              }}
-              style={{
-                width: '100%', padding: '10px 0', fontSize: 13, fontWeight: 600,
-                background: 'none', border: '1px dashed #F44336', borderRadius: 10,
-                color: '#F44336', cursor: 'pointer',
-              }}>
-              ✕ {t('customer.cancelOrder')}
-            </button>
+            {hideBackToMenuForActiveDineIn ? (
+              <div style={{ display: 'flex', gap: 10 }}>
+                <button className="btn btn-primary" style={{ flex: 1 }} onClick={handleModifyOrder}>
+                  {modifyOrderLabel}
+                </button>
+                {maySelfCancel ? (
+                  <button
+                    onClick={handleCancelOrder}
+                    style={{
+                      flex: 1, padding: '10px 0', fontSize: 13, fontWeight: 600,
+                      background: 'none', border: '1px dashed #F44336', borderRadius: 10,
+                      color: '#F44336', cursor: 'pointer',
+                    }}
+                  >
+                    ✕ {t('customer.cancelOrder')}
+                  </button>
+                ) : null}
+              </div>
+            ) : (
+              <>
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <button className="btn btn-primary" style={{ flex: 1 }} onClick={handleModifyOrder}>
+                    {modifyOrderLabel}
+                  </button>
+                  {maySelfCancel ? (
+                    <button
+                      onClick={handleCancelOrder}
+                      style={{
+                        flex: 1, padding: '10px 0', fontSize: 13, fontWeight: 600,
+                        background: 'none', border: '1px dashed #F44336', borderRadius: 10,
+                        color: '#F44336', cursor: 'pointer',
+                      }}
+                    >
+                      ✕ {t('customer.cancelOrder')}
+                    </button>
+                  ) : (
+                    <button className="btn btn-outline" style={{ flex: 1 }} onClick={() => navigate(menuHref)}>
+                      {t('customer.backToMenu')}
+                    </button>
+                  )}
+                </div>
+                {maySelfCancel ? (
+                  <button className="btn btn-outline" style={{ width: '100%' }} onClick={() => navigate(menuHref)}>
+                    {t('customer.backToMenu')}
+                  </button>
+                ) : null}
+              </>
             )}
           </>
         )}
         {(isPaidOnline || isDeliveryPaidCheckout) && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            <div style={{ padding: '8px 12px', background: '#E8F5E9', border: '1px solid #81C784', borderRadius: 8, textAlign: 'center', fontSize: 13, color: '#2E7D32', fontWeight: 600 }}>
-              ✅ {t('customer.paymentSuccess')}
-            </div>
             <button className="btn btn-outline" style={{ width: '100%' }} onClick={() => navigate(menuHref)}>
               {t('customer.backToMenu')}
             </button>

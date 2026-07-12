@@ -1565,6 +1565,13 @@ export default function UnifiedOrderCenter() {
     tableCheckoutThisPayment: isEn ? 'This payment' : '本次应付',
   } as const;
 
+  const takeoutCancelButtonStyle = {
+    fontSize: 12,
+    color: 'var(--red-primary)',
+    borderColor: 'var(--red-primary)',
+    fontWeight: 600,
+  } as const;
+
   const deliverySourceLabel = (source?: OrderRow['deliverySource']) => {
     if (source === 'phone') return isEn ? 'Phone' : '电话';
     if (source === 'qr') return 'QR';
@@ -1856,41 +1863,40 @@ export default function UnifiedOrderCenter() {
                             ) : null}
                             <div
                               onClick={(e) => e.stopPropagation()}
-                              style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 'auto', width: '100%' }}
+                              style={{ display: 'flex', flexWrap: 'wrap', gap: 5, alignItems: 'stretch', marginTop: 'auto', width: '100%' }}
                             >
-                              <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
-                                {o.status === 'pending' ? (
-                                  <button className="btn btn-outline" style={{ fontSize: 11, padding: '4px 8px', lineHeight: 1.2 }} disabled={busyId === o._id} onClick={() => openCheckoutModal(o)}>
-                                    {L.seatCheckout}
-                                  </button>
-                                ) : null}
-                                {canEditInOrderTab(o) ? (
-                                  <button
-                                    className="btn btn-outline"
-                                    style={{ fontSize: 11, padding: '4px 8px', lineHeight: 1.2 }}
-                                    disabled={busyId === o._id}
-                                    title={L.loadToOrderTabHint}
-                                    onClick={() => openOrderForEdit(o)}
-                                  >
-                                    {L.loadToOrderTab}
-                                  </button>
-                                ) : null}
-                                {o.status === 'paid_online' ? (
-                                  <button
-                                    className="btn btn-primary"
-                                    style={{ fontSize: 11, padding: '4px 8px', lineHeight: 1.2 }}
-                                    disabled={busyId === o._id}
-                                    onClick={() => void completeDineInOnlinePaid(o)}
-                                  >
-                                    {busyId === o._id ? L.processing : L.printAndKitchenDone}
-                                  </button>
-                                ) : null}
-                              </div>
+                              {o.status === 'pending' ? (
+                                <button className="btn btn-outline" style={{ fontSize: 11, padding: '4px 8px', lineHeight: 1.2, flex: '1 1 auto' }} disabled={busyId === o._id} onClick={() => openCheckoutModal(o)}>
+                                  {L.seatCheckout}
+                                </button>
+                              ) : null}
+                              {canEditInOrderTab(o) ? (
+                                <button
+                                  className="btn btn-outline"
+                                  style={{ fontSize: 11, padding: '4px 8px', lineHeight: 1.2, flex: '1 1 auto' }}
+                                  disabled={busyId === o._id}
+                                  title={L.loadToOrderTabHint}
+                                  onClick={() => openOrderForEdit(o)}
+                                >
+                                  {L.loadToOrderTab}
+                                </button>
+                              ) : null}
+                              {o.status === 'paid_online' ? (
+                                <button
+                                  className="btn btn-primary"
+                                  style={{ fontSize: 11, padding: '6px 8px', lineHeight: 1.2, flex: 1, minWidth: 0 }}
+                                  disabled={busyId === o._id}
+                                  onClick={() => void completeDineInOnlinePaid(o)}
+                                >
+                                  {busyId === o._id ? L.processing : L.printAndKitchenDone}
+                                </button>
+                              ) : null}
                               <button
                                 type="button"
                                 className="btn btn-outline"
                                 style={{
-                                  width: '100%',
+                                  flex: 1,
+                                  minWidth: 0,
                                   fontSize: 11,
                                   padding: '6px 8px',
                                   lineHeight: 1.2,
@@ -2344,7 +2350,20 @@ export default function UnifiedOrderCenter() {
                           {o.status === 'pending' ? (
                             <button className="btn btn-primary" style={{ fontSize: 12, minWidth: o.type === 'takeout' ? 96 : undefined }} disabled={busyId === o._id} onClick={() => openCheckoutModal(o)}>{L.checkout}</button>
                           ) : null}
-                          <button className="btn btn-ghost" style={{ fontSize: 12, color: 'var(--red-primary)', minWidth: o.type === 'takeout' ? 96 : undefined }} disabled={busyId === o._id} onClick={() => void cancelOrder(o)}>{L.cancel}</button>
+                          {!(o.type === 'takeout' && (o.status === 'paid_online' || o.status === 'checked_out')) ? (
+                            <button
+                              className={o.type === 'takeout' ? 'btn btn-outline' : 'btn btn-ghost'}
+                              style={
+                                o.type === 'takeout'
+                                  ? { ...takeoutCancelButtonStyle, minWidth: 96 }
+                                  : { fontSize: 12, color: 'var(--red-primary)' }
+                              }
+                              disabled={busyId === o._id}
+                              onClick={() => void cancelOrder(o)}
+                            >
+                              {L.cancel}
+                            </button>
+                          ) : null}
                           {o.type === 'phone' && o.status === 'paid_online' && (o.phoneCardPaidAtPlacement || o.placementPrepaidMethod) ? (
                             <>
                               {!isPhonePlacementKitchenStepDone(o, placementCardKitchenPrintedIds) ? (
@@ -2372,11 +2391,11 @@ export default function UnifiedOrderCenter() {
                             </>
                           ) : null}
                           {o.type === 'takeout' && o.status === 'checked_out' ? (
-                            <>
+                            <div style={{ display: 'flex', gap: 6, width: '100%', alignItems: 'stretch' }}>
                               {!isTakeoutCheckedOutKitchenStepDone(o, takeoutKitchenTicketPrintedIds) ? (
                                 <button
                                   className="btn btn-outline"
-                                  style={{ fontSize: 12, minWidth: 198 }}
+                                  style={{ flex: 1, fontSize: 12, minWidth: 0 }}
                                   disabled={busyId === o._id}
                                   onClick={() => {
                                     void printOrderTicket(o);
@@ -2388,21 +2407,22 @@ export default function UnifiedOrderCenter() {
                               ) : (
                                 <button
                                   className="btn btn-primary"
-                                  style={{ fontSize: 12, minWidth: 198 }}
+                                  style={{ flex: 1, fontSize: 12, minWidth: 0 }}
                                   disabled={busyId === o._id}
                                   onClick={() => void completeTakeout(o._id)}
                                 >
                                   {busyId === o._id ? L.processing : L.markComplete}
                                 </button>
                               )}
-                            </>
+                              <button className="btn btn-outline" style={{ flex: 1, minWidth: 0, ...takeoutCancelButtonStyle }} disabled={busyId === o._id} onClick={() => void cancelOrder(o)}>{L.cancel}</button>
+                            </div>
                           ) : null}
                           {o.type === 'takeout' && o.status === 'paid_online' ? (
-                            <>
+                            <div style={{ display: 'flex', gap: 6, width: '100%', alignItems: 'stretch' }}>
                               {!isTakeoutKitchenPrintDone(o, takeoutKitchenTicketPrintedIds) ? (
                                 <button
                                   className="btn btn-outline"
-                                  style={{ fontSize: 12, minWidth: 198 }}
+                                  style={{ flex: 1, fontSize: 12, minWidth: 0 }}
                                   disabled={busyId === o._id}
                                   onClick={() => {
                                     void printOrderTicket(o);
@@ -2414,14 +2434,15 @@ export default function UnifiedOrderCenter() {
                               ) : (
                                 <button
                                   className="btn btn-primary"
-                                  style={{ fontSize: 12, minWidth: 198 }}
+                                  style={{ flex: 1, fontSize: 12, minWidth: 0 }}
                                   disabled={busyId === o._id}
                                   onClick={() => void completeTakeoutOnlinePaid(o)}
                                 >
                                   {busyId === o._id ? L.processing : L.markComplete}
                                 </button>
                               )}
-                            </>
+                              <button className="btn btn-outline" style={{ flex: 1, minWidth: 0, ...takeoutCancelButtonStyle }} disabled={busyId === o._id} onClick={() => void cancelOrder(o)}>{L.cancel}</button>
+                            </div>
                           ) : null}
                         </div>
                         {o.type === 'delivery' ? (

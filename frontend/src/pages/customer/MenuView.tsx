@@ -16,6 +16,7 @@ import {
   emptyBomSnapshot,
 } from '../../utils/bomAvailability';
 import { isCustomerMenuItemSoldOut } from '../../utils/menuItemAvailability';
+import { isDineInCustomerFlow } from '../../utils/qrCode';
 import '../../styles/customer-order-saas.css';
 
 interface Category { _id: string; sortOrder: number; translations: { locale: string; name: string }[]; }
@@ -55,6 +56,16 @@ export default function MenuView({ storeFrontEmbed = false }: { storeFrontEmbed?
   const table = searchParams.get('table');
   const seat = searchParams.get('seat');
   const qs = searchParams.toString();
+  const skipActiveOrderRedirectRef = useRef(searchParams.get('fromOrder') === '1');
+
+  useEffect(() => {
+    if (searchParams.get('fromOrder') !== '1') return;
+    skipActiveOrderRedirectRef.current = true;
+    const p = new URLSearchParams(searchParams);
+    p.delete('fromOrder');
+    const next = p.toString();
+    if (next !== qs) navigate({ search: next }, { replace: true });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps -- only honor fromOrder on initial menu entry
 
   useEffect(() => {
     if (statusLoading) return;
@@ -67,8 +78,9 @@ export default function MenuView({ storeFrontEmbed = false }: { storeFrontEmbed?
 
   // On mount: check if there's an active order for this table/seat
   // Skip if we're in edit mode (user came back from modifying an order)
+  // or if user explicitly returned from order status (fromOrder=1)
   useEffect(() => {
-    if (!table || !seat || editOrderId) return;
+    if (!table || !seat || editOrderId || skipActiveOrderRedirectRef.current) return;
     apiFetch(`/api/orders/dine-in/active?table=${table}&seat=${seat}`)
       .then(r => r.ok ? r.json() : [])
       .then((orders: { _id: string }[]) => {
@@ -170,11 +182,18 @@ export default function MenuView({ storeFrontEmbed = false }: { storeFrontEmbed?
     }
   }, []);
 
-  const [heroHidden, setHeroHidden] = useState(() => !!storeFrontEmbed);
+  const initialHeroHidden =
+    storeFrontEmbed &&
+    !isDineInCustomerFlow(searchParams) &&
+    searchParams.get('type') !== 'takeout' &&
+    searchParams.get('type') !== 'delivery';
+
+  const [heroHidden, setHeroHidden] = useState(initialHeroHidden);
+  const [showScrollTopFab, setShowScrollTopFab] = useState(false);
   const heroRef = useRef<HTMLDivElement>(null);
   const lastScrollY = useRef(0);
-  const heroHiddenRef = useRef(!!storeFrontEmbed);
-  const prevHeroHiddenRef = useRef(!!storeFrontEmbed);
+  const heroHiddenRef = useRef(initialHeroHidden);
+  const prevHeroHiddenRef = useRef(initialHeroHidden);
   const lastHeroHeightRef = useRef(0);
   const heroTransitionLockUntil = useRef(0);
   const scrollRafRef = useRef<number | null>(null);
@@ -242,20 +261,28 @@ export default function MenuView({ storeFrontEmbed = false }: { storeFrontEmbed?
       if (nearBottom) {
         if (!heroHiddenRef.current) setHeroHiddenState(true);
         lastScrollY.current = y;
+        setShowScrollTopFab(y > 100);
         return;
       }
 
+      setShowScrollTopFab(y > 100);
+
+      // 仅滑到列表最顶部时展开 header；中间上滑不再弹出
       if (y <= 16) {
         if (heroHiddenRef.current) setHeroHiddenState(false);
       } else if (y > 48 && dy > 6) {
         if (!heroHiddenRef.current) setHeroHiddenState(true);
-      } else if (dy < -10) {
-        if (heroHiddenRef.current) setHeroHiddenState(false);
       }
 
       lastScrollY.current = y;
     });
   }, [setHeroHiddenState]);
+
+  const scrollToTop = useCallback(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    el.scrollTo({ top: 0, behavior: 'smooth' });
+  }, []);
 
   const cartBomLines = useMemo(
     () => cartItems.map((i) => ({
@@ -481,6 +508,18 @@ export default function MenuView({ storeFrontEmbed = false }: { storeFrontEmbed?
           onClose={() => setSelectedOffer(null)}
         />
       )}
+
+      {showScrollTopFab ? (
+        <button
+          type="button"
+          className="menu-scroll-top-fab"
+          onClick={scrollToTop}
+          aria-label={t('customer.scrollToTop')}
+          title={t('customer.scrollToTop')}
+        >
+          <span className="menu-scroll-top-fab__icon" aria-hidden>↑</span>
+        </button>
+      ) : null}
     </div>
   );
 }
