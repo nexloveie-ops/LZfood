@@ -11,7 +11,7 @@ import { matchBundles, calcBundleTotal } from '../../utils/bundleMatcher';
 import { isDineInCustomerFlow } from '../../utils/qrCode';
 
 type Props = {
-  /** full: logo + mode/lang/cart; actions: sticky fallback when hero hidden (cart + dine-in seat only) */
+  /** full: logo + mode/lang/cart + dine-in seat; actions: sticky fallback when hero hidden (cart only) */
   variant?: 'full' | 'actions';
 };
 
@@ -75,6 +75,7 @@ export default function CustomerMenuToolbar({ variant = 'full' }: Props) {
   };
 
   const renderLeftMeta = () => {
+    if (variant !== 'full') return null;
     if (dineInTableSeat) {
       return (
         <span className="menu-hero-toolbar__dine-in-seat" aria-label={t('customer.dineInTableSeatBadge', dineInTableSeat)}>
@@ -124,7 +125,7 @@ export default function CustomerMenuToolbar({ variant = 'full' }: Props) {
     navigate(`/${storeSlug}/customer/cart${tail}`);
   };
 
-  if (variant === 'actions' && totalItems === 0 && !dineInTableSeat) {
+  if (variant === 'actions' && totalItems === 0) {
     return null;
   }
 
