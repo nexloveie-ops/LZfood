@@ -2276,7 +2276,7 @@ export default function UnifiedOrderCenter() {
                             </button>
                             <button
                               className="btn btn-outline"
-                              style={{ flex: 1, fontSize: 12, minWidth: 0, ...takeoutCancelButtonStyle }}
+                              style={{ flex: 1, minWidth: 0, ...takeoutCancelButtonStyle }}
                               disabled={busyId === o._id}
                               onClick={() => void cancelOrder(o)}
                             >
@@ -2420,7 +2420,7 @@ export default function UnifiedOrderCenter() {
                               </button>
                               <button
                                 className="btn btn-outline"
-                                style={{ flex: 1, fontSize: 12, minWidth: 0, ...takeoutCancelButtonStyle }}
+                                style={{ flex: 1, minWidth: 0, ...takeoutCancelButtonStyle }}
                                 disabled={busyId === o._id}
                                 onClick={() => void cancelOrder(o)}
                               >
@@ -2454,7 +2454,7 @@ export default function UnifiedOrderCenter() {
                               )}
                               <button
                                 className="btn btn-outline"
-                                style={{ flex: 1, fontSize: 12, minWidth: 0, ...takeoutCancelButtonStyle }}
+                                style={{ flex: 1, minWidth: 0, ...takeoutCancelButtonStyle }}
                                 disabled={busyId === o._id}
                                 onClick={() => void cancelOrder(o)}
                               >
