@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
+import { useEffect, useState, useRef, useCallback, useMemo, useLayoutEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSearchParams, useNavigate, useParams } from 'react-router-dom';
 import { useCart } from '../../context/CartContext';
@@ -171,38 +171,91 @@ export default function MenuView({ storeFrontEmbed = false }: { storeFrontEmbed?
   }, []);
 
   const [heroHidden, setHeroHidden] = useState(() => !!storeFrontEmbed);
+  const heroRef = useRef<HTMLDivElement>(null);
   const lastScrollY = useRef(0);
-  const heroHiddenRef = useRef(false);
+  const heroHiddenRef = useRef(!!storeFrontEmbed);
+  const prevHeroHiddenRef = useRef(!!storeFrontEmbed);
+  const lastHeroHeightRef = useRef(0);
+  const heroTransitionLockUntil = useRef(0);
+  const scrollRafRef = useRef<number | null>(null);
+
   useEffect(() => {
     heroHiddenRef.current = heroHidden;
   }, [heroHidden]);
 
-  const handleScroll = useCallback(() => {
-    const el = scrollContainerRef.current;
-    if (!el) return;
-    const y = el.scrollTop;
-    const prevY = lastScrollY.current;
-    const dy = y - prevY;
-    const nearBottom = y + el.clientHeight >= el.scrollHeight - 2;
+  useEffect(() => {
+    const hero = heroRef.current;
+    if (!hero || heroHidden) return undefined;
+    const measure = () => {
+      const h = hero.offsetHeight;
+      if (h > 0) lastHeroHeightRef.current = h;
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(hero);
+    return () => ro.disconnect();
+  }, [heroHidden]);
 
-    // At the very bottom, keep hero hidden to avoid bounce jitter toggling.
-    if (nearBottom) {
-      if (!heroHiddenRef.current) setHeroHidden(true);
-      lastScrollY.current = y;
+  useLayoutEffect(() => {
+    const scrollEl = scrollContainerRef.current;
+    const h = lastHeroHeightRef.current;
+    const wasHidden = prevHeroHiddenRef.current;
+    if (!scrollEl || h <= 0 || wasHidden === heroHidden) {
+      prevHeroHiddenRef.current = heroHidden;
       return;
     }
-
-    // Hysteresis: near top always show; scroll down hides; scroll up shows (slightly looser dy for touch/trackpad).
-    if (y <= 12) {
-      if (heroHiddenRef.current) setHeroHidden(false);
-    } else if (y > 28 && dy > 2) {
-      if (!heroHiddenRef.current) setHeroHidden(true);
-    } else if (dy < -4) {
-      if (heroHiddenRef.current) setHeroHidden(false);
+    if (heroHidden && !wasHidden) {
+      scrollEl.scrollTop += h;
+      lastScrollY.current = scrollEl.scrollTop;
+    } else if (!heroHidden && wasHidden) {
+      scrollEl.scrollTop = Math.max(0, scrollEl.scrollTop - h);
+      lastScrollY.current = scrollEl.scrollTop;
     }
+    prevHeroHiddenRef.current = heroHidden;
+  }, [heroHidden]);
 
-    lastScrollY.current = y;
+  const setHeroHiddenState = useCallback((hidden: boolean) => {
+    if (heroHiddenRef.current === hidden) return;
+    if (Date.now() < heroTransitionLockUntil.current) return;
+    if (hidden && heroRef.current) {
+      const h = heroRef.current.offsetHeight;
+      if (h > 0) lastHeroHeightRef.current = h;
+    }
+    heroTransitionLockUntil.current = Date.now() + 500;
+    heroHiddenRef.current = hidden;
+    setHeroHidden(hidden);
   }, []);
+
+  const handleScroll = useCallback(() => {
+    if (scrollRafRef.current != null) return;
+    scrollRafRef.current = requestAnimationFrame(() => {
+      scrollRafRef.current = null;
+      if (Date.now() < heroTransitionLockUntil.current) return;
+
+      const el = scrollContainerRef.current;
+      if (!el) return;
+      const y = el.scrollTop;
+      const prevY = lastScrollY.current;
+      const dy = y - prevY;
+      const nearBottom = y + el.clientHeight >= el.scrollHeight - 2;
+
+      if (nearBottom) {
+        if (!heroHiddenRef.current) setHeroHiddenState(true);
+        lastScrollY.current = y;
+        return;
+      }
+
+      if (y <= 16) {
+        if (heroHiddenRef.current) setHeroHiddenState(false);
+      } else if (y > 48 && dy > 6) {
+        if (!heroHiddenRef.current) setHeroHiddenState(true);
+      } else if (dy < -10) {
+        if (heroHiddenRef.current) setHeroHiddenState(false);
+      }
+
+      lastScrollY.current = y;
+    });
+  }, [setHeroHiddenState]);
 
   const cartBomLines = useMemo(
     () => cartItems.map((i) => ({
@@ -266,6 +319,7 @@ export default function MenuView({ storeFrontEmbed = false }: { storeFrontEmbed?
   return (
     <div className="menu-page">
       <div
+        ref={heroRef}
         className={`menu-hero ${storeFrontEmbed ? 'menu-hero--embed' : 'menu-hero--standalone'}${compactHero ? ' menu-hero--compact' : ''}${heroHidden ? ' menu-hero--hidden' : ''}`}
         aria-hidden={heroHidden}
       >

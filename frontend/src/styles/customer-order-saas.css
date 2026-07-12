@@ -45,9 +45,9 @@
   display: grid;
   grid-template-rows: 1fr;
   transition:
-    grid-template-rows 0.42s cubic-bezier(0.32, 0.72, 0, 1),
-    padding 0.42s cubic-bezier(0.32, 0.72, 0, 1),
-    border-color 0.35s ease;
+    grid-template-rows 0.48s cubic-bezier(0.33, 1, 0.68, 1),
+    padding 0.48s cubic-bezier(0.33, 1, 0.68, 1),
+    border-color 0.4s ease;
 }
 
 .menu-hero--hidden {
@@ -71,17 +71,13 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-  transition:
-    opacity 0.34s cubic-bezier(0.4, 0, 0.2, 1),
-    transform 0.42s cubic-bezier(0.32, 0.72, 0, 1);
+  transition: opacity 0.36s cubic-bezier(0.33, 1, 0.68, 1);
   opacity: 1;
-  transform: translateY(0);
-  will-change: opacity, transform;
+  will-change: opacity;
 }
 
 .menu-hero--hidden .menu-hero__inner {
   opacity: 0;
-  transform: translateY(-10px);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -89,7 +85,6 @@
   .menu-hero__inner,
   .menu-tabs__actions {
     transition-duration: 0.01ms !important;
-    animation-duration: 0.01ms !important;
   }
 }
 
@@ -108,12 +103,84 @@
   border-bottom: 1px solid var(--co-border, #e2e8f0);
 }
 
+.menu-hero-toolbar--actions {
+  padding: 0;
+  border-bottom: none;
+  gap: 8px;
+}
+
 .menu-hero-toolbar__left,
 .menu-hero-toolbar__right {
   display: flex;
   align-items: center;
   gap: 10px;
   min-width: 0;
+}
+
+.menu-hero-toolbar__left {
+  flex: 1;
+}
+
+.menu-hero-toolbar__dine-in-seat {
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--co-text, #0f172a);
+  white-space: nowrap;
+  padding: 5px 10px;
+  border-radius: 8px;
+  background: rgba(196, 30, 36, 0.07);
+  border: 1px solid rgba(196, 30, 36, 0.18);
+}
+
+.menu-hero-toolbar__mode-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+  padding: 3px;
+  border-radius: 10px;
+  border: 1px solid #cbd5e1;
+  background: #e2e8f0;
+}
+
+.menu-hero-toolbar__mode-switch--compact {
+  padding: 2px;
+  gap: 2px;
+}
+
+.menu-hero-toolbar__mode-switch--compact .menu-hero-toolbar__mode-btn {
+  padding: 4px 8px;
+  font-size: 11px;
+  border-radius: 6px;
+}
+
+.menu-hero-toolbar__mode-btn {
+  border: none;
+  background: transparent;
+  padding: 6px 11px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+  cursor: pointer;
+  color: #64748b;
+  white-space: nowrap;
+  border-radius: 7px;
+  transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.menu-hero-toolbar__mode-btn--active {
+  color: #fff;
+  font-weight: 700;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.18);
+}
+
+.menu-hero-toolbar__mode-btn--takeout.menu-hero-toolbar__mode-btn--active {
+  background: #c41e24;
+}
+
+.menu-hero-toolbar__mode-btn--delivery.menu-hero-toolbar__mode-btn--active {
+  background: #1d4ed8;
 }
 
 .menu-hero-toolbar__right {
@@ -225,18 +292,8 @@
   flex-shrink: 0;
   gap: 8px;
   padding: 0 10px 0 4px;
-  animation: menu-tabs-actions-in 0.38s cubic-bezier(0.32, 0.72, 0, 1) both;
-}
-
-@keyframes menu-tabs-actions-in {
-  from {
-    opacity: 0;
-    transform: translateX(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
+  opacity: 1;
+  transition: opacity 0.28s ease;
 }
 
 .menu-tabs-row {
