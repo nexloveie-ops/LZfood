@@ -378,7 +378,7 @@ export default function CashierOrder() {
   const [mixedCard, setMixedCard] = useState('');
   const [payingTotal, setPayingTotal] = useState(0);
   const [paying, setPaying] = useState(false);
-  const [selectedCoupon, setSelectedCoupon] = useState<{ name: string; nameEn: string; amount: number } | null>(null);
+  const [selectedCoupon, setSelectedCoupon] = useState<{ _id: string; name: string; nameEn: string; amount: number } | null>(null);
   const [availableCoupons, setAvailableCoupons] = useState<{ _id: string; name: string; nameEn: string; amount: number }[]>([]);
   const [voucherCode, setVoucherCode] = useState('');
   const [voucherPreview, setVoucherPreview] = useState<NumberedVoucherPreview | null>(null);

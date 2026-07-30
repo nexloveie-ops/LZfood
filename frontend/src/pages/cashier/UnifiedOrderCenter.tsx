@@ -425,7 +425,7 @@ export default function UnifiedOrderCenter() {
   const [voucherCode, setVoucherCode] = useState('');
   const [voucherPreview, setVoucherPreview] = useState<NumberedVoucherPreview | null>(null);
   const [availableCoupons, setAvailableCoupons] = useState<{ _id: string; name: string; nameEn: string; amount: number }[]>([]);
-  const [selectedCoupon, setSelectedCoupon] = useState<{ name: string; nameEn: string; amount: number } | null>(null);
+  const [selectedCoupon, setSelectedCoupon] = useState<{ _id: string; name: string; nameEn: string; amount: number } | null>(null);
   /** 外卖自提 paid_online：先厨房小票再完结。checked_out 且 takeoutPlacementSource=cashier 则视同厨房小票已在点单结账时完成 */
   const [takeoutKitchenTicketPrintedIds, setTakeoutKitchenTicketPrintedIds] = useState<Record<string, true>>({});
   /** 电话单「电话刷卡」已付：先厨房小票再调 complete-placement（与外卖 paid_online 两步类似） */
