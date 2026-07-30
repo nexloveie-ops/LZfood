@@ -13,6 +13,8 @@ import CashierMemberCheckoutBlock, {
   canMemberFullWalletPay,
   type CashierMemberPreview,
 } from '../../components/cashier/CashierMemberCheckoutBlock';
+import CashierCheckoutDiscountPanel from '../../components/cashier/CashierCheckoutDiscountPanel';
+import type { NumberedVoucherPreview } from '../../components/cashier/CashierNumberedVoucherBlock';
 import OrderItemOptionGroupList from '../../components/cashier/OrderItemOptionGroupList';
 
 type OrderType = 'dine_in' | 'takeout' | 'phone' | 'delivery';
@@ -420,6 +422,10 @@ export default function UnifiedOrderCenter() {
   const [mixedCard, setMixedCard] = useState('');
   const [memberPhone, setMemberPhone] = useState('');
   const [memberPreview, setMemberPreview] = useState<CashierMemberPreview | null>(null);
+  const [voucherCode, setVoucherCode] = useState('');
+  const [voucherPreview, setVoucherPreview] = useState<NumberedVoucherPreview | null>(null);
+  const [availableCoupons, setAvailableCoupons] = useState<{ _id: string; name: string; nameEn: string; amount: number }[]>([]);
+  const [selectedCoupon, setSelectedCoupon] = useState<{ name: string; nameEn: string; amount: number } | null>(null);
   /** 外卖自提 paid_online：先厨房小票再完结。checked_out 且 takeoutPlacementSource=cashier 则视同厨房小票已在点单结账时完成 */
   const [takeoutKitchenTicketPrintedIds, setTakeoutKitchenTicketPrintedIds] = useState<Record<string, true>>({});
   /** 电话单「电话刷卡」已付：先厨房小票再调 complete-placement（与外卖 paid_online 两步类似） */
@@ -517,16 +523,29 @@ export default function UnifiedOrderCenter() {
     });
   }, [config]);
 
+  const fetchCheckoutCoupons = useCallback(async () => {
+    const res = await apiFetch('/api/coupons', { headers: { Authorization: `Bearer ${token}` } });
+    if (res.ok) setAvailableCoupons(await res.json());
+  }, [token]);
+
+  useEffect(() => {
+    void fetchCheckoutCoupons();
+  }, [fetchCheckoutCoupons]);
+
   const checkoutSeat = useCallback(async (
     order: OrderRow,
     paymentMethod: 'cash' | 'card' | 'mixed' | 'member',
     mixed?: { cashAmount: number; cardAmount: number },
     cashMeta?: { cashReceived: number; changeAmount: number },
     memberPay?: { phone: string },
+    voucher?: { code: string; payableEuro: number },
+    coupon?: { name: string; amount: number },
   ) => {
     setBusyId(order._id);
     try {
-      const total = counterPayable(order, dineInPayAfter);
+      let total = counterPayable(order, dineInPayAfter);
+      if (voucher?.payableEuro != null) total = voucher.payableEuro;
+      else if (coupon) total = Math.max(0, total - coupon.amount);
       const body: Record<string, unknown> =
         paymentMethod === 'member' && memberPay
           ? buildMemberFullWalletCheckoutBody(total, memberPay.phone)
@@ -538,6 +557,11 @@ export default function UnifiedOrderCenter() {
           body.cashAmount = mixed.cashAmount;
           body.cardAmount = mixed.cardAmount;
         }
+      }
+      if (voucher?.code) body.numberedVoucherCode = voucher.code;
+      if (coupon && !voucher?.code) {
+        body.couponName = coupon.name;
+        body.couponAmount = coupon.amount;
       }
       const res = await apiFetch(`/api/checkout/seat/${order._id}`, {
         method: 'POST',
@@ -660,6 +684,10 @@ export default function UnifiedOrderCenter() {
     setMixedCard('');
     setMemberPhone('');
     setMemberPreview(null);
+    setVoucherCode('');
+    setVoucherPreview(null);
+    setSelectedCoupon(null);
+    void fetchCheckoutCoupons();
   };
 
   const openTableCheckoutModal = (tableNumber: number, tableOrders: OrderRow[]) => {
@@ -673,17 +701,157 @@ export default function UnifiedOrderCenter() {
     setMixedCard('');
     setMemberPhone('');
     setMemberPreview(null);
+    setVoucherCode('');
+    setVoucherPreview(null);
+    setSelectedCoupon(null);
+  };
+
+  const resolveSeatVoucherForCheckout = async (
+    order: OrderRow,
+  ): Promise<{ total: number; voucher?: { code: string; payableEuro: number } }> => {
+    const base = counterPayable(order, dineInPayAfter);
+    const hasBundle = (order.appliedBundles || []).some((b) => (Number(b.discount) || 0) > 0.001);
+    if (!voucherCode.trim() || hasBundle) {
+      return { total: base };
+    }
+    const res = await apiFetch('/api/voucher-campaigns/validate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ code: voucherCode.trim(), orderId: order._id }),
+    });
+    const d = await res.json().catch(() => null);
+    if (!res.ok) {
+      throw new Error(d?.error?.message || t('cashier.numberedVoucher.validateFailedCheckout'));
+    }
+    const payableEuro = Number(d.payableEuro) || 0;
+    const code = String(d.code || voucherCode.trim());
+    return { total: payableEuro, voucher: { code, payableEuro } };
+  };
+
+  const checkoutModalOrderPayable = useMemo(() => {
+    if (!checkoutModalOrder) return 0;
+    const base = counterPayable(checkoutModalOrder, dineInPayAfter);
+    const hasBundle = (checkoutModalOrder.appliedBundles || []).some((b) => (Number(b.discount) || 0) > 0.001);
+    if (voucherPreview && !hasBundle) return voucherPreview.payableEuro;
+    if (selectedCoupon && !voucherPreview && !voucherCode.trim()) {
+      return Math.max(0, base - selectedCoupon.amount);
+    }
+    return base;
+  }, [checkoutModalOrder, dineInPayAfter, voucherPreview, voucherCode, selectedCoupon]);
+
+  const checkoutModalOrderBaseEuro = useMemo(() => {
+    if (!checkoutModalOrder) return 0;
+    return counterPayable(checkoutModalOrder, dineInPayAfter);
+  }, [checkoutModalOrder, dineInPayAfter]);
+
+  /** 按桌结账（后结）：勾选多笔单上的行 → 一次支付 */
+  const tablePartialPickPreview = useMemo(() => {
+    if (!checkoutModalTable || !dineInPayAfter) return null;
+    const settlements: { orderId: string; lineId: string; qty: number }[] = [];
+    for (const [key, qtyRaw] of Object.entries(tablePartialQtyByLineKey)) {
+      const n = Math.floor(Number(qtyRaw)) || 0;
+      if (n <= 0) continue;
+      const colon = key.indexOf(':');
+      if (colon <= 0) continue;
+      const orderId = key.slice(0, colon);
+      const lineId = key.slice(colon + 1);
+      if (!orderId || !lineId) continue;
+      settlements.push({ orderId, lineId, qty: n });
+    }
+    if (settlements.length === 0) {
+      return { ok: false as const, message: '', payable: 0, settlements: [] as typeof settlements };
+    }
+    const byOrder = new Map<string, Map<string, number>>();
+    for (const s of settlements) {
+      if (!byOrder.has(s.orderId)) byOrder.set(s.orderId, new Map());
+      const m = byOrder.get(s.orderId)!;
+      m.set(s.lineId, (m.get(s.lineId) || 0) + s.qty);
+    }
+    let payable = 0;
+    for (const o of checkoutModalTable.orders) {
+      const m = byOrder.get(o._id);
+      if (!m || m.size === 0) continue;
+      const rows = [...m.entries()].map(([lineId, qty]) => ({ lineId, qty }));
+      const p = computePartialDineInSettlementPreview(o, rows);
+      if (!p.ok) return { ok: false as const, message: p.message, payable: 0, settlements };
+      payable += p.payable;
+    }
+    return {
+      ok: true as const,
+      message: '',
+      payable: Math.round(payable * 100) / 100,
+      settlements,
+    };
+  }, [checkoutModalTable, dineInPayAfter, tablePartialQtyByLineKey]);
+
+  const checkoutModalPayableEuro = useMemo(() => {
+    if (checkoutModalOrder) return checkoutModalOrderPayable;
+    if (checkoutModalTable && dineInPayAfter && tableCheckoutStep === 'pay' && tablePartialPickPreview?.ok) {
+      return tablePartialPickPreview.payable;
+    }
+    if (checkoutModalTable) {
+      return checkoutModalTable.orders.reduce((sum, o) => sum + counterPayable(o, dineInPayAfter), 0);
+    }
+    return 0;
+  }, [checkoutModalOrder, checkoutModalOrderPayable, checkoutModalTable, dineInPayAfter, tableCheckoutStep, tablePartialPickPreview]);
+
+  const checkoutVoucherAwaitingValidate = Boolean(
+    checkoutModalOrder &&
+      voucherCode.trim() &&
+      !voucherPreview &&
+      !(checkoutModalOrder.appliedBundles || []).some((b) => (Number(b.discount) || 0) > 0.001),
+  );
+
+  const clearCheckoutModal = () => {
+    setCheckoutModalOrder(null);
+    setCheckoutModalTable(null);
+    setTableCheckoutStep('pay');
+    setTablePartialQtyByLineKey({});
+    setVoucherCode('');
+    setVoucherPreview(null);
+    setSelectedCoupon(null);
+    setCashReceived('');
+    setMixedCash('');
+    setMixedCard('');
+    setMemberPhone('');
+    setMemberPreview(null);
+    setCheckoutMethod('cash');
   };
 
   const submitCheckoutModal = async () => {
     const targetOrder = checkoutModalOrder;
     const targetTable = checkoutModalTable;
     if (!targetOrder && !targetTable) return;
-    const total = targetOrder
+    if (targetTable && voucherCode.trim()) {
+      alert(t('cashier.numberedVoucher.singleOrderOnly'));
+      return;
+    }
+    if (checkoutVoucherAwaitingValidate) {
+      alert(t('cashier.numberedVoucher.validateFirstCheckout'));
+      return;
+    }
+    let total = targetOrder
       ? counterPayable(targetOrder, dineInPayAfter)
       : targetTable && dineInPayAfter && tableCheckoutStep === 'pay' && tablePartialPickPreview?.ok
         ? tablePartialPickPreview.payable
         : targetTable?.orders.reduce((sum, o) => sum + counterPayable(o, dineInPayAfter), 0) || 0;
+    let seatVoucher: { code: string; payableEuro: number } | undefined;
+    const seatCoupon =
+      targetOrder && selectedCoupon && !voucherCode.trim() ? selectedCoupon : undefined;
+    if (targetOrder) {
+      try {
+        if (voucherCode.trim()) {
+          const resolved = await resolveSeatVoucherForCheckout(targetOrder);
+          total = resolved.total;
+          seatVoucher = resolved.voucher;
+        } else {
+          total = checkoutModalOrderPayable;
+        }
+      } catch (e) {
+        alert(e instanceof Error ? e.message : t('cashier.numberedVoucher.validateFailedCheckout'));
+        return;
+      }
+    }
     if (checkoutMethod === 'member') {
       if (!canMemberFullWalletPay(memberPreview, total)) {
         alert(isEn ? 'Load member and ensure balance covers the total.' : '请载入会员并确认余额不少于应付金额。');
@@ -691,7 +859,7 @@ export default function UnifiedOrderCenter() {
       }
       const mp = { phone: memberPreview!.phone };
       if (targetOrder) {
-        await checkoutSeat(targetOrder, 'member', undefined, undefined, mp);
+        await checkoutSeat(targetOrder, 'member', undefined, undefined, mp, seatVoucher, seatCoupon);
       } else if (targetTable) {
         if (dineInPayAfter) {
           const prev = tablePartialPickPreview;
@@ -723,7 +891,7 @@ export default function UnifiedOrderCenter() {
         return;
       }
       if (targetOrder) {
-        await checkoutSeat(targetOrder, 'mixed', { cashAmount: cash, cardAmount: card });
+        await checkoutSeat(targetOrder, 'mixed', { cashAmount: cash, cardAmount: card }, undefined, undefined, seatVoucher, seatCoupon);
       } else if (targetTable) {
         if (dineInPayAfter) {
           const prev = tablePartialPickPreview;
@@ -755,7 +923,7 @@ export default function UnifiedOrderCenter() {
       }
       const changeAmount = Math.max(0, paid - total);
       if (targetOrder) {
-        await checkoutSeat(targetOrder, 'cash', undefined, { cashReceived: paid, changeAmount });
+        await checkoutSeat(targetOrder, 'cash', undefined, { cashReceived: paid, changeAmount }, undefined, seatVoucher, seatCoupon);
       } else if (targetTable) {
         if (dineInPayAfter) {
           const prev = tablePartialPickPreview;
@@ -776,7 +944,7 @@ export default function UnifiedOrderCenter() {
       return;
     }
     if (targetOrder) {
-      await checkoutSeat(targetOrder, checkoutMethod);
+      await checkoutSeat(targetOrder, checkoutMethod, undefined, undefined, undefined, seatVoucher, seatCoupon);
     } else if (targetTable) {
       if (dineInPayAfter) {
         const prev = tablePartialPickPreview;
@@ -1364,46 +1532,6 @@ export default function UnifiedOrderCenter() {
     if (settlements.length === 0) return null;
     return computePartialDineInSettlementPreview(partialModalOrder, settlements);
   }, [partialModalOrder, partialQtyByLineId]);
-
-  /** 按桌结账（后结）：勾选多笔单上的行 → 一次支付 */
-  const tablePartialPickPreview = useMemo(() => {
-    if (!checkoutModalTable || !dineInPayAfter) return null;
-    const settlements: { orderId: string; lineId: string; qty: number }[] = [];
-    for (const [key, qtyRaw] of Object.entries(tablePartialQtyByLineKey)) {
-      const n = Math.floor(Number(qtyRaw)) || 0;
-      if (n <= 0) continue;
-      const colon = key.indexOf(':');
-      if (colon <= 0) continue;
-      const orderId = key.slice(0, colon);
-      const lineId = key.slice(colon + 1);
-      if (!orderId || !lineId) continue;
-      settlements.push({ orderId, lineId, qty: n });
-    }
-    if (settlements.length === 0) {
-      return { ok: false as const, message: '', payable: 0, settlements: [] as typeof settlements };
-    }
-    const byOrder = new Map<string, Map<string, number>>();
-    for (const s of settlements) {
-      if (!byOrder.has(s.orderId)) byOrder.set(s.orderId, new Map());
-      const m = byOrder.get(s.orderId)!;
-      m.set(s.lineId, (m.get(s.lineId) || 0) + s.qty);
-    }
-    let payable = 0;
-    for (const o of checkoutModalTable.orders) {
-      const m = byOrder.get(o._id);
-      if (!m || m.size === 0) continue;
-      const rows = [...m.entries()].map(([lineId, qty]) => ({ lineId, qty }));
-      const p = computePartialDineInSettlementPreview(o, rows);
-      if (!p.ok) return { ok: false as const, message: p.message, payable: 0, settlements };
-      payable += p.payable;
-    }
-    return {
-      ok: true as const,
-      message: '',
-      payable: Math.round(payable * 100) / 100,
-      settlements,
-    };
-  }, [checkoutModalTable, dineInPayAfter, tablePartialQtyByLineKey]);
 
   const lockDineInPayAfter = useCallback(
     async (order: OrderRow) => {
@@ -2532,32 +2660,36 @@ export default function UnifiedOrderCenter() {
       ))}
       <div style={{ fontSize: 12, color: 'var(--text-light)' }}>{t('cashier.noOrders')}</div>
       {checkoutModalOrder || checkoutModalTable ? (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 1600, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1600, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
           <div
             style={{
-              width: checkoutModalTable && dineInPayAfter ? 540 : 380,
+              width: checkoutModalTable && dineInPayAfter && tableCheckoutStep === 'lines' ? 540 : 400,
               maxWidth: '92vw',
               background: '#fff',
-              borderRadius: 12,
-              padding: 16,
+              borderRadius: 16,
+              padding: checkoutModalTable && dineInPayAfter && tableCheckoutStep === 'lines' ? 16 : 24,
               maxHeight: '90vh',
               overflowY: 'auto',
             }}
           >
-            <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 10 }}>{L.checkoutModalTitle}</h3>
-            <div style={{ fontSize: 13, color: '#666', marginBottom: 10 }}>
-              {checkoutModalOrder ? (
-                `#${checkoutModalOrder.dailyOrderNumber ?? '--'} · ${L.total} €${counterPayable(checkoutModalOrder, dineInPayAfter).toFixed(2)}`
-              ) : checkoutModalTable && dineInPayAfter && tableCheckoutStep === 'lines' ? (
-                <div>
-                  {`${L.tableLabel} ${checkoutModalTable.tableNumber} · ${L.total}（${isEn ? 'table unsettled' : '本桌未结'}）€${checkoutModalTable.orders.reduce((s, o) => s + counterPayable(o, dineInPayAfter), 0).toFixed(2)}`}
+            <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 8, textAlign: 'center' }}>{L.checkoutModalTitle}</h3>
+            {checkoutModalTable && dineInPayAfter && tableCheckoutStep === 'lines' ? (
+              <div style={{ fontSize: 13, color: '#666', marginBottom: 10 }}>
+                {`${L.tableLabel} ${checkoutModalTable.tableNumber} · ${L.total}（${isEn ? 'table unsettled' : '本桌未结'}）€${checkoutModalTable.orders.reduce((s, o) => s + counterPayable(o, dineInPayAfter), 0).toFixed(2)}`}
+              </div>
+            ) : (
+              <>
+                <div style={{ fontSize: 12, color: 'var(--text-light)', textAlign: 'center', marginBottom: 12 }}>
+                  {checkoutModalOrder
+                    ? `#${checkoutModalOrder.dailyOrderNumber ?? '--'}`
+                    : `${L.tableLabel} ${checkoutModalTable?.tableNumber ?? '-'}`}
                 </div>
-              ) : checkoutModalTable && dineInPayAfter && tableCheckoutStep === 'pay' && tablePartialPickPreview?.ok ? (
-                <div>{`${L.tableLabel} ${checkoutModalTable.tableNumber} · ${L.tableCheckoutThisPayment} €${tablePartialPickPreview.payable.toFixed(2)}`}</div>
-              ) : (
-                `${L.tableLabel} ${checkoutModalTable?.tableNumber ?? '-'} · ${L.total} €${(checkoutModalTable?.orders.reduce((sum, o) => sum + counterPayable(o, dineInPayAfter), 0) || 0).toFixed(2)}`
-              )}
-            </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: 20, marginBottom: 12 }}>
+                  <span>{L.total}</span>
+                  <span style={{ color: 'var(--red-primary)' }}>€{checkoutModalPayableEuro.toFixed(2)}</span>
+                </div>
+              </>
+            )}
             {checkoutModalTable && dineInPayAfter && tableCheckoutStep === 'lines' ? (
               <div style={{ maxHeight: '48vh', overflowY: 'auto', marginBottom: 12, border: '1px solid #eee', borderRadius: 8, padding: 8 }}>
                 <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 8 }}>{L.tableCheckoutPickLines}</div>
@@ -2642,16 +2774,7 @@ export default function UnifiedOrderCenter() {
                   </div>
                 ) : null}
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
-                  <button
-                    type="button"
-                    className="btn btn-outline"
-                    onClick={() => {
-                      setCheckoutModalOrder(null);
-                      setCheckoutModalTable(null);
-                      setTableCheckoutStep('pay');
-                      setTablePartialQtyByLineKey({});
-                    }}
-                  >
+                  <button type="button" className="btn btn-outline" onClick={clearCheckoutModal}>
                     {L.cancel}
                   </button>
                   <button
@@ -2671,57 +2794,63 @@ export default function UnifiedOrderCenter() {
                     {L.tableCheckoutBackLines}
                   </button>
                 ) : null}
-                <div style={{ fontSize: 12, color: '#666', marginBottom: 6 }}>{L.paymentMethodLabel}</div>
-                <div
-                  style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 8,
-                    marginBottom: 10,
-                    padding: '8px 10px',
-                    border: '1px solid #eee',
-                    borderRadius: 8,
-                    background: '#fafafa',
-                  }}
-                  role="radiogroup"
-                  aria-label={L.paymentMethodLabel}
-                >
+                {checkoutModalOrder ? (
+                  <CashierCheckoutDiscountPanel
+                    token={token || ''}
+                    orderId={checkoutModalOrder._id}
+                    subtotalEuro={checkoutModalOrderBaseEuro}
+                    payableEuro={checkoutModalOrderPayable}
+                    disabled={(checkoutModalOrder.appliedBundles || []).some((b) => (Number(b.discount) || 0) > 0.001)}
+                    disabledReason={t('cashier.numberedVoucher.disabledBundle')}
+                    availableCoupons={availableCoupons}
+                    selectedCoupon={selectedCoupon}
+                    onSelectCoupon={(c) => {
+                      setSelectedCoupon(c);
+                      setCashReceived('');
+                    }}
+                    voucherCode={voucherCode}
+                    onVoucherCodeChange={setVoucherCode}
+                    voucherPreview={voucherPreview}
+                    onVoucherPreviewChange={setVoucherPreview}
+                    onDiscountInteraction={() => setCashReceived('')}
+                  />
+                ) : null}
+                {checkoutVoucherAwaitingValidate ? (
+                  <div style={{ fontSize: 12, color: '#c62828', marginBottom: 12, padding: '8px 10px', background: '#ffebee', borderRadius: 8 }}>
+                    {t('cashier.numberedVoucher.validateFirst')}
+                  </div>
+                ) : null}
+                {!checkoutVoucherAwaitingValidate ? (
+                <>
+                <div style={{ fontSize: 12, color: 'var(--text-light)', marginBottom: 6 }}>{L.paymentMethodLabel}</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
                   {(['cash', 'card', 'mixed', 'member'] as const)
                     .filter((m) => m !== 'member' || canMemberWallet)
                     .map((m) => (
-                      <label
+                      <button
                         key={m}
+                        type="button"
+                        className="btn"
+                        onClick={() => {
+                          setCheckoutMethod(m);
+                          setCashReceived('');
+                          if (m !== 'member') setMemberPreview(null);
+                        }}
                         style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 8,
-                          fontSize: 13,
-                          cursor: 'pointer',
-                          userSelect: 'none',
+                          flex: '1 1 30%',
+                          minWidth: 72,
+                          background: checkoutMethod === m ? 'var(--red-primary)' : 'var(--bg)',
+                          color: checkoutMethod === m ? '#fff' : 'var(--text-secondary)',
+                          border: '1px solid var(--border)',
                         }}
                       >
-                        <input
-                          type="radio"
-                          name="unifiedOrderCheckoutPayment"
-                          checked={checkoutMethod === m}
-                          onChange={() => {
-                            setCheckoutMethod(m);
-                            if (m !== 'member') setMemberPreview(null);
-                          }}
-                        />
-                        <span>{m === 'cash' ? L.cash : m === 'card' ? L.card : m === 'mixed' ? L.mixed : L.member}</span>
-                      </label>
+                        {m === 'cash' ? L.cash : m === 'card' ? L.card : m === 'mixed' ? L.mixed : L.member}
+                      </button>
                     ))}
                 </div>
                 {checkoutMethod === 'member' ? (
                   <CashierMemberCheckoutBlock
-                    payAmount={
-                      checkoutModalOrder
-                        ? counterPayable(checkoutModalOrder, dineInPayAfter)
-                        : checkoutModalTable && dineInPayAfter && tableCheckoutStep === 'pay' && tablePartialPickPreview?.ok
-                          ? tablePartialPickPreview.payable
-                          : checkoutModalTable?.orders.reduce((sum, o) => sum + counterPayable(o, dineInPayAfter), 0) || 0
-                    }
+                    payAmount={checkoutModalPayableEuro}
                     phone={memberPhone}
                     setPhone={setMemberPhone}
                     preview={memberPreview}
@@ -2730,75 +2859,74 @@ export default function UnifiedOrderCenter() {
                   />
                 ) : null}
                 {checkoutMethod === 'mixed' ? (
-                  <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+                  <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
                     <input className="input" type="number" placeholder={L.cashAmount} value={mixedCash} onChange={(e) => setMixedCash(e.target.value)} />
                     <input className="input" type="number" placeholder={L.cardAmount} value={mixedCard} onChange={(e) => setMixedCard(e.target.value)} />
                   </div>
                 ) : null}
                 {checkoutMethod === 'cash' ? (
-                  <div style={{ marginBottom: 10 }}>
-                    <input className="input" type="number" placeholder={L.paidAmount} value={cashReceived} onChange={(e) => setCashReceived(e.target.value)} />
+                  <div style={{ padding: 10, background: 'var(--bg)', borderRadius: 8, marginBottom: 12 }}>
+                    <label style={{ fontSize: 12, color: 'var(--text-light)', display: 'block', marginBottom: 4 }}>{L.paidAmount}</label>
+                    <input
+                      className="input"
+                      type="number"
+                      step="0.01"
+                      placeholder={L.paidAmount}
+                      value={cashReceived}
+                      onChange={(e) => setCashReceived(e.target.value)}
+                      style={{ width: '100%', fontSize: 18, fontWeight: 700, padding: '8px 10px', textAlign: 'right' }}
+                    />
                     {(Number(cashReceived) || 0) > 0 ? (
                       <div
                         style={{
                           marginTop: 6,
-                          fontSize: 12,
-                          color:
-                            (Number(cashReceived) || 0) >=
-                            (checkoutModalOrder
-                              ? counterPayable(checkoutModalOrder, dineInPayAfter)
-                              : checkoutModalTable && dineInPayAfter && tableCheckoutStep === 'pay' && tablePartialPickPreview?.ok
-                                ? tablePartialPickPreview.payable
-                                : checkoutModalTable?.orders.reduce((sum, o) => sum + counterPayable(o, dineInPayAfter), 0) || 0)
-                              ? '#2e7d32'
-                              : '#c62828',
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          padding: '6px 10px',
+                          borderRadius: 6,
+                          background: (Number(cashReceived) || 0) >= checkoutModalPayableEuro - 0.001 ? '#E8F5E9' : '#FFEBEE',
                         }}
                       >
-                        {L.change}：€
-                        {Math.max(
-                          0,
-                          (Number(cashReceived) || 0) -
-                            (checkoutModalOrder
-                              ? counterPayable(checkoutModalOrder, dineInPayAfter)
-                              : checkoutModalTable && dineInPayAfter && tableCheckoutStep === 'pay' && tablePartialPickPreview?.ok
-                                ? tablePartialPickPreview.payable
-                                : checkoutModalTable?.orders.reduce((sum, o) => sum + counterPayable(o, dineInPayAfter), 0) || 0),
-                        ).toFixed(2)}
+                        <span style={{ fontSize: 13, fontWeight: 600 }}>{L.change}</span>
+                        <span
+                          style={{
+                            fontSize: 18,
+                            fontWeight: 700,
+                            color: (Number(cashReceived) || 0) >= checkoutModalPayableEuro - 0.001 ? 'var(--green)' : 'var(--red-primary)',
+                          }}
+                        >
+                          €{Math.max(0, (Number(cashReceived) || 0) - checkoutModalPayableEuro).toFixed(2)}
+                        </span>
                       </div>
                     ) : null}
                   </div>
                 ) : null}
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-                  <button
-                    className="btn btn-outline"
-                    onClick={() => {
-                      setCheckoutModalOrder(null);
-                      setCheckoutModalTable(null);
-                      setTableCheckoutStep('pay');
-                      setTablePartialQtyByLineKey({});
-                    }}
-                  >
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button type="button" className="btn btn-outline" style={{ flex: 1 }} onClick={clearCheckoutModal}>
                     {L.cancel}
                   </button>
                   <button
+                    type="button"
                     className="btn btn-primary"
+                    style={{ flex: 1 }}
                     disabled={
                       busyId === (checkoutModalOrder?._id || `table-${checkoutModalTable?.tableNumber ?? '-'}`) ||
-                      (checkoutMethod === 'member' &&
-                        !canMemberFullWalletPay(
-                          memberPreview,
-                          checkoutModalOrder
-                            ? counterPayable(checkoutModalOrder, dineInPayAfter)
-                            : checkoutModalTable && dineInPayAfter && tableCheckoutStep === 'pay' && tablePartialPickPreview?.ok
-                              ? tablePartialPickPreview.payable
-                              : checkoutModalTable?.orders.reduce((sum, o) => sum + counterPayable(o, dineInPayAfter), 0) || 0,
-                        ))
+                      checkoutVoucherAwaitingValidate ||
+                      (checkoutMethod === 'member' && !canMemberFullWalletPay(memberPreview, checkoutModalPayableEuro))
                     }
                     onClick={() => void submitCheckoutModal()}
                   >
                     {busyId === (checkoutModalOrder?._id || `table-${checkoutModalTable?.tableNumber ?? '-'}`) ? L.processing : L.confirmCheckout}
                   </button>
                 </div>
+                </>
+                ) : (
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button type="button" className="btn btn-outline" style={{ flex: 1 }} onClick={clearCheckoutModal}>
+                      {L.cancel}
+                    </button>
+                  </div>
+                )}
               </>
             )}
           </div>

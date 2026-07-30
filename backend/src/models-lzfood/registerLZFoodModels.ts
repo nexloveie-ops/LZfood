@@ -6,6 +6,7 @@ import { OrderSchema } from '../models/Order';
 import { CheckoutSchema } from '../models/Checkout';
 import { OfferSchema } from '../models/Offer';
 import { CouponSchema } from '../models/Coupon';
+import { VoucherCampaignSchema, NumberedVoucherSchema } from '../models/NumberedVoucher';
 import { OptionGroupTemplateSchema } from '../models/OptionGroupTemplate';
 import { OptionGroupTemplateRuleSchema } from '../models/OptionGroupTemplateRule';
 import { InventoryTxnSchema } from '../models/InventoryTxn';
@@ -74,6 +75,8 @@ export type LZFoodModels = {
   OptionGroupTemplateRule: Model<unknown>;
   Offer: Model<unknown>;
   Coupon: Model<unknown>;
+  VoucherCampaign: Model<unknown>;
+  NumberedVoucher: Model<unknown>;
   Order: Model<unknown>;
   Checkout: Model<unknown>;
   DailyOrderCounter: Model<unknown>;
@@ -125,6 +128,8 @@ export function registerLZFoodModels(conn: Connection): LZFoodModels {
   );
   const Offer = m('Offer', withStoreId(OfferSchema), 'offers');
   const Coupon = m('Coupon', withStoreId(CouponSchema), 'coupons');
+  const VoucherCampaign = m('VoucherCampaign', withStoreId(VoucherCampaignSchema), 'voucher_campaigns');
+  const NumberedVoucher = m('NumberedVoucher', withStoreId(NumberedVoucherSchema), 'numbered_vouchers');
   const Order = m('Order', withStoreId(OrderSchema), 'orders');
   const Checkout = m('Checkout', withStoreId(CheckoutSchema), 'checkouts');
   const DailyOrderCounter = m('DailyOrderCounter', LZFoodDailyOrderCounterSchema, 'daily_order_counters');
@@ -177,6 +182,8 @@ export function registerLZFoodModels(conn: Connection): LZFoodModels {
     OptionGroupTemplateRule,
     Offer,
     Coupon,
+    VoucherCampaign,
+    NumberedVoucher,
     Order,
     Checkout,
     DailyOrderCounter,

@@ -683,6 +683,8 @@ export default function MemberPortalPage() {
 
   if (view === 'home' && profile) {
     return (
+      <div className="order-status-page">
+        <div className="order-status-scroll">
       <div style={{ maxWidth: 480, margin: '0 auto', padding: '16px 14px 32px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
           <h1 style={{ fontSize: 20, margin: 0 }}>{t('member.title', '会员中心')}</h1>
@@ -1024,10 +1026,14 @@ export default function MemberPortalPage() {
           />
         ) : null}
       </div>
+        </div>
+      </div>
     );
   }
 
   return (
+    <div className="order-status-page">
+      <div className="order-status-scroll">
     <div style={{ maxWidth: 400, margin: '0 auto', padding: '24px 14px' }}>
       <h1 style={{ fontSize: 20, marginBottom: 16 }}>{t('member.title', '会员中心')}</h1>
       {!storeSlug ? (
@@ -1083,6 +1089,8 @@ export default function MemberPortalPage() {
 
       <div style={{ marginTop: 20, textAlign: 'center' }}>
         <Link to={`/${storeSlug}`} style={{ color: 'var(--text-secondary)', fontSize: 13 }}>{t('member.backStore', '返回店铺')}</Link>
+      </div>
+    </div>
       </div>
     </div>
   );

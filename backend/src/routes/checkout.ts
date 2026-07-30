@@ -24,6 +24,59 @@ import {
 import {
   syncDualTrackBeforeSave,
 } from '../utils/orderDualTrack';
+import {
+  loadAndValidateNumberedVoucherForOrder,
+  redeemNumberedVoucher,
+  releaseNumberedVoucherForOrder,
+} from '../utils/numberedVoucherOps';
+
+type VoucherCheckoutMeta = {
+  voucherId: mongoose.Types.ObjectId;
+  code: string;
+  discountEuro: number;
+  campaignName: string;
+};
+
+async function resolveFinalAmountForSeatCheckout(
+  req: Request,
+  order: { toObject?: () => Record<string, unknown> },
+  body: Record<string, unknown>,
+  totalAmount: number,
+): Promise<{ finalAmount: number; voucher?: VoucherCheckoutMeta }> {
+  const couponAmount = Number(body.couponAmount) || 0;
+  const couponName = body.couponName;
+  const numberedVoucherCode = String(body.numberedVoucherCode || '').trim();
+
+  if (numberedVoucherCode && (couponAmount > 0 || couponName)) {
+    throw createAppError('VALIDATION_ERROR', '编号餐券不可与 Coupon 同时使用');
+  }
+  if (numberedVoucherCode) {
+    if (body.totalAmountOverride != null && body.totalAmountOverride !== '') {
+      throw createAppError('VALIDATION_ERROR', '编号餐券不可与套餐价覆盖同时使用');
+    }
+    const orderPlain = typeof order.toObject === 'function' ? order.toObject() : (order as Record<string, unknown>);
+    const { voucher, campaign, preview } = await loadAndValidateNumberedVoucherForOrder({
+      storeId: req.storeId!,
+      code: numberedVoucherCode,
+      order: orderPlain,
+    });
+    return {
+      finalAmount: preview.payableEuro,
+      voucher: {
+        voucherId: voucher._id,
+        code: voucher.code,
+        discountEuro: preview.voucherDiscountEuro,
+        campaignName: campaign.name,
+      },
+    };
+  }
+
+  let finalAmount = totalAmount;
+  if (couponAmount > 0) {
+    finalAmount = Math.max(0, totalAmount - couponAmount);
+  }
+  return { finalAmount };
+}
 
 function staffMayDebitMemberWithoutPin(req: Request): boolean {
   const u = req.user;
@@ -300,11 +353,12 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
         ? totalAmountOverride
         : autoTotal;
 
-      // Apply coupon discount
-      let finalAmount = totalAmount;
-      if (couponAmount && couponAmount > 0) {
-        finalAmount = Math.max(0, totalAmount - couponAmount);
-      }
+      const { finalAmount, voucher: voucherMeta } = await resolveFinalAmountForSeatCheckout(
+        req,
+        order,
+        req.body as Record<string, unknown>,
+        totalAmount,
+      );
 
       await assertMemberWalletFeatureIfNeeded(req);
       const mp = await resolveMemberPaymentForCheckout({
@@ -418,11 +472,27 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
       } else if (mp.paymentMethod === 'card' || mp.paymentMethod === 'online') {
         checkoutData.cardAmount = mp.cardAmount;
       }
-      if (couponName) checkoutData.couponName = couponName;
-      if (couponAmount && couponAmount > 0) checkoutData.couponAmount = couponAmount;
+      if (couponName && !voucherMeta) checkoutData.couponName = couponName;
+      if (couponAmount && couponAmount > 0 && !voucherMeta) checkoutData.couponAmount = couponAmount;
+      if (voucherMeta) {
+        checkoutData.numberedVoucherId = voucherMeta.voucherId;
+        checkoutData.numberedVoucherCode = voucherMeta.code;
+        checkoutData.voucherDiscountEuro = voucherMeta.discountEuro;
+        checkoutData.couponName = `${voucherMeta.campaignName} · ${voucherMeta.code}`;
+        checkoutData.couponAmount = voucherMeta.discountEuro;
+      }
 
       const checkout = await Checkout.create(checkoutData);
       try {
+        if (voucherMeta) {
+          await redeemNumberedVoucher({
+            storeId: req.storeId!,
+            voucherId: voucherMeta.voucherId,
+            orderId: new mongoose.Types.ObjectId(orderId),
+            checkoutId: checkout._id,
+            adminId: req.user?.userId ? new mongoose.Types.ObjectId(String(req.user.userId)) : undefined,
+          });
+        }
         if (mp.memberCreditUsed > 0 && mp.memberId) {
           await debitMemberWallet({
             Member,
@@ -436,6 +506,9 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
           });
         }
       } catch (e) {
+        if (voucherMeta) {
+          await releaseNumberedVoucherForOrder(req.storeId!, orderId);
+        }
         await Checkout.deleteOne({ _id: checkout._id });
         throw e;
       }
@@ -456,6 +529,9 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
             : {},
         );
       } catch (e) {
+        if (voucherMeta) {
+          await releaseNumberedVoucherForOrder(req.storeId!, orderId);
+        }
         if (mp.memberCreditUsed > 0 && mp.memberId) {
           await creditMemberWallet({
             Member,

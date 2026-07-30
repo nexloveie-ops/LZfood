@@ -9,6 +9,8 @@ import CashierMemberCheckoutBlock, {
   canMemberFullWalletPay,
   type CashierMemberPreview,
 } from '../../components/cashier/CashierMemberCheckoutBlock';
+import CashierCheckoutDiscountPanel from '../../components/cashier/CashierCheckoutDiscountPanel';
+import type { NumberedVoucherPreview } from '../../components/cashier/CashierNumberedVoucherBlock';
 import CashierAdHocOptionModal, { type AdHocOptionFormResult } from '../../components/cashier/CashierAdHocOptionModal';
 import OptionSelectModal, { type OptionGroup } from '../../components/customer/OptionSelectModal';
 import type { CartItemOption } from '../../context/CartContext';
@@ -378,6 +380,12 @@ export default function CashierOrder() {
   const [paying, setPaying] = useState(false);
   const [selectedCoupon, setSelectedCoupon] = useState<{ name: string; nameEn: string; amount: number } | null>(null);
   const [availableCoupons, setAvailableCoupons] = useState<{ _id: string; name: string; nameEn: string; amount: number }[]>([]);
+  const [voucherCode, setVoucherCode] = useState('');
+  const [voucherPreview, setVoucherPreview] = useState<NumberedVoucherPreview | null>(null);
+  /** 打开支付弹窗时创建的 pending 单（取消弹窗则删除）；改单场景用 editingOrderId */
+  const [paymentOrderId, setPaymentOrderId] = useState<string | null>(null);
+  const [paymentDraftOrderId, setPaymentDraftOrderId] = useState<string | null>(null);
+  const [paymentModalPreparing, setPaymentModalPreparing] = useState(false);
 
   // Receipt state
   const [checkoutId, setCheckoutId] = useState<string | null>(null);
@@ -1878,6 +1886,97 @@ export default function CashierOrder() {
     return [...grouped.values()];
   };
 
+  const buildOrderCreateBody = (): Record<string, unknown> => {
+    const orderBody: Record<string, unknown> = { type: orderType, items: buildGroupedItems() };
+    if (orderType === 'dine_in') {
+      orderBody.tableNumber = 0;
+      orderBody.seatNumber = 0;
+    }
+    if (orderType === 'takeout') orderBody.staffTakeoutPlacement = true;
+    if (matchedBundles.length > 0) {
+      orderBody.appliedBundles = matchedBundles.map((b) => ({
+        offerId: b.offer._id,
+        name: b.offer.name,
+        nameEn: b.offer.nameEn,
+        discount: b.savings,
+      }));
+    }
+    return orderBody;
+  };
+
+  const syncCartToPaymentOrder = async (orderId: string) => {
+    const updateRes = await apiFetch(`/api/orders/${orderId}/items`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ items: buildGroupedItems() }),
+    });
+    if (!updateRes.ok) {
+      const d = await updateRes.json().catch(() => null);
+      throw new Error(d?.error?.message || t('common.error'));
+    }
+    const updateData = await updateRes.json();
+    applyInventoryUpdates(updateData?.inventoryUpdates || []);
+  };
+
+  const createPaymentDraftOrder = async (): Promise<string> => {
+    const orderRes = await apiFetch('/api/orders', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify(buildOrderCreateBody()),
+    });
+    if (!orderRes.ok) {
+      const d = await orderRes.json().catch(() => null);
+      throw new Error(d?.error?.message || t('common.error'));
+    }
+    const orderData = await orderRes.json();
+    applyInventoryUpdates(orderData?.inventoryUpdates || []);
+    return String(orderData._id);
+  };
+
+  const validateVoucherForPaymentOrder = async (
+    orderId: string,
+    code: string,
+  ): Promise<{ payAmount: number; numberedVoucherCode: string; preview: NumberedVoucherPreview }> => {
+    const vRes = await apiFetch('/api/voucher-campaigns/validate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ code: code.trim(), orderId }),
+    });
+    const vd = await vRes.json().catch(() => null);
+    if (!vRes.ok) throw new Error(vd?.error?.message || t('cashier.numberedVoucher.validateFailedCheckout'));
+    const preview: NumberedVoucherPreview = {
+      code: String(vd.code),
+      campaignName: String(vd.campaignName || ''),
+      voucherDiscountEuro: Number(vd.voucherDiscountEuro) || 0,
+      payableEuro: Number(vd.payableEuro) || 0,
+      discountType: String(vd.discountType || ''),
+    };
+    return {
+      payAmount: preview.payableEuro,
+      numberedVoucherCode: preview.code,
+      preview,
+    };
+  };
+
+  const closePaymentModal = async () => {
+    const draft = paymentDraftOrderId;
+    setShowPayment(false);
+    setPaymentOrderId(null);
+    setPaymentDraftOrderId(null);
+    setVoucherCode('');
+    setVoucherPreview(null);
+    if (draft && !editingOrderId) {
+      try {
+        await apiFetch(`/api/orders/${draft}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+      } catch {
+        /* best-effort cleanup */
+      }
+    }
+  };
+
   /** 后结堂食：仅 POST 订单，不结账（与先结+外卖路径隔离） */
   const handleSubmitDineInPayAfterOnly = async () => {
     if (order.length === 0) return;
@@ -2008,24 +2107,42 @@ export default function CashierOrder() {
     }
   };
 
-  const handleOpenPayment = () => {
+  const handleOpenPayment = async () => {
     if (order.length === 0) return;
     if (orderType === 'delivery') return;
-    setPayingTotal(finalTotal);
-    setCashReceived('');
-    setPaymentMethod('cash');
-    setMemberPhone('');
-    setMemberPreview(null);
-    setSelectedCoupon(null);
+    setPaymentModalPreparing(true);
     setError('');
-    setShowPayment(true);
+    try {
+      if (!(await ensureOrderNotSoldOut())) return;
+      let orderId = editingOrderId || paymentDraftOrderId;
+      if (orderId) {
+        await syncCartToPaymentOrder(orderId);
+      } else {
+        orderId = await createPaymentDraftOrder();
+        setPaymentDraftOrderId(orderId);
+      }
+      setPaymentOrderId(orderId);
+      setPayingTotal(finalTotal);
+      setCashReceived('');
+      setPaymentMethod('cash');
+      setMemberPhone('');
+      setMemberPreview(null);
+      setSelectedCoupon(null);
+      setVoucherCode('');
+      setVoucherPreview(null);
+      setShowPayment(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : t('common.error'));
+    } finally {
+      setPaymentModalPreparing(false);
+    }
   };
 
   const handlePrimaryAction = async () => {
     if (order.length === 0) return;
     if (editingOrderId) {
       if (!(await ensureOrderNotSoldOut())) return;
-      handleOpenPayment();
+      await handleOpenPayment();
       return;
     }
     if (orderType === 'phone') {
@@ -2048,14 +2165,19 @@ export default function CashierOrder() {
       }
     }
     if (!(await ensureOrderNotSoldOut())) return;
-    handleOpenPayment();
+    await handleOpenPayment();
   };
+
+  const voucherAwaitingValidate =
+    Boolean(voucherCode.trim()) && !selectedCoupon && matchedBundles.length === 0 && !voucherPreview;
 
   // Confirm: create order + checkout in one go（先结堂食、外卖、电话以外不适用）
   const couponDiscount = selectedCoupon?.amount || 0;
   const amountAfterCoupon = Math.max(0, payingTotal - couponDiscount);
+  const amountToPay =
+    voucherPreview && !selectedCoupon && matchedBundles.length === 0 ? voucherPreview.payableEuro : amountAfterCoupon;
   const cashReceivedNum = parseFloat(cashReceived) || 0;
-  const changeAmount = paymentMethod === 'cash' ? Math.max(0, cashReceivedNum - amountAfterCoupon) : 0;
+  const changeAmount = paymentMethod === 'cash' ? Math.max(0, cashReceivedNum - amountToPay) : 0;
 
   const handlePay = async () => {
     if (orderType === 'delivery') {
@@ -2075,49 +2197,32 @@ export default function CashierOrder() {
         }
       }
       if (!(await ensureOrderNotSoldOut())) return;
-      let targetOrderId: string;
+      const targetOrderId = editingOrderId || paymentOrderId;
+      if (!targetOrderId) {
+        throw new Error(t('cashier.numberedVoucher.paymentOrderMissing'));
+      }
+      await syncCartToPaymentOrder(targetOrderId);
 
-      if (editingOrderId) {
-        const updateRes = await apiFetch(`/api/orders/${editingOrderId}/items`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ items: buildGroupedItems() }),
-        });
-        if (!updateRes.ok) {
-          const d = await updateRes.json().catch(() => null);
-          throw new Error(d?.error?.message || t('common.error'));
+      let payAmount = amountAfterCoupon;
+      let numberedVoucherCode = '';
+      if (!selectedCoupon && matchedBundles.length === 0 && voucherCode.trim()) {
+        if (!voucherPreview) {
+          throw new Error(t('cashier.numberedVoucher.validateFirstCheckout'));
         }
-        const updateData = await updateRes.json();
-        applyInventoryUpdates(updateData?.inventoryUpdates || []);
-        targetOrderId = editingOrderId;
-      } else {
-      // Step 1: Create order
-      const orderBody: Record<string, unknown> = { type: orderType, items: buildGroupedItems() };
-      if (orderType === 'dine_in') { orderBody.tableNumber = 0; orderBody.seatNumber = 0; }
-      if (orderType === 'takeout') orderBody.staffTakeoutPlacement = true;
-      if (matchedBundles.length > 0) {
-        orderBody.appliedBundles = matchedBundles.map(b => ({ offerId: b.offer._id, name: b.offer.name, nameEn: b.offer.nameEn, discount: b.savings }));
+        const v = await validateVoucherForPaymentOrder(targetOrderId, voucherCode);
+        payAmount = v.payAmount;
+        numberedVoucherCode = v.numberedVoucherCode;
+        setVoucherPreview(v.preview);
       }
 
-      const orderRes = await apiFetch('/api/orders', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify(orderBody),
-      });
-      if (!orderRes.ok) { const d = await orderRes.json().catch(() => null); throw new Error(d?.error?.message || t('common.error')); }
-      const orderData = await orderRes.json();
-      applyInventoryUpdates(orderData?.inventoryUpdates || []);
-      targetOrderId = String(orderData._id);
-      }
-
-      // Step 2: Checkout immediately
+      // Step 2: Checkout
       let checkoutBody: Record<string, unknown>;
       if (paymentMethod === 'member' && memberPreview) {
-        checkoutBody = buildMemberFullWalletCheckoutBody(amountAfterCoupon, memberPreview.phone);
+        checkoutBody = buildMemberFullWalletCheckoutBody(payAmount, memberPreview.phone);
       } else {
         checkoutBody = { paymentMethod };
-        if (paymentMethod === 'cash') checkoutBody.cashAmount = amountAfterCoupon;
-        else if (paymentMethod === 'card') checkoutBody.cardAmount = amountAfterCoupon;
+        if (paymentMethod === 'cash') checkoutBody.cashAmount = payAmount;
+        else if (paymentMethod === 'card') checkoutBody.cardAmount = payAmount;
         else { checkoutBody.cashAmount = Number(mixedCash); checkoutBody.cardAmount = Number(mixedCard); }
       }
       if (bundleTotals.bundleDiscount > 0) {
@@ -2126,6 +2231,17 @@ export default function CashierOrder() {
       if (selectedCoupon) {
         checkoutBody.couponName = selectedCoupon.name;
         checkoutBody.couponAmount = selectedCoupon.amount;
+      }
+      if (numberedVoucherCode) {
+        checkoutBody.numberedVoucherCode = numberedVoucherCode;
+      }
+
+      if (paymentMethod === 'mixed') {
+        const cash = Number(mixedCash) || 0;
+        const card = Number(mixedCard) || 0;
+        if (Math.abs(cash + card - payAmount) > 0.001) {
+          throw new Error(t('cashier.mixedMismatch', '现金+刷卡须等于应付金额'));
+        }
       }
 
       const checkoutRes = await apiFetch(`/api/checkout/seat/${targetOrderId}`, {
@@ -2138,10 +2254,12 @@ export default function CashierOrder() {
       setCheckoutId(checkoutData._id);
       setCheckoutMeta(
         paymentMethod === 'member'
-          ? { total: amountAfterCoupon, cashReceived: 0, change: 0 }
-          : { total: amountAfterCoupon, cashReceived: cashReceivedNum, change: changeAmount },
+          ? { total: payAmount, cashReceived: 0, change: 0 }
+          : { total: payAmount, cashReceived: cashReceivedNum, change: changeAmount },
       );
       setReceiptBundleDiscounts(matchedBundles.map(b => ({ name: b.offer.name, nameEn: b.offer.nameEn, discount: b.savings })));
+      setPaymentDraftOrderId(null);
+      setPaymentOrderId(null);
       setShowPayment(false);
       setOrder([]);
       if (editingOrderId) {
@@ -2814,7 +2932,7 @@ export default function CashierOrder() {
           <button
             className="btn btn-primary"
             onClick={() => void handlePrimaryAction()}
-            disabled={order.length === 0 || paying || editOrderLoading || !!editOrderLoadError}
+            disabled={order.length === 0 || paying || paymentModalPreparing || editOrderLoading || !!editOrderLoadError}
             style={{ width: '100%', fontSize: 15, padding: '12px 0', letterSpacing: 1 }}
           >
             {editingOrderId
@@ -2837,41 +2955,41 @@ export default function CashierOrder() {
             <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 16, textAlign: 'center' }}>{t('cashier.checkout')}</h3>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: 20, marginBottom: 12 }}>
               <span>{t('cashier.total')}</span>
-              <span style={{ color: 'var(--red-primary)' }}>€{payingTotal.toFixed(2)}</span>
+              <span style={{ color: 'var(--red-primary)' }}>€{amountToPay.toFixed(2)}</span>
             </div>
 
-            {/* Coupon selection */}
-            {availableCoupons.length > 0 && (
-              <div style={{ marginBottom: 12, padding: 10, background: 'var(--bg)', borderRadius: 8 }}>
-                <div style={{ fontSize: 12, color: 'var(--text-light)', marginBottom: 6 }}>🎟️ Coupon</div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                  {availableCoupons.map(c => {
-                    const isSelected = selectedCoupon?.name === c.name && selectedCoupon?.amount === c.amount;
-                    return (
-                      <button key={c._id} onClick={() => {
-                        if (isSelected) { setSelectedCoupon(null); setCashReceived(''); }
-                        else { setSelectedCoupon(c); setCashReceived(''); }
-                      }}
-                        className="btn" style={{
-                          padding: '6px 12px', fontSize: 12, borderRadius: 20,
-                          background: isSelected ? '#4CAF50' : 'var(--bg-white)',
-                          color: isSelected ? '#fff' : 'var(--text-secondary)',
-                          border: isSelected ? '2px solid #388E3C' : '1px solid var(--border)',
-                        }}>
-                        {c.name} -€{c.amount.toFixed(2)}
-                      </button>
-                    );
-                  })}
-                </div>
-                {selectedCoupon && (
-                  <div style={{ marginTop: 8, display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: 16 }}>
-                    <span style={{ color: '#2E7D32' }}>After Coupon</span>
-                    <span style={{ color: '#2E7D32' }}>€{amountAfterCoupon.toFixed(2)}</span>
-                  </div>
-                )}
-              </div>
-            )}
+            {paymentModalPreparing ? (
+              <div style={{ fontSize: 13, color: '#666', marginBottom: 12, textAlign: 'center' }}>{t('common.loading')}</div>
+            ) : null}
 
+            <CashierCheckoutDiscountPanel
+              token={token || ''}
+              orderId={paymentOrderId || editingOrderId}
+              subtotalEuro={payingTotal}
+              payableEuro={amountToPay}
+              disabled={matchedBundles.length > 0}
+              disabledReason={matchedBundles.length > 0 ? t('cashier.numberedVoucher.disabledBundle') : undefined}
+              availableCoupons={availableCoupons}
+              selectedCoupon={selectedCoupon}
+              onSelectCoupon={(c) => {
+                setSelectedCoupon(c);
+                setCashReceived('');
+              }}
+              voucherCode={voucherCode}
+              onVoucherCodeChange={setVoucherCode}
+              voucherPreview={voucherPreview}
+              onVoucherPreviewChange={setVoucherPreview}
+              onDiscountInteraction={() => setCashReceived('')}
+            />
+
+            {voucherAwaitingValidate ? (
+              <div style={{ fontSize: 12, color: '#c62828', marginBottom: 12, padding: '8px 10px', background: '#ffebee', borderRadius: 8 }}>
+                {t('cashier.numberedVoucher.validateFirst')}
+              </div>
+            ) : null}
+
+            {!voucherAwaitingValidate ? (
+            <>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
               {(canMemberWallet ? (['cash', 'card', 'mixed', 'member'] as const) : (['cash', 'card', 'mixed'] as const)).map((m) => (
                 <button
@@ -2897,7 +3015,7 @@ export default function CashierOrder() {
 
             {paymentMethod === 'member' ? (
               <CashierMemberCheckoutBlock
-                payAmount={amountAfterCoupon}
+                payAmount={amountToPay}
                 phone={memberPhone}
                 setPhone={setMemberPhone}
                 preview={memberPreview}
@@ -2912,9 +3030,9 @@ export default function CashierOrder() {
                 <input className="input" type="number" step="0.01" value={cashReceived} onChange={e => setCashReceived(e.target.value)}
                   style={{ width: '100%', fontSize: 18, fontWeight: 700, padding: '8px 10px', textAlign: 'right' }} />
                 {cashReceivedNum > 0 && (
-                  <div style={{ marginTop: 6, display: 'flex', justifyContent: 'space-between', padding: '6px 10px', borderRadius: 6, background: cashReceivedNum >= amountAfterCoupon ? '#E8F5E9' : '#FFEBEE' }}>
+                  <div style={{ marginTop: 6, display: 'flex', justifyContent: 'space-between', padding: '6px 10px', borderRadius: 6, background: cashReceivedNum >= amountToPay ? '#E8F5E9' : '#FFEBEE' }}>
                     <span style={{ fontSize: 13, fontWeight: 600 }}>{t('cashier.change')}</span>
-                    <span style={{ fontSize: 18, fontWeight: 700, color: cashReceivedNum >= amountAfterCoupon ? 'var(--green)' : 'var(--red-primary)' }}>€{changeAmount.toFixed(2)}</span>
+                    <span style={{ fontSize: 18, fontWeight: 700, color: cashReceivedNum >= amountToPay ? 'var(--green)' : 'var(--red-primary)' }}>€{changeAmount.toFixed(2)}</span>
                   </div>
                 )}
               </div>
@@ -2928,16 +3046,25 @@ export default function CashierOrder() {
             )}
 
             <div style={{ display: 'flex', gap: 8 }}>
-              <button className="btn btn-outline" style={{ flex: 1 }} onClick={() => setShowPayment(false)}>{t('common.cancel')}</button>
+              <button className="btn btn-outline" style={{ flex: 1 }} onClick={() => void closePaymentModal()}>{t('common.cancel')}</button>
               <button className="btn btn-primary" style={{ flex: 1 }} onClick={handlePay}
                 disabled={
                   paying ||
-                  (paymentMethod === 'cash' && cashReceivedNum < amountAfterCoupon) ||
-                  (paymentMethod === 'member' && !canMemberFullWalletPay(memberPreview, amountAfterCoupon))
+                  paymentModalPreparing ||
+                  !paymentOrderId && !editingOrderId ||
+                  voucherAwaitingValidate ||
+                  (paymentMethod === 'cash' && cashReceivedNum < amountToPay - 0.001) ||
+                  (paymentMethod === 'member' && !canMemberFullWalletPay(memberPreview, amountToPay))
                 }>
                 {paying ? t('common.loading') : t('cashier.submitCheckout')}
               </button>
             </div>
+            </>
+            ) : (
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="btn btn-outline" style={{ flex: 1 }} onClick={() => void closePaymentModal()}>{t('common.cancel')}</button>
+              </div>
+            )}
           </div>
         </div>
       )}

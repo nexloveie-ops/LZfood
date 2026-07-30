@@ -9,6 +9,7 @@ export { SystemConfigSchema } from './SystemConfig';
 export { DailyOrderCounterSchema } from './DailyOrderCounter';
 export { OfferSchema, OfferSlotSchema } from './Offer';
 export { CouponSchema } from './Coupon';
+export { VoucherCampaignSchema, NumberedVoucherSchema } from './NumberedVoucher';
 export { OptionGroupTemplateSchema } from './OptionGroupTemplate';
 export { OptionGroupTemplateRuleSchema } from './OptionGroupTemplateRule';
 export { InventoryTxnSchema } from './InventoryTxn';

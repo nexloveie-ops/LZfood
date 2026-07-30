@@ -2,10 +2,11 @@ import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../../context/AuthContext';
 import { apiFetch } from '../../api/client';
+import VoucherCampaignManager from './VoucherCampaignManager';
 
 interface CouponData { _id: string; name: string; nameEn: string; amount: number; active: boolean; }
 
-export default function CouponManager() {
+function CouponListPanel() {
   const { t } = useTranslation();
   const { token } = useAuth();
   const [coupons, setCoupons] = useState<CouponData[]>([]);
@@ -108,6 +109,43 @@ export default function CouponManager() {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+export default function CouponManager() {
+  const { t } = useTranslation();
+  const [tab, setTab] = useState<'coupons' | 'vouchers'>('coupons');
+  return (
+    <div>
+      <div
+        style={{
+          display: 'inline-flex',
+          gap: 4,
+          marginBottom: 20,
+          padding: 4,
+          borderRadius: 10,
+          background: 'var(--bg-secondary, #f0f0f0)',
+        }}
+      >
+        <button
+          type="button"
+          className={tab === 'coupons' ? 'btn btn-primary' : 'btn btn-ghost'}
+          style={{ fontSize: 13, borderRadius: 8 }}
+          onClick={() => setTab('coupons')}
+        >
+          Coupon
+        </button>
+        <button
+          type="button"
+          className={tab === 'vouchers' ? 'btn btn-primary' : 'btn btn-ghost'}
+          style={{ fontSize: 13, borderRadius: 8 }}
+          onClick={() => setTab('vouchers')}
+        >
+          {t('admin.numberedVoucherTab')}
+        </button>
+      </div>
+      {tab === 'coupons' ? <CouponListPanel /> : <VoucherCampaignManager />}
     </div>
   );
 }

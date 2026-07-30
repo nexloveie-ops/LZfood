@@ -25,6 +25,7 @@ import reportsRouter from './routes/reports';
 import offersRouter from './routes/offers';
 import { createPaymentsRouter } from './routes/payments';
 import couponsRouter from './routes/coupons';
+import voucherCampaignsRouter from './routes/voucherCampaigns';
 import platformRouter from './routes/platform';
 import publicAdsRouter from './routes/publicAds';
 import publicPortalRouter from './routes/publicPortal';
@@ -145,6 +146,9 @@ app.use('/api/payments', createPaymentsRouter(io));
 
 // Coupons routes
 app.use('/api/coupons', couponsRouter);
+
+// Numbered voucher campaigns (admin + cashier validate)
+app.use('/api/voucher-campaigns', voucherCampaignsRouter);
 
 // Geocoding：顾客邮编距离接口在子 Router 外显式注册，确保 GET 一定命中（避免落入 SPA 404）
 app.get('/api/geo/public/eircode', ...guestEircodeMiddleware);

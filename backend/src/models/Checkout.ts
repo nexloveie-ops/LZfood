@@ -10,6 +10,9 @@ const CheckoutSchema = new mongoose.Schema({
   cardAmount: { type: Number },
   couponName: { type: String },
   couponAmount: { type: Number },
+  numberedVoucherId: { type: mongoose.Schema.Types.ObjectId, ref: 'NumberedVoucher' },
+  numberedVoucherCode: { type: String, default: '' },
+  voucherDiscountEuro: { type: Number },
   memberId: { type: mongoose.Schema.Types.ObjectId, ref: 'Member' },
   memberCreditUsed: { type: Number, default: 0 },
   /** 已累计退回会员钱包的储值部分（欧元），用于部分退款多次分摊 */

@@ -42,6 +42,7 @@ import {
   type OrderItemForInventory,
 } from '../utils/inventoryService';
 import { voidNotifyCustomerOrderEvent } from '../modules/customer-notifications/dispatcher';
+import { releaseNumberedVoucherForOrder } from '../utils/numberedVoucherOps';
 import { handleNotifyCustomerReady } from './customerNotifications';
 import {
   DUAL_TRACK_VERSION,
@@ -1790,6 +1791,7 @@ export function createOrdersRouter(io: SocketIOServer): Router {
         event: 'order_cancelled',
       });
 
+      await releaseNumberedVoucherForOrder(req.storeId!, order._id);
       await Checkout.deleteMany({ storeId: req.storeId, orderIds: order._id });
       await Order.findOneAndDelete({ _id: id, storeId: req.storeId });
 
