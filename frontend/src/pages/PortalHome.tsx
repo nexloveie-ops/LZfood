@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import PortalAuthSection from '../components/portal/PortalAuthSection';
 import { portalLogoSrc } from '../constants/portalBrand';
+import { persistUserLanguage } from '../i18n';
 import './portal-home.css';
 
 const DEMO_SLUG = import.meta.env.VITE_DEFAULT_STORE_SLUG || 'demo';
@@ -25,7 +26,7 @@ export default function PortalHome() {
 
   const setLanguage = (lng: string) => {
     void i18n.changeLanguage(lng);
-    localStorage.setItem('language', lng);
+    persistUserLanguage(lng);
   };
 
   const demoHref = `/${DEMO_SLUG}`;

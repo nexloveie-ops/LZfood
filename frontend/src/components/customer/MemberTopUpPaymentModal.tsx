@@ -25,7 +25,7 @@ function PaymentErrorBlock({ message }: { message: string }) {
 }
 
 function TopUpPaymentContent({ storeSlug, memberToken, amountEuro, onSuccess, onClose }: Props) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const stripe = useStripe();
   const elements = useElements();
   const [clientSecret, setClientSecret] = useState('');
@@ -65,10 +65,17 @@ function TopUpPaymentContent({ storeSlug, memberToken, amountEuro, onSuccess, on
     apiFetch('/api/admin/config')
       .then((r) => (r.ok ? r.json() : {}))
       .then((c: Record<string, string>) => {
-        setRestaurantLabel(c.restaurant_name_en || c.restaurant_name_zh || 'Restaurant');
+        const lang = i18n.language || '';
+        const zh = (c.restaurant_name_zh || '').trim();
+        const en = (c.restaurant_name_en || '').trim();
+        if (lang.startsWith('zh')) {
+          setRestaurantLabel(zh || en || 'Restaurant');
+        } else {
+          setRestaurantLabel(en || zh || 'Restaurant');
+        }
       })
       .catch(() => {});
-  }, []);
+  }, [i18n.language]);
 
   useEffect(() => {
     let cancelled = false;

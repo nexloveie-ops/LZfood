@@ -1,0 +1,27 @@
+---
+description: Orders, inventory/BoM, and cashier UX decisions
+alwaysApply: true
+---
+
+# Orders / inventory / cashier
+
+## Orders
+- `GET /api/orders/active-all` feeds Unified Order Center (wide query; UI filters further). Not every returned order should show.
+- **pay_first + fully settled on the spot → `status=completed` (+ completedAt)**, not stuck on `checked_out`. Still create Checkout for reporting.
+- `pay_after` may use intermediate statuses. Per-store configurable FSM discussed, **not built**.
+- Online card on delivery reports as **Online Payment**. Delivery has its own `deliveryStage` flow.
+
+## Inventory
+- **Track A (item stock)** vs **Track B (raw-material BoM)** are **mutex** per item.
+- A: optional per dish; qty integer portions; stock 0 blocks sale; no auto restock on cancel; Admin configures; Cashier restock/waste/init; feature gated by platform.
+- B: shared ingredients (e.g. duck across dishes/options); decimal qty (2dp); backfill ~14 days on each link/enable; central_kitchen | third_party | self_purchase.
+- Block unavailable **choices in the option UI** (cashier + customer), not only at place-order; backend still validates. `GET /api/menu/bom-availability`.
+- Cashier shows **sellable portions**, not raw stock counts. Restock UI groups need-restock vs ok (not by category).
+
+## Cashier UX
+- Line qty steppers before price, compact, centered; widen option-group dialog; cart options one per line.
+- Option-group templates: drag reorder. Ad-hoc add-on (+ button) with price + bilingual via Translation API.
+- Delivery fee: auto-calc then **editable before submit**; receipt must use edited fee. Customer block collapsible.
+- Receipts: bilingual options; `2X name`; hide option-group titles; show ad-hoc add-ons. Separate dine-in vs takeout alert sounds.
+- Order history: payment filter includes `member` (hideable like cash). Copy: 「菜品目录」not 「分类」.
+- Printing: browser print has limits (no silent/buzzer); SaaS-generic bridges only — no model-specific hardcoding.

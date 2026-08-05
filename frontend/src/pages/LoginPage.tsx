@@ -9,6 +9,7 @@ import {
   sendOwnerPasswordResetCode,
 } from '../api/portal';
 import { portalLogoSrc } from '../constants/portalBrand';
+import { persistUserLanguage } from '../i18n';
 import './portal-home.css';
 import './store-login.css';
 
@@ -56,7 +57,7 @@ export default function LoginPage() {
 
   const setLanguage = (lng: string) => {
     void i18n.changeLanguage(lng);
-    localStorage.setItem('language', lng);
+    persistUserLanguage(lng);
   };
 
   const switchView = (next: LoginView) => {

@@ -19,6 +19,17 @@ export function translateMemberWalletTxnNote(note: string | undefined | null, t:
   if (n === '结账后更新订单失败，冲回储值') return t('member.txnNote.reversalAfterTableFail');
   if (n === '更新订单失败，冲回储值') return t('member.txnNote.reversalAfterSeatFail');
 
+  if (n === '堂食扫码储值支付（待收银收尾）') return t('member.txnNote.qrDineInPendingCashier');
+  if (n === '外卖自提扫码储值支付（待收银收尾）') return t('member.txnNote.qrTakeoutPendingCashier');
+  if (n === '电话单下单时已付（会员储值）') return t('member.txnNote.phonePrepaidMember');
+  if (n === '后台充值') return t('member.txnNote.adminRecharge');
+
+  const topUpTarget = /^充值至目标余额 €([\d.]+)$/.exec(n);
+  if (topUpTarget) return t('member.txnNote.topUpToTarget', { amount: topUpTarget[1] });
+
+  const adjustTarget = /^调整至目标余额 €([\d.]+)$/.exec(n);
+  if (adjustTarget) return t('member.txnNote.adjustToTarget', { amount: adjustTarget[1] });
+
   const stripe = /^Stripe 自助充值 (.+)$/.exec(n);
   if (stripe) return t('member.txnNote.stripeTopUp', { ref: stripe[1] });
 

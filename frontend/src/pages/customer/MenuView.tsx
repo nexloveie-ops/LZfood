@@ -171,15 +171,26 @@ export default function MenuView({ storeFrontEmbed = false }: { storeFrontEmbed?
     return () => observer.disconnect();
   }, [categories, items]);
 
-  // Click tab → scroll to section
+  // Click tab → scroll to section（勿在跳转途中折叠 header，否则 scrollTop 补偿会冲掉目标位置）
   const handleTabClick = useCallback((catId: string) => {
     setActiveCategory(catId);
     const sectionEl = sectionRefs.current.get(catId);
-    if (sectionEl && scrollContainerRef.current) {
-      isUserClick.current = true;
-      sectionEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      setTimeout(() => { isUserClick.current = false; }, 800);
-    }
+    const scrollEl = scrollContainerRef.current;
+    if (!sectionEl || !scrollEl) return;
+
+    isUserClick.current = true;
+    heroTransitionLockUntil.current = Date.now() + 1000;
+
+    const sectionRect = sectionEl.getBoundingClientRect();
+    const scrollRect = scrollEl.getBoundingClientRect();
+    const targetTop = Math.max(0, scrollEl.scrollTop + (sectionRect.top - scrollRect.top));
+    scrollEl.scrollTo({ top: targetTop, behavior: 'smooth' });
+    lastScrollY.current = targetTop;
+
+    window.setTimeout(() => {
+      isUserClick.current = false;
+      lastScrollY.current = scrollEl.scrollTop;
+    }, 1000);
   }, []);
 
   const initialHeroHidden =
@@ -249,7 +260,6 @@ export default function MenuView({ storeFrontEmbed = false }: { storeFrontEmbed?
     if (scrollRafRef.current != null) return;
     scrollRafRef.current = requestAnimationFrame(() => {
       scrollRafRef.current = null;
-      if (Date.now() < heroTransitionLockUntil.current) return;
 
       const el = scrollContainerRef.current;
       if (!el) return;
@@ -258,14 +268,19 @@ export default function MenuView({ storeFrontEmbed = false }: { storeFrontEmbed?
       const dy = y - prevY;
       const nearBottom = y + el.clientHeight >= el.scrollHeight - 2;
 
-      if (nearBottom) {
-        if (!heroHiddenRef.current) setHeroHiddenState(true);
+      setShowScrollTopFab(y > 100);
+
+      // 类目点击 / header 过渡锁期间：同步滚动位置，避免解锁后 dy 过大误折叠 header
+      if (isUserClick.current || Date.now() < heroTransitionLockUntil.current) {
         lastScrollY.current = y;
-        setShowScrollTopFab(y > 100);
         return;
       }
 
-      setShowScrollTopFab(y > 100);
+      if (nearBottom) {
+        if (!heroHiddenRef.current) setHeroHiddenState(true);
+        lastScrollY.current = y;
+        return;
+      }
 
       // 仅滑到列表最顶部时展开 header；中间上滑不再弹出
       if (y <= 16) {

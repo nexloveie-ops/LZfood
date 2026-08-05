@@ -1,0 +1,28 @@
+---
+description: LZFOOD product context from prior chats — always load
+alwaysApply: true
+---
+
+# LZFOOD core context
+
+## Product
+- Multi-tenant B2B hospitality SaaS (EPOS + ordering) by **L&Z Techserve Ltd**, not a single restaurant site.
+- Routes: `/{storeSlug}/customer|cashier|admin`; `/` = company portal; platform at `/platform` / `/adlg`.
+- Order types: `dine_in` (`pay_first` default / `pay_after`), `takeout`, `phone`, `delivery`. Stack: React/Vite + Express + Mongo + Socket.IO.
+- Region: Europe/Dublin, Eircode, bilingual EN/ZH. Production: `https://food.lztechserve.com`. Repo: `nexloveie-ops/LZfood`.
+- Contact: `info@lztechserve.com`. Logo: GCS `lzfoodgroup/logo/lzlogo.png`.
+
+## Plans (product narrative)
+- **Free Base**: daily ops including delivery + member wallet + bundle offers; **no** coupons/redeem (training cost). Self-serve register → Free, no approval; one email → one store.
+- **LZ Pro**: convenience admin (coupons, history, option templates, VAT, inventory helpers). Discussed ~€49/mo anchor.
+- **Enterprise**: full + hide post-order ads. Discussed ~€99/mo. Public copy sometimes omits Enterprise/ads.
+- Ads = platform revenue (play/click/duration pricing — not finalized). Feature flags via FeaturePlan/addons per store.
+
+## Ops habits
+- After backend changes, user often asks to restart backend/frontend.
+- Prefer discuss-first when asked; secrets only via env — never echo Mongo/API/SMTP/Deliveroo keys into docs or chat summaries.
+- Test stores: `demo`, `tasteofhongkong`, `meet-fresh`, `dragoninn` (customer import).
+
+## Env names (values never in rules)
+- DB: `LZFOOD_DBCON` or `DBCON`; `JWT_SECRET`; `DEFAULT_STORE_SLUG` / `VITE_DEFAULT_STORE_SLUG`.
+- Optional: `GoogleGeo`, `GCS_*`, `SMTP_*`, Twilio vars, `VITE_API_ORIGIN`, `USE_LOCAL_UPLOADS`. Stripe is per-store in DB.

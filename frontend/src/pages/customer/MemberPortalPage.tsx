@@ -3,7 +3,9 @@ import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { apiFetch, memberApiFetch } from '../../api/client';
 import MemberTopUpPaymentModal from '../../components/customer/MemberTopUpPaymentModal';
+import LanguageSwitcher from '../../components/LanguageSwitcher';
 import { translateMemberWalletTxnNote } from '../../utils/memberTxnNoteI18n';
+import { formatMemberApiError, translateMemberApiMessage } from '../../utils/memberApiErrorI18n';
 import { useBusinessStatus } from '../../hooks/useBusinessStatus';
 
 const TOKEN_KEY = (slug: string) => `lzfood_member_${slug}`;
@@ -266,30 +268,6 @@ function TxnDetailModal({
   );
 }
 
-function formatMemberApiError(
-  status: number,
-  body: unknown,
-  storeSlug: string,
-  statusText: string,
-): string {
-  const d = body as { error?: { code?: string; message?: string } } | null;
-  const code = d?.error?.code;
-  const msg = d?.error?.message || statusText || '请求失败';
-  if (code === 'STORE_NOT_FOUND') {
-    return `店铺「${storeSlug || '…'}」在数据库中不存在（slug 须全小写，与网址第一段一致）。\n\n本地创建门店：在 backend 目录执行\nSEED_STORE_SLUG=${storeSlug || 'your-slug'} npm run seed:store\n（需已配置 backend/.env 中的 MongoDB）。也可在平台后台新建该 slug 的门店。`;
-  }
-  if (code === 'STORE_REQUIRED') {
-    return '缺少店铺标识。请使用「/店铺名/customer/member」打开本页，或在后端配置 DEFAULT_STORE_SLUG。';
-  }
-  if (status === 404 && !code) {
-    if (!storeSlug) {
-      return '404：网址中缺少店铺名，或后端未启动 / 代理失败。请启动后端（默认端口 8080）；若仍失败，可在 frontend/.env 设置 VITE_API_ORIGIN=http://127.0.0.1:8080';
-    }
-    return `HTTP 404（响应里无业务错误码）。常见原因：\n\n① 数据库尚无 slug「${storeSlug}」的门店 → 在 backend 目录执行：\nSEED_STORE_SLUG=${storeSlug} npm run seed:store\n\n② 请求没到后端（代理失败）→ 设 VITE_API_ORIGIN=http://127.0.0.1:8080 并重启前端 dev。\n\n③ slug 格式：仅小写字母、数字、连字符（例如 dragoninn 合法）。`;
-  }
-  return msg;
-}
-
 export default function MemberPortalPage() {
   const { storeSlug = '' } = useParams<{ storeSlug: string }>();
   const navigate = useNavigate();
@@ -440,7 +418,7 @@ export default function MemberPortalPage() {
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) {
-        throw new Error(formatMemberApiError(r.status, d, storeSlug, r.statusText));
+        throw new Error(formatMemberApiError(r.status, d, storeSlug, r.statusText, t));
       }
       const bal = Number((d as { creditBalance?: number }).creditBalance);
       const credited = Number((d as { creditedEuro?: number }).creditedEuro);
@@ -455,7 +433,7 @@ export default function MemberPortalPage() {
       );
       void loadTxns(1);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Error');
+      setError(e instanceof Error ? e.message : t('member.apiErrors.requestFailed'));
     } finally {
       setCardRedeemBusy(false);
     }
@@ -536,7 +514,7 @@ export default function MemberPortalPage() {
         body: JSON.stringify({ phone, pin, storeSlug }),
       });
       const d = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(formatMemberApiError(r.status, d, storeSlug, r.statusText));
+      if (!r.ok) throw new Error(formatMemberApiError(r.status, d, storeSlug, r.statusText, t));
       const tk = d.token as string;
       sessionStorage.setItem(TOKEN_KEY(storeSlug), tk);
       setToken(tk);
@@ -548,7 +526,7 @@ export default function MemberPortalPage() {
       postalEditedByUserRef.current = false;
       setView('home');
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Error');
+      setError(e instanceof Error ? e.message : t('member.apiErrors.requestFailed'));
     } finally {
       setLoading(false);
     }
@@ -574,13 +552,15 @@ export default function MemberPortalPage() {
         message?: string;
         error?: { code?: string; message?: string };
       };
-      if (!r.ok) throw new Error(formatMemberApiError(r.status, d, storeSlug, r.statusText));
+      if (!r.ok) throw new Error(formatMemberApiError(r.status, d, storeSlug, r.statusText, t));
       setPinResetNotice(
-        typeof d?.message === 'string' && d.message.trim() ? d.message.trim() : t('member.forgotPinSuccess'),
+        typeof d?.message === 'string' && d.message.trim()
+          ? translateMemberApiMessage(d.message.trim(), t) || t('member.forgotPinSuccess')
+          : t('member.forgotPinSuccess'),
       );
       setPin('');
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Error');
+      setError(e instanceof Error ? e.message : t('member.apiErrors.requestFailed'));
     } finally {
       setPinResetLoading(false);
     }
@@ -601,7 +581,7 @@ export default function MemberPortalPage() {
         body: JSON.stringify({ phone, pin, displayName, storeSlug }),
       });
       const d = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(formatMemberApiError(r.status, d, storeSlug, r.statusText));
+      if (!r.ok) throw new Error(formatMemberApiError(r.status, d, storeSlug, r.statusText, t));
       const tk = d.token as string;
       sessionStorage.setItem(TOKEN_KEY(storeSlug), tk);
       setToken(tk);
@@ -613,7 +593,7 @@ export default function MemberPortalPage() {
       postalEditedByUserRef.current = false;
       setView('home');
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Error');
+      setError(e instanceof Error ? e.message : t('member.apiErrors.requestFailed'));
     } finally {
       setLoading(false);
     }
@@ -652,10 +632,10 @@ export default function MemberPortalPage() {
         }),
       });
       const d = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(formatMemberApiError(r.status, d, storeSlug, r.statusText));
+      if (!r.ok) throw new Error(formatMemberApiError(r.status, d, storeSlug, r.statusText, t));
       setProfile(d);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Error');
+      setError(e instanceof Error ? e.message : t('member.apiErrors.requestFailed'));
     } finally {
       setLoading(false);
     }
@@ -671,11 +651,11 @@ export default function MemberPortalPage() {
         body: JSON.stringify({ oldPin, newPin, storeSlug }),
       });
       const d = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(formatMemberApiError(r.status, d, storeSlug, r.statusText));
+      if (!r.ok) throw new Error(formatMemberApiError(r.status, d, storeSlug, r.statusText, t));
       setOldPin('');
       setNewPin('');
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Error');
+      setError(e instanceof Error ? e.message : t('member.apiErrors.requestFailed'));
     } finally {
       setLoading(false);
     }
@@ -686,11 +666,14 @@ export default function MemberPortalPage() {
       <div className="order-status-page">
         <div className="order-status-scroll">
       <div style={{ maxWidth: 480, margin: '0 auto', padding: '16px 14px 32px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-          <h1 style={{ fontSize: 20, margin: 0 }}>{t('member.title', '会员中心')}</h1>
-          <button type="button" className="btn btn-outline" style={{ fontSize: 12 }} onClick={logout}>
-            {t('member.logout', '退出')}
-          </button>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+          <h1 style={{ fontSize: 20, margin: 0, flex: 1, minWidth: 0 }}>{t('member.title')}</h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+            <LanguageSwitcher />
+            <button type="button" className="btn btn-outline" style={{ fontSize: 12 }} onClick={logout}>
+              {t('member.logout')}
+            </button>
+          </div>
         </div>
         <div className="card" style={{ padding: 16, marginBottom: 16 }}>
           <div
@@ -1035,18 +1018,21 @@ export default function MemberPortalPage() {
     <div className="order-status-page">
       <div className="order-status-scroll">
     <div style={{ maxWidth: 400, margin: '0 auto', padding: '24px 14px' }}>
-      <h1 style={{ fontSize: 20, marginBottom: 16 }}>{t('member.title', '会员中心')}</h1>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+        <h1 style={{ fontSize: 20, margin: 0, flex: 1, minWidth: 0 }}>{t('member.title')}</h1>
+        <LanguageSwitcher />
+      </div>
       {!storeSlug ? (
         <div className="card" style={{ padding: 12, marginBottom: 14, background: '#fff8e1', fontSize: 13, lineHeight: 1.5 }}>
-          当前链接缺少店铺名。请从店铺首页点击「会员」进入，或手动访问 <strong>/您的店铺名/customer/member</strong>。
+          {t('member.missingStoreSlugHint')}
         </div>
       ) : null}
       <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
         <button type="button" className="btn" style={{ flex: 1, background: view === 'login' ? 'var(--red-primary)' : 'var(--bg)', color: view === 'login' ? '#fff' : 'inherit' }} onClick={() => { setView('login'); setError(''); setPinResetNotice(''); }}>
-          {t('member.loginTab', '登录')}
+          {t('member.loginTab')}
         </button>
         <button type="button" className="btn" style={{ flex: 1, background: view === 'register' ? 'var(--red-primary)' : 'var(--bg)', color: view === 'register' ? '#fff' : 'inherit' }} onClick={() => { setView('register'); setError(''); setPinResetNotice(''); }}>
-          {t('member.registerTab', '注册')}
+          {t('member.registerTab')}
         </button>
       </div>
 
@@ -1057,13 +1043,13 @@ export default function MemberPortalPage() {
 
       {view === 'login' ? (
         <>
-          <input className="input" placeholder={t('member.phone', '手机号')} value={phone} onChange={(e) => setPhone(e.target.value)} style={{ width: '100%', marginBottom: 10 }} />
-          <input className="input" type="password" inputMode="numeric" placeholder="PIN" value={pin} onChange={(e) => setPin(e.target.value)} style={{ width: '100%', marginBottom: 16 }} />
+          <input className="input" placeholder={t('member.phone')} value={phone} onChange={(e) => setPhone(e.target.value)} style={{ width: '100%', marginBottom: 10 }} />
+          <input className="input" type="password" inputMode="numeric" placeholder={t('member.pin')} value={pin} onChange={(e) => setPin(e.target.value)} style={{ width: '100%', marginBottom: 16 }} />
           <button type="button" className="btn btn-primary" style={{ width: '100%' }} disabled={loading || !storeSlug} onClick={() => void handleLogin()}>
-            {loading ? '…' : t('member.login', '登录')}
+            {loading ? t('common.loading') : t('member.login')}
           </button>
           <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 12, marginBottom: 8, lineHeight: 1.45 }}>
-            {t('member.forgotPinHint', '忘记 PIN？输入手机号后点击下方按钮，我们会将新 PIN 发到您的手机。')}
+            {t('member.forgotPinHint')}
           </p>
           <button
             type="button"
@@ -1072,23 +1058,23 @@ export default function MemberPortalPage() {
             disabled={pinResetLoading || loading || !storeSlug}
             onClick={() => void handleRequestPinReset()}
           >
-            {pinResetLoading ? '…' : t('member.forgotPinSubmit', '找回 PIN')}
+            {pinResetLoading ? t('common.loading') : t('member.forgotPinSubmit')}
           </button>
         </>
       ) : (
         <>
-          <input className="input" placeholder={t('member.phone', '手机号')} value={phone} onChange={(e) => setPhone(e.target.value)} style={{ width: '100%', marginBottom: 10 }} />
-          <input className="input" placeholder={t('member.displayName', '称呼（可选）')} value={displayName} onChange={(e) => setDisplayName(e.target.value)} style={{ width: '100%', marginBottom: 10 }} />
-          <input className="input" type="password" inputMode="numeric" placeholder="PIN" value={pin} onChange={(e) => setPin(e.target.value)} style={{ width: '100%', marginBottom: 10 }} />
-          <input className="input" type="password" inputMode="numeric" placeholder={t('member.pinAgain', '确认 PIN')} value={pin2} onChange={(e) => setPin2(e.target.value)} style={{ width: '100%', marginBottom: 16 }} />
+          <input className="input" placeholder={t('member.phone')} value={phone} onChange={(e) => setPhone(e.target.value)} style={{ width: '100%', marginBottom: 10 }} />
+          <input className="input" placeholder={t('member.displayName')} value={displayName} onChange={(e) => setDisplayName(e.target.value)} style={{ width: '100%', marginBottom: 10 }} />
+          <input className="input" type="password" inputMode="numeric" placeholder={t('member.pin')} value={pin} onChange={(e) => setPin(e.target.value)} style={{ width: '100%', marginBottom: 10 }} />
+          <input className="input" type="password" inputMode="numeric" placeholder={t('member.pinAgain')} value={pin2} onChange={(e) => setPin2(e.target.value)} style={{ width: '100%', marginBottom: 16 }} />
           <button type="button" className="btn btn-primary" style={{ width: '100%' }} disabled={loading || !storeSlug} onClick={handleRegister}>
-            {loading ? '…' : t('member.register', '注册')}
+            {loading ? t('common.loading') : t('member.register')}
           </button>
         </>
       )}
 
       <div style={{ marginTop: 20, textAlign: 'center' }}>
-        <Link to={`/${storeSlug}`} style={{ color: 'var(--text-secondary)', fontSize: 13 }}>{t('member.backStore', '返回店铺')}</Link>
+        <Link to={`/${storeSlug}`} style={{ color: 'var(--text-secondary)', fontSize: 13 }}>{t('member.backStore')}</Link>
       </div>
     </div>
       </div>

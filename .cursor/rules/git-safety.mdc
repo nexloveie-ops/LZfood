@@ -1,0 +1,12 @@
+---
+description: Permanent git push and rollback safety for LZFOOD
+alwaysApply: true
+---
+
+# Git safety (permanent)
+
+- Never push to GitHub unless the user explicitly asks (e.g. 「上传」「推送」「上传到 github」).
+- If asked to push, confirm the remote/URL and branch first. Default repo: `https://github.com/nexloveie-ops/LZfood`.
+- Never rollback / hard reset / revert unless the user gives an explicit instruction **and** you confirm the exact command and impact first.
+- Large risky refactors: take a local backup first when the user asks (e.g. `backup_*` folders).
+- Prefer discussion when the user says 「不写代码 / 只讨论」; implement only after 「ok go / 实现 / 修改代码」.

@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next';
+import { persistUserLanguage } from '../i18n';
 
 const languages = [
   { code: 'zh-CN', flag: '🇨🇳' },
@@ -9,8 +10,8 @@ export default function LanguageSwitcher() {
   const { i18n } = useTranslation();
 
   const handleSwitch = (lng: string) => {
-    i18n.changeLanguage(lng);
-    localStorage.setItem('language', lng);
+    void i18n.changeLanguage(lng);
+    persistUserLanguage(lng);
   };
 
   return (

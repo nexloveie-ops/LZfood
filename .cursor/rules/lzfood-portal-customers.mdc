@@ -1,0 +1,23 @@
+---
+description: Portal auth, customers, Eircode, grant positioning
+alwaysApply: true
+---
+
+# Portal / customers / grants
+
+## Portal
+- Register: store name + slug + email + admin creds → email OTP → Free store, no review. Login = enter slug → `/{slug}/login`.
+- Forgot password: **store owner/admin only**, OTP. Success/reg emails bilingual; CC platform inbox; **sign-in URLs must use public origin**, never localhost.
+- SMTP via Google Workspace with auth (`SMTP_*`). Cloud Run historically hit Gmail 421 EHLO — local OK ≠ cloud OK.
+- Portal UI: light SaaS look; unify login/admin/cashier styling over time.
+
+## Customers / Eircode (dragoninn import path)
+- CustomerProfile ≠ Member. Import scripts under `customers/` (gitignored). Phone `003538…` → `08…`.
+- Profiles are a cache: fill gaps on cashier use; **no nightly full geocode**.
+- Delivery phone lookup: resolve address → Eircode (`resolveAddressEircode` / `/api/geo/address`); rank candidates by store distance + token overlap.
+- After address→Eircode, **do not overwrite deliveryAddress** from reverse geocode. Prefer profiles that already have Eircode when duplicates exist.
+- Google often too coarse for door-level; paid Irish gazetteers discussed (AutoAddress/ECAD), no free reliable official API.
+
+## Positioning / grants
+- Pitch as B2B hospitality EPOS SaaS feasibility (LEO Tipperary Feasibility / Priming) — not “website for one restaurant”.
+- Differentiators discussed: legacy customer migration, keep existing hardware, tags/recommendations, AR menu, Irish ops (Eircode/VAT), offline sync / caller-ID / multi-channel refunds on roadmap.

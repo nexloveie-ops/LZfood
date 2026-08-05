@@ -8,6 +8,7 @@ import MemberWalletPayModal from '../../components/customer/MemberWalletPayModal
 import { apiFetch } from '../../api/client';
 import { resolveBackendAssetUrl } from '../../utils/backendPublicUrl';
 import { useRestaurantConfig } from '../../hooks/useRestaurantConfig';
+import { useBusinessStatus } from '../../hooks/useBusinessStatus';
 import { computeCustomerFacingPayableEuro } from '../../utils/orderPayableEuro';
 
 interface OrderItem {
@@ -219,6 +220,9 @@ export default function OrderStatusPage() {
   const { t, i18n } = useTranslation();
   const lang = i18n.language;
   const { config } = useRestaurantConfig();
+  const { memberWalletEnabled } = useBusinessStatus();
+  /** 与店首页/会员页一致：套餐未开通 `cashier.member.wallet` 时不展示会员支付 */
+  const canMemberWallet = memberWalletEnabled !== false;
   const storePhone = (config.restaurant_phone || '').trim();
   const { clearCart, setItems, setEditOrderId } = useCart();
   const [order, setOrder] = useState<Order | null>(null);
@@ -606,26 +610,28 @@ export default function OrderStatusPage() {
               }}>
               <span style={{ fontSize: 20 }}>💳</span> {t('customer.payNow')} · €{computeCustomerFacingPayableEuro(order, config.dine_in_workflow_mode === 'pay_after').toFixed(2)}
             </button>
-            <button
-              className="btn btn-outline"
-              onClick={() => setShowMemberWallet(true)}
-              style={{
-                width: '100%',
-                padding: '14px 0',
-                fontSize: 15,
-                fontWeight: 700,
-                borderRadius: 12,
-                border: '2px solid var(--gold-primary, #C5A059)',
-                color: 'var(--text-dark)',
-                background: 'linear-gradient(180deg, #fffef8 0%, #faf6eb 100%)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 8,
-              }}
-            >
-              <span style={{ fontSize: 20 }}>👛</span> {t('customer.memberWalletPay')} · €{computeCustomerFacingPayableEuro(order, config.dine_in_workflow_mode === 'pay_after').toFixed(2)}
-            </button>
+            {canMemberWallet ? (
+              <button
+                className="btn btn-outline"
+                onClick={() => setShowMemberWallet(true)}
+                style={{
+                  width: '100%',
+                  padding: '14px 0',
+                  fontSize: 15,
+                  fontWeight: 700,
+                  borderRadius: 12,
+                  border: '2px solid var(--gold-primary, #C5A059)',
+                  color: 'var(--text-dark)',
+                  background: 'linear-gradient(180deg, #fffef8 0%, #faf6eb 100%)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 8,
+                }}
+              >
+                <span style={{ fontSize: 20 }}>👛</span> {t('customer.memberWalletPay')} · €{computeCustomerFacingPayableEuro(order, config.dine_in_workflow_mode === 'pay_after').toFixed(2)}
+              </button>
+            ) : null}
             {hideBackToMenu ? (
               <div style={{ display: 'flex', gap: 10 }}>
                 <button
@@ -761,7 +767,7 @@ export default function OrderStatusPage() {
           onClose={() => setShowPayment(false)}
         />
       )}
-      {showMemberWallet && order && (
+      {canMemberWallet && showMemberWallet && order && (
         <MemberWalletPayModal
           orderId={order._id}
           amount={computeCustomerFacingPayableEuro(order, config.dine_in_workflow_mode === 'pay_after')}
