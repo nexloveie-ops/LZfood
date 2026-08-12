@@ -286,6 +286,11 @@ function plainDivider(): string {
   return '@D@';
 }
 
+/** Solid rule for catalog / section breaks (APK renders as normal text line of '='). */
+function plainSolidDivider(): string {
+  return `@N@${'='.repeat(RECEIPT_CHARS_PER_LINE)}`;
+}
+
 /** Shop name — APK ESC/POS center + double height (no spaces; H10 strips them). */
 function plainHeaderCenter(line: string): string {
   return `@H@${line.trim()}`;
@@ -458,12 +463,11 @@ function buildReceiptPlainText(
     }
   }
 
-  lines.push(plainDivider());
-
   if (partialDesc) {
     lines.push(plainCenter('Partial checkout / 部分结账'));
     const partialSections = groupItemsByMenuCatalog(partialDesc.lines);
     for (const section of partialSections) {
+      lines.push(plainSolidDivider());
       lines.push(plainCenter(`◆ ${catalogHeaderLabel(section)}`));
       for (const L of section.items) {
         lines.push(...plainItemLines(formatReceiptItemTitle(L.qty, L.title), L.amountEuro));
@@ -477,6 +481,7 @@ function buildReceiptPlainText(
     const allItems = receipt.orders.flatMap((order) => order.items);
     const sections = groupItemsByMenuCatalog(allItems);
     for (const section of sections) {
+      lines.push(plainSolidDivider());
       lines.push(plainCenter(`◆ ${catalogHeaderLabel(section)}`));
       for (const item of section.items) {
         lines.push(
@@ -495,7 +500,7 @@ function buildReceiptPlainText(
     }
   }
 
-  lines.push(plainDivider());
+  lines.push(plainSolidDivider());
 
   const { deliveryAmt, showLegacyDeliveryRow } = receiptDeliveryFeeBreakdown(receipt);
   const totalBundleDiscount = (bundleDiscounts || []).reduce((s, b) => s + b.discount, 0);
@@ -578,6 +583,7 @@ function buildReceiptHTML(
     body { font-family: Arial, Helvetica, sans-serif; font-size: 15px; font-weight: bold; color: #000; max-width: 420px; margin: 0 auto; padding: 14px; }
     .center { text-align: center; }
     .divider { border-top: 2px dashed #000; margin: 10px 0; }
+    .divider-solid { border-top: 1px solid #000; margin: 8px 0; }
     .row { display: flex; justify-content: space-between; margin: 4px 0; }
     .big { font-size: 22px; margin: 6px 0; letter-spacing: 2px; }
     table { width: 100%; border-collapse: collapse; margin: 8px 0; }
@@ -587,6 +593,8 @@ function buildReceiptHTML(
     .item-en { font-size: 16px; padding-left: 4px; line-height: 1.25; }
     .opt-cn { font-size: 17px; line-height: 1.3; padding-left: 2px; }
     .opt-en { font-size: 15px; padding-left: 14px; line-height: 1.3; }
+    .catalog-hdr { font-size: 13px; padding: 6px 0 4px; font-weight: 700; }
+    .catalog-rule { border-top: 1px solid #000; height: 0; padding: 0; margin: 0; }
     .sub { font-size: 16px; padding-left: 4px; }
     .terms { text-align: center; font-size: 13px; white-space: pre-line; margin-top: 10px; border-top: 2px dashed #000; padding-top: 10px; }
     .terms img { font-weight: normal; }
@@ -669,17 +677,18 @@ function buildReceiptHTML(
       }
     }
   }
-  html += `</div><div class="divider"></div>`;
+  html += `</div>`;
 
   const partialDesc = describeDineInPartialLines(receipt);
 
-  // Items — grouped by Menu catalog
+  // Items — grouped by Menu catalog (one solid rule before each catalog)
   html += `<table>`;
   if (partialDesc) {
     html += `<tr><td colspan="2" style="font-size:12px;text-align:center;padding:6px 0;font-weight:bold">Partial checkout / 部分结账</td></tr>`;
     const partialSections = groupItemsByMenuCatalog(partialDesc.lines);
     for (const section of partialSections) {
-      html += `<tr><td colspan="2" style="font-size:13px;padding:8px 0 4px;font-weight:700;border-top:1px dashed #999">◆ ${escapeReceiptHtml(catalogHeaderLabel(section))}</td></tr>`;
+      html += `<tr><td colspan="2" class="catalog-rule"></td></tr>`;
+      html += `<tr><td colspan="2" class="catalog-hdr">◆ ${escapeReceiptHtml(catalogHeaderLabel(section))}</td></tr>`;
       for (const L of section.items) {
         html += `<tr><td><div class="item-cn">${escapeReceiptHtml(formatReceiptItemTitle(L.qty, L.title))}</div>`;
         if (L.titleEn && L.titleEn !== L.title) html += `<div class="item-en">${escapeReceiptHtml(L.titleEn)}</div>`;
@@ -695,7 +704,8 @@ function buildReceiptHTML(
     const allItems = receipt.orders.flatMap((order) => order.items);
     const sections = groupItemsByMenuCatalog(allItems);
     for (const section of sections) {
-      html += `<tr><td colspan="2" style="font-size:13px;padding:8px 0 4px;font-weight:700;border-top:1px dashed #999">◆ ${escapeReceiptHtml(catalogHeaderLabel(section))}</td></tr>`;
+      html += `<tr><td colspan="2" class="catalog-rule"></td></tr>`;
+      html += `<tr><td colspan="2" class="catalog-hdr">◆ ${escapeReceiptHtml(catalogHeaderLabel(section))}</td></tr>`;
       for (const item of section.items) {
         html += `<tr><td><div class="item-cn">${escapeReceiptHtml(formatReceiptItemTitle(item.quantity, item.itemName))}</div>`;
         if (item.itemNameEn && item.itemNameEn !== item.itemName) html += `<div class="item-en">${escapeReceiptHtml(item.itemNameEn)}</div>`;
@@ -708,7 +718,7 @@ function buildReceiptHTML(
       }
     }
   }
-  html += `</table><div class="divider"></div>`;
+  html += `</table><div class="divider-solid"></div>`;
 
   // Total
   const { deliveryAmt, showLegacyDeliveryRow } = receiptDeliveryFeeBreakdown(receipt);
@@ -866,7 +876,7 @@ export default function ReceiptPrint({ checkoutId, cashReceived, changeAmount, b
 
   return (
     <div style={{ fontFamily: 'Arial, Helvetica, sans-serif', maxWidth: 420, margin: '0 auto', padding: 16, fontSize: 14, fontWeight: 'bold', color: '#000', background: '#fff', border: '1px solid #ddd', borderRadius: 8 }}>
-      <div style={{ textAlign: 'center', borderBottom: '2px dashed #000', paddingBottom: 8, marginBottom: 8 }}>
+      <div style={{ textAlign: 'center', paddingBottom: 8, marginBottom: 4 }}>
         {restaurantName && <div style={{ fontSize: 17, marginBottom: 4 }}>{restaurantName}</div>}
         {config.restaurant_address && <div style={{ fontSize: 13 }}>{config.restaurant_address}</div>}
         {config.restaurant_phone && <div style={{ fontSize: 13 }}>Tel: {config.restaurant_phone}</div>}
@@ -927,11 +937,12 @@ export default function ReceiptPrint({ checkoutId, cashReceived, changeAmount, b
           <div style={{ fontSize: 12, textAlign: 'center', marginBottom: 6 }}>Partial checkout / 部分结账</div>
           {groupItemsByMenuCatalog(partialDescPreview.lines).map((section) => (
             <div key={section.categoryId}>
-              <div style={{ fontSize: 13, fontWeight: 700, padding: '8px 0 4px', borderTop: '1px dashed #999' }}>
+              <div style={{ borderTop: '1px solid #000', margin: '8px 0 4px' }} />
+              <div style={{ fontSize: 13, fontWeight: 700, padding: '2px 0 4px' }}>
                 ◆ {catalogHeaderLabel(section)}
               </div>
               {section.items.map((L) => (
-                <div key={L.key} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', borderBottom: '1px solid #ddd' }}>
+                <div key={L.key} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0' }}>
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 20, lineHeight: 1.25 }}>{formatReceiptItemTitle(L.qty, L.title)}</div>
                     {L.titleEn && L.titleEn !== L.title && <div style={{ fontSize: 16, lineHeight: 1.25 }}>{L.titleEn}</div>}
@@ -948,16 +959,17 @@ export default function ReceiptPrint({ checkoutId, cashReceived, changeAmount, b
       ) : (
         groupItemsByMenuCatalog(receipt.orders.flatMap((o) => o.items)).flatMap((section) => {
           const rows: ReactElement[] = [
+            <div key={`cat-rule-${section.categoryId}`} style={{ borderTop: '1px solid #000', margin: '8px 0 4px' }} />,
             <div
               key={`cat-${section.categoryId}`}
-              style={{ fontSize: 13, fontWeight: 700, padding: '8px 0 4px', borderTop: '1px dashed #999' }}
+              style={{ fontSize: 13, fontWeight: 700, padding: '2px 0 4px' }}
             >
               ◆ {catalogHeaderLabel(section)}
             </div>,
           ];
           for (const item of section.items) {
             rows.push(
-              <div key={`${section.categoryId}-${item._id}`} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', borderBottom: '1px solid #ddd' }}>
+              <div key={`${section.categoryId}-${item._id}`} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0' }}>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 20, lineHeight: 1.25 }}>{formatReceiptItemTitle(item.quantity, item.itemName)}</div>
                   {item.itemNameEn && item.itemNameEn !== item.itemName && <div style={{ fontSize: 16, lineHeight: 1.25 }}>{item.itemNameEn}</div>}
@@ -973,7 +985,7 @@ export default function ReceiptPrint({ checkoutId, cashReceived, changeAmount, b
         })
       )}
 
-      <div style={{ borderTop: '2px dashed #000', margin: '8px 0' }} />
+      <div style={{ borderTop: '1px solid #000', margin: '8px 0' }} />
       {(() => {
         const { deliveryAmt, showLegacyDeliveryRow } = receiptDeliveryFeeBreakdown(receipt);
         const totalBD = (bundleDiscounts || []).reduce((s, b) => s + b.discount, 0);
