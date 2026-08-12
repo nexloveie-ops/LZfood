@@ -16,6 +16,8 @@ export interface RestaurantConfig {
   restaurant_email?: string;
   receipt_terms?: string;
   receipt_print_copies?: string;
+  /** '1' = show catalog headers on receipts; '0' = sort only */
+  receipt_print_by_catalog?: string;
   /** JSON array of { start, end } time strings — same as admin Business Hours */
   business_hours_slots?: string;
 }

@@ -165,6 +165,13 @@ interface RestaurantConfig {
   restaurant_email?: string;
   receipt_terms?: string;
   receipt_print_copies?: string;
+  /** '1' | 'true' | unset = show catalog headers; '0' | 'false' = sort only */
+  receipt_print_by_catalog?: string;
+}
+
+function isReceiptPrintByCatalog(config: RestaurantConfig): boolean {
+  const v = String(config.receipt_print_by_catalog ?? '1').trim().toLowerCase();
+  return !(v === '0' || v === 'false' || v === 'off' || v === 'no');
 }
 
 export interface BundleDiscountInfo {
@@ -408,6 +415,7 @@ function buildReceiptPlainText(
   const termsSegments = config.receipt_terms ? parseQRCodes(config.receipt_terms) : [];
   const receiptItemQty = countReceiptItemQty(receipt);
   const partialDesc = describeDineInPartialLines(receipt);
+  const showCatalogHeaders = isReceiptPrintByCatalog(config);
 
   if (restaurantName) lines.push(plainHeaderCenter(restaurantName));
   if (config.restaurant_address) lines.push(...plainCenterWrap(config.restaurant_address));
@@ -464,11 +472,14 @@ function buildReceiptPlainText(
   }
 
   if (partialDesc) {
+    if (!showCatalogHeaders) lines.push(plainSolidDivider());
     lines.push(plainCenter('Partial checkout / 部分结账'));
     const partialSections = groupItemsByMenuCatalog(partialDesc.lines);
     for (const section of partialSections) {
-      lines.push(plainSolidDivider());
-      lines.push(plainCenter(`◆ ${catalogHeaderLabel(section)}`));
+      if (showCatalogHeaders) {
+        lines.push(plainSolidDivider());
+        lines.push(plainCenter(`◆ ${catalogHeaderLabel(section)}`));
+      }
       for (const L of section.items) {
         lines.push(...plainItemLines(formatReceiptItemTitle(L.qty, L.title), L.amountEuro));
         if (L.titleEn && L.titleEn !== L.title) lines.push(`@N@  ${L.titleEn}`);
@@ -478,11 +489,14 @@ function buildReceiptPlainText(
       }
     }
   } else {
+    if (!showCatalogHeaders) lines.push(plainSolidDivider());
     const allItems = receipt.orders.flatMap((order) => order.items);
     const sections = groupItemsByMenuCatalog(allItems);
     for (const section of sections) {
-      lines.push(plainSolidDivider());
-      lines.push(plainCenter(`◆ ${catalogHeaderLabel(section)}`));
+      if (showCatalogHeaders) {
+        lines.push(plainSolidDivider());
+        lines.push(plainCenter(`◆ ${catalogHeaderLabel(section)}`));
+      }
       for (const item of section.items) {
         lines.push(
           ...plainItemLines(
@@ -577,6 +591,7 @@ function buildReceiptHTML(
   const restaurantName = config.restaurant_name_en || config.restaurant_name_zh || '';
   const termsSegments = config.receipt_terms ? parseQRCodes(config.receipt_terms) : [];
   const receiptItemQty = countReceiptItemQty(receipt);
+  const showCatalogHeaders = isReceiptPrintByCatalog(config);
 
   let html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -681,14 +696,17 @@ function buildReceiptHTML(
 
   const partialDesc = describeDineInPartialLines(receipt);
 
-  // Items — grouped by Menu catalog (one solid rule before each catalog)
+  // Items — catalog order always; headers/dividers only when enabled
   html += `<table>`;
   if (partialDesc) {
+    if (!showCatalogHeaders) html += `<tr><td colspan="2" class="catalog-rule"></td></tr>`;
     html += `<tr><td colspan="2" style="font-size:12px;text-align:center;padding:6px 0;font-weight:bold">Partial checkout / 部分结账</td></tr>`;
     const partialSections = groupItemsByMenuCatalog(partialDesc.lines);
     for (const section of partialSections) {
-      html += `<tr><td colspan="2" class="catalog-rule"></td></tr>`;
-      html += `<tr><td colspan="2" class="catalog-hdr">◆ ${escapeReceiptHtml(catalogHeaderLabel(section))}</td></tr>`;
+      if (showCatalogHeaders) {
+        html += `<tr><td colspan="2" class="catalog-rule"></td></tr>`;
+        html += `<tr><td colspan="2" class="catalog-hdr">◆ ${escapeReceiptHtml(catalogHeaderLabel(section))}</td></tr>`;
+      }
       for (const L of section.items) {
         html += `<tr><td><div class="item-cn">${escapeReceiptHtml(formatReceiptItemTitle(L.qty, L.title))}</div>`;
         if (L.titleEn && L.titleEn !== L.title) html += `<div class="item-en">${escapeReceiptHtml(L.titleEn)}</div>`;
@@ -701,11 +719,14 @@ function buildReceiptHTML(
       }
     }
   } else {
+    if (!showCatalogHeaders) html += `<tr><td colspan="2" class="catalog-rule"></td></tr>`;
     const allItems = receipt.orders.flatMap((order) => order.items);
     const sections = groupItemsByMenuCatalog(allItems);
     for (const section of sections) {
-      html += `<tr><td colspan="2" class="catalog-rule"></td></tr>`;
-      html += `<tr><td colspan="2" class="catalog-hdr">◆ ${escapeReceiptHtml(catalogHeaderLabel(section))}</td></tr>`;
+      if (showCatalogHeaders) {
+        html += `<tr><td colspan="2" class="catalog-rule"></td></tr>`;
+        html += `<tr><td colspan="2" class="catalog-hdr">◆ ${escapeReceiptHtml(catalogHeaderLabel(section))}</td></tr>`;
+      }
       for (const item of section.items) {
         html += `<tr><td><div class="item-cn">${escapeReceiptHtml(formatReceiptItemTitle(item.quantity, item.itemName))}</div>`;
         if (item.itemNameEn && item.itemNameEn !== item.itemName) html += `<div class="item-en">${escapeReceiptHtml(item.itemNameEn)}</div>`;
@@ -873,6 +894,7 @@ export default function ReceiptPrint({ checkoutId, cashReceived, changeAmount, b
   const termsSegments = config.receipt_terms ? parseQRCodes(config.receipt_terms) : [];
   const partialDescPreview = describeDineInPartialLines(receipt);
   const previewItemQty = countReceiptItemQty(receipt);
+  const showCatalogHeaders = isReceiptPrintByCatalog(config);
 
   return (
     <div style={{ fontFamily: 'Arial, Helvetica, sans-serif', maxWidth: 420, margin: '0 auto', padding: 16, fontSize: 14, fontWeight: 'bold', color: '#000', background: '#fff', border: '1px solid #ddd', borderRadius: 8 }}>
@@ -934,13 +956,18 @@ export default function ReceiptPrint({ checkoutId, cashReceived, changeAmount, b
 
       {partialDescPreview ? (
         <>
+          {!showCatalogHeaders ? <div style={{ borderTop: '1px solid #000', margin: '8px 0 4px' }} /> : null}
           <div style={{ fontSize: 12, textAlign: 'center', marginBottom: 6 }}>Partial checkout / 部分结账</div>
           {groupItemsByMenuCatalog(partialDescPreview.lines).map((section) => (
             <div key={section.categoryId}>
-              <div style={{ borderTop: '1px solid #000', margin: '8px 0 4px' }} />
-              <div style={{ fontSize: 13, fontWeight: 700, padding: '2px 0 4px' }}>
-                ◆ {catalogHeaderLabel(section)}
-              </div>
+              {showCatalogHeaders ? (
+                <>
+                  <div style={{ borderTop: '1px solid #000', margin: '8px 0 4px' }} />
+                  <div style={{ fontSize: 13, fontWeight: 700, padding: '2px 0 4px' }}>
+                    ◆ {catalogHeaderLabel(section)}
+                  </div>
+                </>
+              ) : null}
               {section.items.map((L) => (
                 <div key={L.key} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0' }}>
                   <div style={{ flex: 1 }}>
@@ -957,32 +984,38 @@ export default function ReceiptPrint({ checkoutId, cashReceived, changeAmount, b
           ))}
         </>
       ) : (
-        groupItemsByMenuCatalog(receipt.orders.flatMap((o) => o.items)).flatMap((section) => {
-          const rows: ReactElement[] = [
-            <div key={`cat-rule-${section.categoryId}`} style={{ borderTop: '1px solid #000', margin: '8px 0 4px' }} />,
-            <div
-              key={`cat-${section.categoryId}`}
-              style={{ fontSize: 13, fontWeight: 700, padding: '2px 0 4px' }}
-            >
-              ◆ {catalogHeaderLabel(section)}
-            </div>,
-          ];
-          for (const item of section.items) {
-            rows.push(
-              <div key={`${section.categoryId}-${item._id}`} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0' }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 20, lineHeight: 1.25 }}>{formatReceiptItemTitle(item.quantity, item.itemName)}</div>
-                  {item.itemNameEn && item.itemNameEn !== item.itemName && <div style={{ fontSize: 16, lineHeight: 1.25 }}>{item.itemNameEn}</div>}
-                  {item.selectedOptions && item.selectedOptions.length > 0 && item.selectedOptions.map((o, idx) => (
-                    <ReceiptOptionLines key={idx} o={o} />
-                  ))}
-                </div>
-                <div style={{ whiteSpace: 'nowrap' }}>€{(item.unitPrice * item.quantity).toFixed(2)}</div>
-              </div>,
-            );
-          }
-          return rows;
-        })
+        <>
+          {!showCatalogHeaders ? <div style={{ borderTop: '1px solid #000', margin: '8px 0 4px' }} /> : null}
+          {groupItemsByMenuCatalog(receipt.orders.flatMap((o) => o.items)).flatMap((section) => {
+            const rows: ReactElement[] = [];
+            if (showCatalogHeaders) {
+              rows.push(
+                <div key={`cat-rule-${section.categoryId}`} style={{ borderTop: '1px solid #000', margin: '8px 0 4px' }} />,
+                <div
+                  key={`cat-${section.categoryId}`}
+                  style={{ fontSize: 13, fontWeight: 700, padding: '2px 0 4px' }}
+                >
+                  ◆ {catalogHeaderLabel(section)}
+                </div>,
+              );
+            }
+            for (const item of section.items) {
+              rows.push(
+                <div key={`${section.categoryId}-${item._id}`} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0' }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 20, lineHeight: 1.25 }}>{formatReceiptItemTitle(item.quantity, item.itemName)}</div>
+                    {item.itemNameEn && item.itemNameEn !== item.itemName && <div style={{ fontSize: 16, lineHeight: 1.25 }}>{item.itemNameEn}</div>}
+                    {item.selectedOptions && item.selectedOptions.length > 0 && item.selectedOptions.map((o, idx) => (
+                      <ReceiptOptionLines key={idx} o={o} />
+                    ))}
+                  </div>
+                  <div style={{ whiteSpace: 'nowrap' }}>€{(item.unitPrice * item.quantity).toFixed(2)}</div>
+                </div>,
+              );
+            }
+            return rows;
+          })}
+        </>
       )}
 
       <div style={{ borderTop: '1px solid #000', margin: '8px 0' }} />

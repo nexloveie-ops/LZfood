@@ -42,6 +42,7 @@ export default function RestaurantInfo() {
   });
   const [logoUrl, setLogoUrl] = useState('');
   const [dineInWorkflowMode, setDineInWorkflowMode] = useState<'pay_first' | 'pay_after'>('pay_first');
+  const [receiptPrintByCatalog, setReceiptPrintByCatalog] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
@@ -64,6 +65,10 @@ export default function RestaurantInfo() {
         if (data.dine_in_workflow_mode === 'pay_after' || data.dine_in_workflow_mode === 'pay_first') {
           setDineInWorkflowMode(data.dine_in_workflow_mode);
         }
+        {
+          const v = String(data.receipt_print_by_catalog ?? '1').trim().toLowerCase();
+          setReceiptPrintByCatalog(!(v === '0' || v === 'false' || v === 'off' || v === 'no'));
+        }
       }
     } catch { /* ignore */ }
   }, [token]);
@@ -82,6 +87,7 @@ export default function RestaurantInfo() {
       const body: Record<string, string> = {};
       CONFIG_KEYS.forEach(k => { body[k] = values[k]; });
       body.dine_in_workflow_mode = dineInWorkflowMode;
+      body.receipt_print_by_catalog = receiptPrintByCatalog ? '1' : '0';
       const res = await apiFetch('/api/admin/config', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -171,6 +177,33 @@ export default function RestaurantInfo() {
         </div>
         <div style={{ fontSize: 12, color: 'var(--text-light)', marginTop: 10, lineHeight: 1.5 }}>
           {t('admin.dineInWorkflowHint')}
+        </div>
+      </div>
+
+      <div className="card" style={{ padding: 20, marginBottom: 16 }}>
+        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 10 }}>{t('admin.receiptPrintByCatalogTitle')}</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer' }}>
+            <input
+              type="radio"
+              name="receiptPrintByCatalog"
+              checked={receiptPrintByCatalog}
+              onChange={() => { setReceiptPrintByCatalog(true); setSaved(false); }}
+            />
+            <span>{t('admin.receiptPrintByCatalogOn')}</span>
+          </label>
+          <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer' }}>
+            <input
+              type="radio"
+              name="receiptPrintByCatalog"
+              checked={!receiptPrintByCatalog}
+              onChange={() => { setReceiptPrintByCatalog(false); setSaved(false); }}
+            />
+            <span>{t('admin.receiptPrintByCatalogOff')}</span>
+          </label>
+        </div>
+        <div style={{ fontSize: 12, color: 'var(--text-light)', marginTop: 10, lineHeight: 1.5 }}>
+          {t('admin.receiptPrintByCatalogHint')}
         </div>
       </div>
 

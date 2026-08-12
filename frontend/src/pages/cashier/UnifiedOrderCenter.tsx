@@ -119,6 +119,7 @@ interface RestaurantConfig {
   restaurant_email?: string;
   receipt_terms?: string;
   receipt_print_copies?: string;
+  receipt_print_by_catalog?: string;
   dine_in_workflow_mode?: 'pay_first' | 'pay_after';
 }
 
