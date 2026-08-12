@@ -44,6 +44,7 @@ interface OrderRow {
   pickupSlotStart?: string;
   items: {
     _id: string;
+    menuItemId?: string;
     quantity: number;
     unitPrice: number;
     itemName: string;
@@ -93,9 +94,13 @@ function mapSelectedOptionsForReceipt(
 }
 
 function mapOrderItemToReceipt(item: OrderRow['items'][0], qtyOverride: number) {
+  const menuItemId =
+    typeof (item as { menuItemId?: string }).menuItemId === 'string'
+      ? String((item as { menuItemId?: string }).menuItemId)
+      : undefined;
   return {
     _id: item._id,
-    ...(item.lineKind === 'delivery_fee' ? {} : { menuItemId: item._id }),
+    ...(item.lineKind === 'delivery_fee' ? {} : menuItemId ? { menuItemId } : {}),
     lineKind: item.lineKind,
     quantity: qtyOverride,
     unitPrice: item.unitPrice,

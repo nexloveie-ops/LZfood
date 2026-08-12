@@ -187,6 +187,8 @@ function checkoutModels() {
     Checkout: mongoose.Model<any>;
     Member: mongoose.Model<any>;
     MemberWalletTxn: mongoose.Model<any>;
+    MenuItem: mongoose.Model<any>;
+    MenuCategory: mongoose.Model<any>;
   };
 }
 
@@ -928,7 +930,7 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
   // GET /api/checkout/receipt/:checkoutId — Get receipt data
   router.get('/receipt/:checkoutId', async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { Order, Checkout } = checkoutModels();
+      const { Order, Checkout, MenuItem, MenuCategory } = checkoutModels();
       const { checkoutId } = req.params;
       if (!mongoose.Types.ObjectId.isValid(checkoutId as string)) {
         throw createAppError('VALIDATION_ERROR', 'Invalid checkout ID');
@@ -953,6 +955,68 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
       // Populate orders with their items
       const orders = await Order.find({ storeId: req.storeId, _id: { $in: checkout.orderIds } }).lean();
 
+      const menuItemIds = [
+        ...new Set(
+          orders.flatMap((o) =>
+            ((o.items as { menuItemId?: mongoose.Types.ObjectId; lineKind?: string }[]) || [])
+              .filter((it) => it.lineKind !== 'delivery_fee' && it.menuItemId)
+              .map((it) => String(it.menuItemId)),
+          ),
+        ),
+      ];
+      const menuItems =
+        menuItemIds.length > 0
+          ? ((await MenuItem.find({ storeId: req.storeId, _id: { $in: menuItemIds } })
+              .select('_id categoryId')
+              .lean()) as unknown as { _id: mongoose.Types.ObjectId; categoryId: mongoose.Types.ObjectId }[])
+          : [];
+      const categoryIds = [...new Set(menuItems.map((m) => String(m.categoryId)))];
+      const categories =
+        categoryIds.length > 0
+          ? ((await MenuCategory.find({ storeId: req.storeId, _id: { $in: categoryIds } })
+              .select('_id sortOrder translations')
+              .lean()) as unknown as {
+              _id: mongoose.Types.ObjectId;
+              sortOrder: number;
+              translations?: { locale: string; name: string }[];
+            }[])
+          : [];
+      const catById = new Map(
+        categories.map((c) => {
+          const zh = c.translations?.find((t) => t.locale === 'zh-CN')?.name?.trim() || '';
+          const en = c.translations?.find((t) => t.locale === 'en-US')?.name?.trim() || '';
+          return [
+            String(c._id),
+            {
+              categoryId: String(c._id),
+              categoryName: zh || en || 'Category',
+              categoryNameEn: en || zh || '',
+              categorySortOrder: Number.isFinite(c.sortOrder) ? c.sortOrder : 9999,
+            },
+          ] as const;
+        }),
+      );
+      const menuCatByItemId = new Map(
+        menuItems.map((m) => [String(m._id), catById.get(String(m.categoryId))] as const),
+      );
+
+      const mapItemsWithCatalog = (items: Record<string, unknown>[]) =>
+        (items || []).map((it) => {
+          if (it.lineKind === 'delivery_fee') {
+            return {
+              ...it,
+              categoryId: '__delivery_fee__',
+              categoryName: '配送费',
+              categoryNameEn: 'Delivery',
+              categorySortOrder: Number.MAX_SAFE_INTEGER,
+            };
+          }
+          const mid = it.menuItemId ? String(it.menuItemId) : '';
+          const cat = mid ? menuCatByItemId.get(mid) : undefined;
+          if (!cat) return it;
+          return { ...it, ...cat };
+        });
+
       const partial = (checkout.dineInPartialLineSettlements || []).map((r) => ({
         orderLineItemId: r.orderLineItemId.toString(),
         quantity: r.quantity,
@@ -971,7 +1035,7 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
         memberPhoneSnapshot: (checkout as { memberPhoneSnapshot?: string }).memberPhoneSnapshot,
         checkedOutAt: checkout.checkedOutAt,
         ...(partial.length > 0 ? { dineInPartialLineSettlements: partial } : {}),
-        orders: orders.map(o => ({
+        orders: orders.map((o) => ({
           _id: o._id,
           type: o.type,
           tableNumber: o.tableNumber,
@@ -979,7 +1043,7 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
           dailyOrderNumber: o.dailyOrderNumber,
           dineInOrderNumber: (o as Record<string, unknown>).dineInOrderNumber,
           status: o.status,
-          items: o.items,
+          items: mapItemsWithCatalog((o.items as Record<string, unknown>[]) || []),
           customerName: (o as { customerName?: string }).customerName,
           customerPhone: (o as { customerPhone?: string }).customerPhone,
           deliveryAddress: (o as { deliveryAddress?: string }).deliveryAddress,
