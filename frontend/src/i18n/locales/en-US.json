@@ -900,7 +900,7 @@
     "receiptPrintByCatalogTitle": "Receipt print by menu catalog",
     "receiptPrintByCatalogOn": "Show catalog titles and dividers (grouped)",
     "receiptPrintByCatalogOff": "Hide catalog titles and dividers (keep catalog sort order)",
-    "receiptPrintByCatalogHint": "When off, receipts and kitchen tickets skip catalog headers and section dividers, but items stay sorted by menu catalog order.",
+    "receiptPrintByCatalogHint": "When on: print one full receipt, then one kitchen slip per non-empty menu catalog (each with order # and basic order info). When off: hide catalog titles/dividers but keep catalog sort order; full receipt is repeated by print-copies.",
     "savedSuccess": "Saved successfully",
     "dashboard": "Dashboard",
     "allergens": "Allergen Management",

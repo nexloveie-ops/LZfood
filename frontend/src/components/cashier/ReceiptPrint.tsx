@@ -15,7 +15,9 @@ import {
   formatCatalogHeader,
   groupItemsByMenuCatalog,
   loadMenuCatalogLookup,
+  DELIVERY_ID,
   type ReceiptCatalogMeta,
+  type ReceiptCatalogSection,
 } from '../../utils/receiptCatalogGroup';
 
 interface ReceiptOrderItem {
@@ -844,18 +846,24 @@ export default function ReceiptPrint({ checkoutId, cashReceived, changeAmount, b
   useEffect(() => {
     if (receipt && configLoaded && !autoPrintDone.current) {
       autoPrintDone.current = true;
-      const html = buildReceiptHTML(receipt, config, cashReceived, changeAmount, bundleDiscounts);
-      const plainText = buildReceiptPlainText(receipt, config, cashReceived, changeAmount, bundleDiscounts);
-      void printHtmlReceipt({ html, plainText, copies: printCopies ?? copies }).catch(() => {});
+      void printBuiltReceipt(receipt, config, {
+        cashReceived,
+        changeAmount,
+        bundleDiscounts,
+        copies: printCopies ?? copies,
+      }).catch(() => {});
     }
   }, [receipt, config, configLoaded, copies, printCopies, cashReceived, changeAmount, bundleDiscounts]);
 
   // Manual print function exposed via window.print override
   const handleManualPrint = useCallback(() => {
     if (!receipt) return;
-    const html = buildReceiptHTML(receipt, config, cashReceived, changeAmount, bundleDiscounts);
-    const plainText = buildReceiptPlainText(receipt, config, cashReceived, changeAmount, bundleDiscounts);
-    void printHtmlReceipt({ html, plainText, copies: 1 }).catch(() => {});
+    void printBuiltReceipt(receipt, config, {
+      cashReceived,
+      changeAmount,
+      bundleDiscounts,
+      copies: 1,
+    }).catch(() => {});
   }, [receipt, config, cashReceived, changeAmount, bundleDiscounts]);
 
   // Expose manual print globally so parent buttons can use window.print()
@@ -1096,6 +1104,178 @@ export default function ReceiptPrint({ checkoutId, cashReceived, changeAmount, b
   );
 }
 
+/** Shared order identity lines for kitchen catalog slips (no payment / terms). */
+function buildKitchenOrderBasicsPlain(receipt: ReceiptData, config: RestaurantConfig): string[] {
+  const lines: string[] = [];
+  const isDineIn = receipt.orders.some((o) => o.type === 'dine_in');
+  const isPhone = receipt.orders.some((o) => o.type === 'phone');
+  const isDelivery = receipt.orders.some((o) => o.type === 'delivery');
+  const restaurantName = config.restaurant_name_en || config.restaurant_name_zh || '';
+  const checkedOutAt = new Date(receipt.checkedOutAt);
+
+  if (restaurantName) lines.push(plainHeaderCenter(restaurantName));
+  lines.push(plainCenter('KITCHEN / 厨房'));
+
+  if (isDineIn) {
+    if (receipt.tableNumber != null && receipt.tableNumber > 0) {
+      lines.push(plainCenter(`Table ${receipt.tableNumber}`));
+    }
+    const seats = [...new Set(receipt.orders.map((o) => o.seatNumber).filter((s) => s != null && s > 0))].sort();
+    if (seats.length > 0) lines.push(plainCenter(`Seat ${seats.join(', ')}`));
+    if (receipt.wholeTableKitchenTicket) {
+      lines.push(plainCenter('全桌 / Whole table'));
+      const labels = receipt.orders
+        .map((o) => o.dineInGuestLabel?.trim())
+        .filter((g): g is string => Boolean(g && g.length > 0));
+      const nums = receipt.orders.map((o) => o.dineInOrderNumber).filter((n): n is string => Boolean(n && String(n).trim()));
+      if (labels.length > 0) lines.push(plainCenter(`Label: ${labels.join(' · ')}`));
+      else if (nums.length > 0) lines.push(plainCenter(`Order: ${nums.join(' · ')}`));
+    } else {
+      const orderNum = receipt.orders.find((o) => o.dineInOrderNumber)?.dineInOrderNumber;
+      if (orderNum) lines.push(plainCenter(`Order #${orderNum}`));
+    }
+  } else if (isPhone) {
+    lines.push(plainCenter(`Phone #${receipt.orders[0]?.dailyOrderNumber || ''}`));
+  } else if (isDelivery) {
+    lines.push(plainCenter(`Delivery #${receipt.orders[0]?.dailyOrderNumber || ''}`));
+  } else {
+    lines.push(plainCenter(`Pickup #${receipt.orders[0]?.dailyOrderNumber || ''}`));
+  }
+
+  if (!isDineIn) {
+    const guestTel = receipt.orders.map((o) => o.customerPhone?.trim()).find(Boolean);
+    const guestName = receipt.orders.map((o) => o.customerName?.trim()).find(Boolean);
+    if (guestTel) lines.push(...plainWrap(`Guest Tel: ${guestTel}`));
+    if (guestName) lines.push(...plainWrap(`Name: ${guestName}`));
+  }
+
+  lines.push(plainCenter(`Ref: ${String(receipt.checkoutId).slice(-8).toUpperCase()}`));
+  lines.push(plainCenter(checkedOutAt.toLocaleString('en-GB')));
+  return lines;
+}
+
+function buildCatalogKitchenPlainText(
+  receipt: ReceiptData,
+  config: RestaurantConfig,
+  section: ReceiptCatalogSection<ReceiptOrderItem>,
+): string {
+  const lines = buildKitchenOrderBasicsPlain(receipt, config);
+  const qty = section.items.reduce((s, it) => s + Math.max(0, Number(it.quantity) || 0), 0);
+  lines.push(plainSolidDivider());
+  lines.push(plainCenter(`◆ ${catalogHeaderLabel(section)}`));
+  if (qty > 0) lines.push(plainCenter(`Item: ${qty}`));
+  lines.push(plainSolidDivider());
+  for (const item of section.items) {
+    lines.push(
+      ...plainItemLines(
+        formatReceiptItemTitle(item.quantity, item.itemName),
+        item.unitPrice * item.quantity,
+      ),
+    );
+    if (item.itemNameEn && item.itemNameEn !== item.itemName) {
+      lines.push(`@N@  ${item.itemNameEn}`);
+    }
+    if (item.selectedOptions) {
+      for (const o of item.selectedOptions) lines.push(...receiptOptionPrintPlain(o));
+    }
+  }
+  lines.push(plainSolidDivider());
+  lines.push(plainCenter('— end / 完 —'));
+  return `${lines.join('\n')}\n`;
+}
+
+function buildCatalogKitchenHTML(
+  receipt: ReceiptData,
+  config: RestaurantConfig,
+  section: ReceiptCatalogSection<ReceiptOrderItem>,
+): string {
+  const isDineIn = receipt.orders.some((o) => o.type === 'dine_in');
+  const isPhone = receipt.orders.some((o) => o.type === 'phone');
+  const isDelivery = receipt.orders.some((o) => o.type === 'delivery');
+  const restaurantName = config.restaurant_name_en || config.restaurant_name_zh || '';
+  const checkedOutAt = new Date(receipt.checkedOutAt);
+  const qty = section.items.reduce((s, it) => s + Math.max(0, Number(it.quantity) || 0), 0);
+
+  let html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: Arial, Helvetica, sans-serif; font-size: 15px; font-weight: bold; color: #000; max-width: 420px; margin: 0 auto; padding: 14px; }
+    .center { text-align: center; }
+    .divider-solid { border-top: 1px solid #000; margin: 8px 0; }
+    .big { font-size: 22px; margin: 6px 0; letter-spacing: 2px; }
+    table { width: 100%; border-collapse: collapse; margin: 8px 0; }
+    td { padding: 6px 0; vertical-align: top; }
+    .amt { text-align: right; font-size: 16px; white-space: nowrap; }
+    .item-cn { font-size: 20px; line-height: 1.25; }
+    .item-en { font-size: 16px; padding-left: 4px; line-height: 1.25; }
+    .catalog-hdr { font-size: 16px; padding: 6px 0; font-weight: 700; text-align: center; }
+    @media print {
+      body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      @page { margin: 0; size: 80mm auto; }
+    }
+  </style></head><body><div class="center">`;
+
+  if (restaurantName) html += `<div style="font-size:18px;margin-bottom:4px">${escapeReceiptHtml(restaurantName)}</div>`;
+  html += `<div class="big">KITCHEN / 厨房</div>`;
+
+  if (isDineIn) {
+    if (receipt.tableNumber != null && receipt.tableNumber > 0) html += `<div class="big">Table ${receipt.tableNumber}</div>`;
+    const seats = [...new Set(receipt.orders.map((o) => o.seatNumber).filter((s) => s != null && s > 0))].sort();
+    if (seats.length > 0) html += `<div class="big">Seat ${seats.join(', ')}</div>`;
+    if (receipt.wholeTableKitchenTicket) {
+      html += `<div style="font-size:15px;margin-top:4px">全桌 / Whole table</div>`;
+      const labels = receipt.orders
+        .map((o) => o.dineInGuestLabel?.trim())
+        .filter((g): g is string => Boolean(g && g.length > 0));
+      const nums = receipt.orders.map((o) => o.dineInOrderNumber).filter((n): n is string => Boolean(n && String(n).trim()));
+      if (labels.length > 0) {
+        html += `<div style="font-size:12px;margin-top:4px">Label · ${labels.map((g) => escapeReceiptHtml(g)).join(' · ')}</div>`;
+      } else if (nums.length > 0) {
+        html += `<div style="font-size:12px;margin-top:4px">Order · ${nums.map((n) => escapeReceiptHtml(String(n).trim())).join(' · ')}</div>`;
+      }
+    } else {
+      const orderNum = receipt.orders.find((o) => o.dineInOrderNumber)?.dineInOrderNumber;
+      if (orderNum) html += `<div class="big">Order #${escapeReceiptHtml(String(orderNum))}</div>`;
+    }
+  } else if (isPhone) {
+    html += `<div class="big">Phone #${receipt.orders[0]?.dailyOrderNumber || ''}</div>`;
+  } else if (isDelivery) {
+    html += `<div class="big">Delivery #${receipt.orders[0]?.dailyOrderNumber || ''}</div>`;
+  } else {
+    html += `<div class="big">Pickup #${receipt.orders[0]?.dailyOrderNumber || ''}</div>`;
+  }
+
+  if (!isDineIn) {
+    const guestTel = receipt.orders.map((o) => o.customerPhone?.trim()).find(Boolean);
+    const guestName = receipt.orders.map((o) => o.customerName?.trim()).find(Boolean);
+    if (guestTel) html += `<div style="font-size:14px;margin-top:4px">Guest Tel: ${escapeReceiptHtml(guestTel)}</div>`;
+    if (guestName) html += `<div style="font-size:14px;margin-top:2px">Name: ${escapeReceiptHtml(guestName)}</div>`;
+  }
+
+  html += `<div style="font-size:12px;margin-top:4px">Ref: ${String(receipt.checkoutId).slice(-8).toUpperCase()}</div>`;
+  html += `<div style="font-size:12px;margin-top:2px">${escapeReceiptHtml(checkedOutAt.toLocaleString('en-GB'))}</div>`;
+  html += `</div><div class="divider-solid"></div>`;
+  html += `<div class="catalog-hdr">◆ ${escapeReceiptHtml(catalogHeaderLabel(section))}</div>`;
+  if (qty > 0) html += `<div class="center" style="font-size:18px;margin-bottom:4px">Item: ${qty}</div>`;
+  html += `<div class="divider-solid"></div><table>`;
+
+  for (const item of section.items) {
+    html += `<tr><td><div class="item-cn">${escapeReceiptHtml(formatReceiptItemTitle(item.quantity, item.itemName))}</div>`;
+    if (item.itemNameEn && item.itemNameEn !== item.itemName) {
+      html += `<div class="item-en">${escapeReceiptHtml(item.itemNameEn)}</div>`;
+    }
+    if (item.selectedOptions && item.selectedOptions.length > 0) {
+      for (const o of item.selectedOptions) {
+        html += receiptOptionPrintHtml(o, escapeReceiptHtml);
+      }
+    }
+    html += `</td><td class="amt">€${(item.unitPrice * item.quantity).toFixed(2)}</td></tr>`;
+  }
+
+  html += `</table><div class="divider-solid"></div>`;
+  html += `<div class="center" style="font-size:12px">— end / 完 —</div></body></html>`;
+  return html;
+}
+
 /** Print checkout receipt: POS bridge when present, else browser iframe print. */
 export async function printBuiltReceipt(
   receipt: ReceiptData,
@@ -1108,21 +1288,46 @@ export async function printBuiltReceipt(
   },
 ) {
   const enriched = await enrichReceiptWithCatalog(receipt);
-  const html = buildReceiptHTML(
+  const byCatalog = isReceiptPrintByCatalog(config);
+  const copies = Math.max(1, Math.floor(opts?.copies ?? 1));
+
+  const fullHtml = buildReceiptHTML(
     enriched,
     config,
     opts?.cashReceived,
     opts?.changeAmount,
     opts?.bundleDiscounts,
   );
-  const plainText = buildReceiptPlainText(
+  const fullPlain = buildReceiptPlainText(
     enriched,
     config,
     opts?.cashReceived,
     opts?.changeAmount,
     opts?.bundleDiscounts,
   );
-  return printHtmlReceipt({ html, plainText, copies: opts?.copies ?? 1 });
+
+  if (!byCatalog) {
+    return printHtmlReceipt({ html: fullHtml, plainText: fullPlain, copies });
+  }
+
+  // 1) Full receipt once
+  let result = await printHtmlReceipt({ html: fullHtml, plainText: fullPlain, copies: 1 });
+
+  // 2) One kitchen slip per non-empty food catalog (skip delivery / empty)
+  const foodItems = enriched.orders
+    .flatMap((o) => o.items)
+    .filter((it) => it.lineKind !== 'delivery_fee');
+  const sections = groupItemsByMenuCatalog(foodItems).filter(
+    (s) => s.items.length > 0 && s.categoryId !== DELIVERY_ID,
+  );
+
+  for (const section of sections) {
+    const html = buildCatalogKitchenHTML(enriched, config, section);
+    const plainText = buildCatalogKitchenPlainText(enriched, config, section);
+    result = await printHtmlReceipt({ html, plainText, copies: 1 });
+  }
+
+  return result;
 }
 
 export { buildReceiptHTML, buildReceiptPlainText };

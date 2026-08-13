@@ -900,7 +900,7 @@
     "receiptPrintByCatalogTitle": "小票按菜单分类打印",
     "receiptPrintByCatalogOn": "显示分类标题与分割线（按分类分组）",
     "receiptPrintByCatalogOff": "不显示分类标题与分割线（仍按分类顺序排列菜品）",
-    "receiptPrintByCatalogHint": "关闭后小票/厨房单不再打印分类名和分类分割线，但菜品仍按后台菜单分类顺序排列。",
+    "receiptPrintByCatalogHint": "开启时：先打一张完整小票，再按每个有菜的菜单分类各打一张厨房单（含订单号与基本信息）。关闭时：不显示分类标题与分割线，菜品仍按分类顺序排列；份数按「小票打印份数」重复完整小票。",
     "savedSuccess": "保存成功",
     "dashboard": "仪表盘",
     "allergens": "过敏原管理",
