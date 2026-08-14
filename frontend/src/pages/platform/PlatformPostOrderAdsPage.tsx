@@ -8,6 +8,15 @@ interface PostOrderSlideRow {
   captionEn?: string;
 }
 
+type StoreScope = 'all' | 'include' | 'exclude';
+
+interface StoreOpt {
+  _id: string;
+  slug: string;
+  displayName: string;
+  status?: string;
+}
+
 interface PostOrderAdRow {
   _id: string;
   titleZh: string;
@@ -19,12 +28,38 @@ interface PostOrderAdRow {
   validTo: string;
   windowStart?: string;
   windowEnd?: string;
+  storeScope?: StoreScope;
+  storeIds?: string[];
   sortOrder: number;
   isActive: boolean;
   impressionCount?: number;
   clickCount?: number;
   maxImpressions?: number | null;
   maxClicks?: number | null;
+}
+
+function asStoreIdList(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((x) => {
+      if (typeof x === 'string') return x;
+      if (x && typeof x === 'object' && '_id' in x) return String((x as { _id: unknown })._id);
+      return String(x ?? '');
+    })
+    .filter(Boolean);
+}
+
+function formatStoreTarget(scope: StoreScope | undefined, ids: string[], stores: StoreOpt[]): string {
+  const sc = scope || 'all';
+  if (sc === 'all') return '全部店铺';
+  const names = ids.map((id) => {
+    const s = stores.find((st) => st._id === id);
+    return s ? (s.displayName || s.slug) : id.slice(-6);
+  });
+  const preview = names.slice(0, 3).join('、');
+  const extra = names.length > 3 ? ` 等${names.length}家` : '';
+  if (sc === 'include') return names.length ? `指定：${preview}${extra}` : '指定（未选店）';
+  return names.length ? `排除：${preview}${extra}` : '排除（未选店）';
 }
 
 function slidesFromApiRow(row: PostOrderAdRow): PostOrderSlideRow[] {
@@ -59,6 +94,7 @@ function formatCountWithCap(count: number, cap?: number | null): string {
 export default function PlatformPostOrderAdsPage() {
   const [err, setErr] = useState('');
   const [postOrderAds, setPostOrderAds] = useState<PostOrderAdRow[]>([]);
+  const [stores, setStores] = useState<StoreOpt[]>([]);
   const [adsLoading, setAdsLoading] = useState(false);
   const [adSaving, setAdSaving] = useState(false);
   const [slideUploading, setSlideUploading] = useState<number | null>(null);
@@ -78,14 +114,25 @@ export default function PlatformPostOrderAdsPage() {
     isActive: true,
     maxImpressionsInput: '',
     maxClicksInput: '',
+    storeScope: 'all' as StoreScope,
+    storeIds: [] as string[],
   });
 
   const loadPostOrderAds = useCallback(async () => {
-    const res = await platformApiFetch('/api/platform/post-order-ads');
-    if (res.ok) {
-      setPostOrderAds(await res.json());
+    const [adsRes, storesRes] = await Promise.all([
+      platformApiFetch('/api/platform/post-order-ads'),
+      platformApiFetch('/api/platform/stores'),
+    ]);
+    if (adsRes.ok) {
+      setPostOrderAds(await adsRes.json());
     } else {
       setPostOrderAds([]);
+    }
+    if (storesRes.ok) {
+      const list = (await storesRes.json()) as StoreOpt[];
+      setStores(Array.isArray(list) ? list : []);
+    } else {
+      setStores([]);
     }
   }, []);
 
@@ -122,6 +169,8 @@ export default function PlatformPostOrderAdsPage() {
       isActive: true,
       maxImpressionsInput: '',
       maxClicksInput: '',
+      storeScope: 'all',
+      storeIds: [],
     });
   };
 
@@ -184,6 +233,10 @@ export default function PlatformPostOrderAdsPage() {
       setErr('点击次数上限须为正整数或留空');
       return;
     }
+    if (adForm.storeScope !== 'all' && adForm.storeIds.length === 0) {
+      setErr(adForm.storeScope === 'include' ? '指定投放请至少选择一家店铺' : '排除投放请至少选择一家店铺');
+      return;
+    }
     setAdSaving(true);
     setErr('');
     try {
@@ -200,6 +253,8 @@ export default function PlatformPostOrderAdsPage() {
         isActive: adForm.isActive,
         maxImpressions: maxImpRaw ? parseInt(maxImpRaw, 10) : null,
         maxClicks: maxClkRaw ? parseInt(maxClkRaw, 10) : null,
+        storeScope: adForm.storeScope,
+        storeIds: adForm.storeScope === 'all' ? [] : adForm.storeIds,
       };
       const res = adForm.editingId
         ? await platformApiFetch(`/api/platform/post-order-ads/${adForm.editingId}`, {
@@ -241,6 +296,8 @@ export default function PlatformPostOrderAdsPage() {
       maxImpressionsInput:
         row.maxImpressions != null && row.maxImpressions > 0 ? String(row.maxImpressions) : '',
       maxClicksInput: row.maxClicks != null && row.maxClicks > 0 ? String(row.maxClicks) : '',
+      storeScope: row.storeScope === 'include' || row.storeScope === 'exclude' ? row.storeScope : 'all',
+      storeIds: asStoreIdList(row.storeIds),
     });
     setAdFormOpen(true);
   };
@@ -275,6 +332,7 @@ export default function PlatformPostOrderAdsPage() {
       <h1 style={{ fontSize: 22, fontWeight: 700, color: '#1a237e', marginBottom: 8 }}>下单完成页广告</h1>
       <p style={{ fontSize: 14, color: '#555', marginBottom: 24, lineHeight: 1.6 }}>
         配置顾客<strong>订单状态页</strong>的推广横幅（顾客<strong>下单后</strong>进入该页即可看到，含待支付）。支持多张图轮播；统计<strong>展示次数</strong>与<strong>点击次数</strong>（打开该页时上报展示，点击跳转时上报点击）。
+        投放范围可选：<strong>全部店铺</strong>、<strong>指定店铺</strong>或<strong>排除某些店铺</strong>。店铺若已关闭广告或为 Enterprise 套餐，仍不会展示。
         <strong>停止投放</strong>满足任一即生效并自动关闭「启用」：<strong>① 时间</strong>——未到开始日、已过结束日或不在每日时段内；<strong>② 展示次数</strong>——达到所设展示上限；<strong>③ 点击次数</strong>——达到所设点击上限。上限留空表示该项不限制。
       </p>
 
@@ -315,6 +373,7 @@ export default function PlatformPostOrderAdsPage() {
                   <th style={{ padding: '8px 10px' }}>点击</th>
                   <th style={{ padding: '8px 10px' }}>点击率</th>
                   <th style={{ padding: '8px 10px' }}>生效</th>
+                  <th style={{ padding: '8px 10px' }}>投放</th>
                   <th style={{ padding: '8px 10px' }}>每日时段</th>
                   <th style={{ padding: '8px 10px' }}>排序</th>
                   <th style={{ padding: '8px 10px' }}>启用</th>
@@ -338,6 +397,9 @@ export default function PlatformPostOrderAdsPage() {
                       <td style={{ padding: '8px 10px' }} title={capClk != null && capClk > 0 ? `上限 ${capClk}` : undefined}>{formatCountWithCap(clk, capClk)}</td>
                       <td style={{ padding: '8px 10px' }}>{formatCtr(imp, clk)}</td>
                       <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>{a.validFrom} — {a.validTo}</td>
+                      <td style={{ padding: '8px 10px', maxWidth: 220 }}>
+                        {formatStoreTarget(a.storeScope, asStoreIdList(a.storeIds), stores)}
+                      </td>
                       <td style={{ padding: '8px 10px' }}>
                         {a.windowStart && a.windowEnd ? `${a.windowStart}–${a.windowEnd}` : '全天'}
                       </td>
@@ -530,6 +592,95 @@ export default function PlatformPostOrderAdsPage() {
               <label style={{ fontSize: 12, color: '#666', display: 'block', marginBottom: 4 }}>排序（小在前）</label>
               <input className="input" type="number" value={adForm.sortOrder}
                 onChange={e => setAdForm(f => ({ ...f, sortOrder: Number(e.target.value) || 0 }))} />
+            </div>
+            <div style={{ gridColumn: '1 / -1' }}>
+              <label style={{ fontSize: 12, color: '#666', display: 'block', marginBottom: 8 }}>投放店铺</label>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, marginBottom: 10 }}>
+                {([
+                  ['all', '全部店铺'],
+                  ['include', '指定店铺'],
+                  ['exclude', '排除店铺'],
+                ] as const).map(([value, label]) => (
+                  <label key={value} style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                    <input
+                      type="radio"
+                      name="ad-store-scope"
+                      checked={adForm.storeScope === value}
+                      onChange={() => setAdForm(f => ({
+                        ...f,
+                        storeScope: value,
+                        storeIds: value === 'all' ? [] : f.storeIds,
+                      }))}
+                    />
+                    {label}
+                  </label>
+                ))}
+              </div>
+              {adForm.storeScope !== 'all' ? (
+                <div style={{
+                  border: '1px solid #e0e0e0',
+                  borderRadius: 8,
+                  background: '#fff',
+                  padding: 10,
+                  maxHeight: 220,
+                  overflowY: 'auto',
+                }}>
+                  <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                    <button
+                      type="button"
+                      className="btn btn-outline"
+                      style={{ fontSize: 12, padding: '2px 8px' }}
+                      onClick={() => setAdForm(f => ({ ...f, storeIds: stores.map(s => s._id) }))}
+                    >
+                      全选
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-outline"
+                      style={{ fontSize: 12, padding: '2px 8px' }}
+                      onClick={() => setAdForm(f => ({ ...f, storeIds: [] }))}
+                    >
+                      清空
+                    </button>
+                    <span style={{ fontSize: 12, color: '#888', alignSelf: 'center' }}>
+                      已选 {adForm.storeIds.length} / {stores.length}
+                    </span>
+                  </div>
+                  {stores.length === 0 ? (
+                    <div style={{ fontSize: 13, color: '#888' }}>暂无店铺</div>
+                  ) : stores.map((s) => {
+                    const checked = adForm.storeIds.includes(s._id);
+                    return (
+                      <label key={s._id} style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        fontSize: 13,
+                        padding: '4px 2px',
+                        cursor: 'pointer',
+                      }}>
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => setAdForm(f => ({
+                            ...f,
+                            storeIds: checked
+                              ? f.storeIds.filter(id => id !== s._id)
+                              : [...f.storeIds, s._id],
+                          }))}
+                        />
+                        <span>{s.displayName || s.slug}</span>
+                        <span style={{ color: '#888', fontSize: 12 }}>/{s.slug}</span>
+                        {s.status && s.status !== 'active' ? (
+                          <span style={{ color: '#c62828', fontSize: 12 }}>{s.status}</span>
+                        ) : null}
+                      </label>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div style={{ fontSize: 12, color: '#888' }}>所有未关闭广告、非 Enterprise 的店铺都会看到此广告。</div>
+              )}
             </div>
             <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8 }}>
               <label style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>

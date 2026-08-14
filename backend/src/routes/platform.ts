@@ -20,6 +20,7 @@ import {
   applyPostOrderAdAutoDeactivateFromCaps,
 } from '../utils/postOrderAdSchedule';
 import { getSlidesFromDoc, parseSlidesFromBody, requireNonEmptySlides } from '../utils/postOrderAdSlides';
+import { parseAdStoreTarget } from '../utils/postOrderAdStoreTarget';
 import { FeatureKeys } from '../utils/featureCatalog';
 import { buildIntegrationsOverview } from '../utils/integrationsOverview';
 
@@ -662,7 +663,7 @@ router.get('/post-order-ads', ...platformAuth, async (_req: Request, res: Respon
 // POST /api/platform/post-order-ads
 router.post('/post-order-ads', ...platformAuth, async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { PostOrderAd } = models();
+    const { PostOrderAd, Store } = models();
     const b = req.body as Record<string, unknown>;
     const titleZh = typeof b.titleZh === 'string' ? b.titleZh.trim() : '';
     const titleEn = typeof b.titleEn === 'string' ? b.titleEn.trim() : '';
@@ -687,6 +688,10 @@ router.post('/post-order-ads', ...platformAuth, async (req: Request, res: Respon
     const maxImpressions =
       'maxImpressions' in b ? parseOptionalMaxCap(b.maxImpressions, '展示次数上限') : null;
     const maxClicks = 'maxClicks' in b ? parseOptionalMaxCap(b.maxClicks, '点击次数上限') : null;
+    const storeTarget = await parseAdStoreTarget(
+      { storeScope: b.storeScope, storeIds: b.storeIds },
+      Store,
+    );
     const doc = await PostOrderAd.create({
       titleZh,
       titleEn,
@@ -696,6 +701,8 @@ router.post('/post-order-ads', ...platformAuth, async (req: Request, res: Respon
       validTo,
       windowStart: tw.windowStart,
       windowEnd: tw.windowEnd,
+      storeScope: storeTarget.storeScope,
+      storeIds: storeTarget.storeIds,
       sortOrder,
       isActive,
       maxImpressions,
@@ -710,7 +717,7 @@ router.post('/post-order-ads', ...platformAuth, async (req: Request, res: Respon
 // PATCH /api/platform/post-order-ads/:id
 router.patch('/post-order-ads/:id', ...platformAuth, async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { PostOrderAd } = models();
+    const { PostOrderAd, Store } = models();
     const id = paramStr(req.params.id);
     if (!mongoose.Types.ObjectId.isValid(id)) {
       throw createAppError('VALIDATION_ERROR', 'Invalid id');
@@ -772,6 +779,18 @@ router.patch('/post-order-ads/:id', ...platformAuth, async (req: Request, res: R
     }
     if ('maxClicks' in b) {
       doc.set('maxClicks', parseOptionalMaxCap(b.maxClicks, '点击次数上限'));
+    }
+    if ('storeScope' in b || 'storeIds' in b) {
+      const currentIds = (doc.get('storeIds') as mongoose.Types.ObjectId[] | undefined) || [];
+      const storeTarget = await parseAdStoreTarget(
+        {
+          storeScope: 'storeScope' in b ? b.storeScope : doc.get('storeScope'),
+          storeIds: 'storeIds' in b ? b.storeIds : currentIds.map((id) => String(id)),
+        },
+        Store,
+      );
+      doc.set('storeScope', storeTarget.storeScope);
+      doc.set('storeIds', storeTarget.storeIds);
     }
     applyPostOrderAdAutoDeactivateFromCaps(doc);
     await doc.save();

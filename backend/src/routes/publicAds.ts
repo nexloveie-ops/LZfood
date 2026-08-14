@@ -3,6 +3,7 @@ import { Router, type Request, type Response, type NextFunction } from 'express'
 import { getModels } from '../getModels';
 import { createAppError } from '../middleware/errorHandler';
 import { filterActivePostOrderAds } from '../utils/postOrderAdSchedule';
+import { adMatchesStore } from '../utils/postOrderAdStoreTarget';
 import { getSlidesFromDoc, type PostOrderSlideInput } from '../utils/postOrderAdSlides';
 import { FeatureKeys } from '../utils/featureCatalog';
 
@@ -91,7 +92,7 @@ router.post('/post-order-ads/click', async (req: Request, res: Response, next: N
 
 /**
  * GET /api/public/post-order-ads
- * 无需店铺头：顾客完成页拉取当前有效横幅（平台统一配置）。
+ * 顾客完成页拉取当前有效横幅；按 X-Store-Slug 过滤投放范围（all / include / exclude）。
  */
 router.get('/post-order-ads', async (_req: Request, res: Response, next: NextFunction) => {
   try {
@@ -101,6 +102,7 @@ router.get('/post-order-ads', async (_req: Request, res: Response, next: NextFun
       FeaturePlan: Model<any>;
     };
     const rawSlug = (typeof _req.headers['x-store-slug'] === 'string' ? _req.headers['x-store-slug'] : '').trim().toLowerCase();
+    let viewerStoreId: string | null = null;
     if (rawSlug) {
       const store = await Store.findOne({ slug: rawSlug }).lean() as {
         _id: mongoose.Types.ObjectId;
@@ -108,6 +110,7 @@ router.get('/post-order-ads', async (_req: Request, res: Response, next: NextFun
         featureOverrides?: Map<string, boolean> | Record<string, boolean>;
       } | null;
       if (store) {
+        viewerStoreId = String(store._id);
         if (explicitPostOrderAdsOptOut(store.featureOverrides)) {
           res.json([]);
           return;
@@ -135,6 +138,15 @@ router.get('/post-order-ads', async (_req: Request, res: Response, next: NextFun
     const body: PubRow[] = [];
     for (const doc of active) {
       const o = doc as Record<string, unknown>;
+      if (
+        !adMatchesStore(
+          viewerStoreId,
+          typeof o.storeScope === 'string' ? o.storeScope : undefined,
+          o.storeIds as Array<string | { toString(): string }> | undefined,
+        )
+      ) {
+        continue;
+      }
       const slides = getSlidesFromDoc({
         slides: o.slides as PostOrderSlideInput[] | undefined,
         imageUrl: o.imageUrl as string | undefined,
