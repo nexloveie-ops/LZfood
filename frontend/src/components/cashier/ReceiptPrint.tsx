@@ -167,13 +167,27 @@ interface RestaurantConfig {
   restaurant_email?: string;
   receipt_terms?: string;
   receipt_print_copies?: string;
-  /** '1' | 'true' | unset = show catalog headers; '0' | 'false' = sort only */
+  /**
+   * 小票分类打印：
+   * - '0' | 'off' = 不显示分类标题/分割线（仍按分类排序）
+   * - 'headers' | 'same' | '2' = 显示分类标题/分割线，打两张相同完整小票（不按分类切厨房单）
+   * - '1' | 'split' | unset = 显示分类标题，并切割：完整小票 + 每分类一张厨房单
+   */
   receipt_print_by_catalog?: string;
 }
 
+export type ReceiptCatalogPrintMode = 'off' | 'headers' | 'split';
+
+export function getReceiptCatalogPrintMode(config: { receipt_print_by_catalog?: string }): ReceiptCatalogPrintMode {
+  const v = String(config.receipt_print_by_catalog ?? 'split').trim().toLowerCase();
+  if (v === '0' || v === 'false' || v === 'off' || v === 'no') return 'off';
+  if (v === 'headers' || v === 'same' || v === '2' || v === 'grouped') return 'headers';
+  // '1' | 'true' | 'split' | 'kitchen' | unset → 切割多张（兼容旧「开启」）
+  return 'split';
+}
+
 function isReceiptPrintByCatalog(config: RestaurantConfig): boolean {
-  const v = String(config.receipt_print_by_catalog ?? '1').trim().toLowerCase();
-  return !(v === '0' || v === 'false' || v === 'off' || v === 'no');
+  return getReceiptCatalogPrintMode(config) !== 'off';
 }
 
 export interface BundleDiscountInfo {
@@ -1288,7 +1302,7 @@ export async function printBuiltReceipt(
   },
 ) {
   const enriched = await enrichReceiptWithCatalog(receipt);
-  const byCatalog = isReceiptPrintByCatalog(config);
+  const mode = getReceiptCatalogPrintMode(config);
   const copies = Math.max(1, Math.floor(opts?.copies ?? 1));
 
   const fullHtml = buildReceiptHTML(
@@ -1306,14 +1320,18 @@ export async function printBuiltReceipt(
     opts?.bundleDiscounts,
   );
 
-  if (!byCatalog) {
+  if (mode === 'off') {
     return printHtmlReceipt({ html: fullHtml, plainText: fullPlain, copies });
   }
 
-  // 1) Full receipt once
+  // 显示分类标题：两张相同完整小票（不切厨房单）
+  if (mode === 'headers') {
+    return printHtmlReceipt({ html: fullHtml, plainText: fullPlain, copies: 2 });
+  }
+
+  // split：1) 完整小票一次 2) 每分类一张厨房单
   let result = await printHtmlReceipt({ html: fullHtml, plainText: fullPlain, copies: 1 });
 
-  // 2) One kitchen slip per non-empty food catalog (skip delivery / empty)
   const foodItems = enriched.orders
     .flatMap((o) => o.items)
     .filter((it) => it.lineKind !== 'delivery_fee');

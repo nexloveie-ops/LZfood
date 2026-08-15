@@ -42,7 +42,7 @@ export default function RestaurantInfo() {
   });
   const [logoUrl, setLogoUrl] = useState('');
   const [dineInWorkflowMode, setDineInWorkflowMode] = useState<'pay_first' | 'pay_after'>('pay_first');
-  const [receiptPrintByCatalog, setReceiptPrintByCatalog] = useState(true);
+  const [receiptCatalogPrintMode, setReceiptCatalogPrintMode] = useState<'off' | 'headers' | 'split'>('split');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
@@ -66,8 +66,15 @@ export default function RestaurantInfo() {
           setDineInWorkflowMode(data.dine_in_workflow_mode);
         }
         {
-          const v = String(data.receipt_print_by_catalog ?? '1').trim().toLowerCase();
-          setReceiptPrintByCatalog(!(v === '0' || v === 'false' || v === 'off' || v === 'no'));
+          const v = String(data.receipt_print_by_catalog ?? 'split').trim().toLowerCase();
+          if (v === '0' || v === 'false' || v === 'off' || v === 'no') {
+            setReceiptCatalogPrintMode('off');
+          } else if (v === 'headers' || v === 'same' || v === '2' || v === 'grouped') {
+            setReceiptCatalogPrintMode('headers');
+          } else {
+            // '1' | 'true' | 'split' | unset → 切割多张（兼容旧开启）
+            setReceiptCatalogPrintMode('split');
+          }
         }
       }
     } catch { /* ignore */ }
@@ -87,7 +94,8 @@ export default function RestaurantInfo() {
       const body: Record<string, string> = {};
       CONFIG_KEYS.forEach(k => { body[k] = values[k]; });
       body.dine_in_workflow_mode = dineInWorkflowMode;
-      body.receipt_print_by_catalog = receiptPrintByCatalog ? '1' : '0';
+      body.receipt_print_by_catalog =
+        receiptCatalogPrintMode === 'off' ? '0' : receiptCatalogPrintMode === 'headers' ? 'headers' : 'split';
       const res = await apiFetch('/api/admin/config', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -187,17 +195,26 @@ export default function RestaurantInfo() {
             <input
               type="radio"
               name="receiptPrintByCatalog"
-              checked={receiptPrintByCatalog}
-              onChange={() => { setReceiptPrintByCatalog(true); setSaved(false); }}
+              checked={receiptCatalogPrintMode === 'split'}
+              onChange={() => { setReceiptCatalogPrintMode('split'); setSaved(false); }}
             />
-            <span>{t('admin.receiptPrintByCatalogOn')}</span>
+            <span>{t('admin.receiptPrintByCatalogSplit')}</span>
           </label>
           <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer' }}>
             <input
               type="radio"
               name="receiptPrintByCatalog"
-              checked={!receiptPrintByCatalog}
-              onChange={() => { setReceiptPrintByCatalog(false); setSaved(false); }}
+              checked={receiptCatalogPrintMode === 'headers'}
+              onChange={() => { setReceiptCatalogPrintMode('headers'); setSaved(false); }}
+            />
+            <span>{t('admin.receiptPrintByCatalogHeaders')}</span>
+          </label>
+          <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer' }}>
+            <input
+              type="radio"
+              name="receiptPrintByCatalog"
+              checked={receiptCatalogPrintMode === 'off'}
+              onChange={() => { setReceiptCatalogPrintMode('off'); setSaved(false); }}
             />
             <span>{t('admin.receiptPrintByCatalogOff')}</span>
           </label>
