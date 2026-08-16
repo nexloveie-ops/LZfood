@@ -14,9 +14,15 @@ export function normalizeDeliveryAddressKey(address: string, postalCode: string)
   return `${a}|${p}`;
 }
 
+function isMongoDuplicateKey(err: unknown): boolean {
+  return Boolean(err && typeof err === 'object' && (err as { code?: number }).code === 11000);
+}
+
 /**
  * 仅在「送餐订单」写入数据库时调用（见 orders POST type=delivery）。
  * 不在未下单场景建档；无单独建档 API。
+ *
+ * 以 (storeId, phoneNorm, addressKey) 唯一键 upsert，避免重复下单 / 并发 / 改地址撞索引时报 E11000。
  */
 export async function attachCustomerProfileToDeliveryOrder(opts: {
   CustomerProfile: mongoose.Model<unknown>;
@@ -37,6 +43,13 @@ export async function attachCustomerProfileToDeliveryOrder(opts: {
   const addr = String(opts.deliveryAddress || '').trim();
   const pc = String(opts.postalCode || '').trim();
 
+  const payload = {
+    customerName: name,
+    deliveryAddress: addr,
+    postalCode: pc,
+    deliverySourceLast: opts.deliverySource,
+  };
+
   if (opts.requestedProfileId && mongoose.Types.ObjectId.isValid(opts.requestedProfileId)) {
     const found = await opts.CustomerProfile.findOne({
       _id: opts.requestedProfileId,
@@ -47,80 +60,42 @@ export async function attachCustomerProfileToDeliveryOrder(opts: {
       throw createAppError('VALIDATION_ERROR', 'customerProfileId 与手机号不匹配');
     }
     const fid = (found as { _id: mongoose.Types.ObjectId })._id;
-    await opts.CustomerProfile.updateOne(
-      { _id: fid },
+    try {
+      await opts.CustomerProfile.updateOne({ _id: fid }, { $set: { ...payload, addressKey } });
+      return fid;
+    } catch (err) {
+      // 新 addressKey 已落在同手机号另一条档案上：改用那条，勿因 E11000 导致下单失败
+      if (!isMongoDuplicateKey(err)) throw err;
+    }
+  }
+
+  try {
+    const doc = await opts.CustomerProfile.findOneAndUpdate(
+      { storeId: opts.storeId, phoneNorm, addressKey },
       {
-        $set: {
-          customerName: name,
-          deliveryAddress: addr,
-          postalCode: pc,
-          deliverySourceLast: opts.deliverySource,
+        $set: payload,
+        $setOnInsert: {
+          storeId: opts.storeId,
+          phoneNorm,
           addressKey,
         },
       },
+      { upsert: true, new: true },
     );
-    return fid;
-  }
-
-  const byPhone = (await opts.CustomerProfile.find({ storeId: opts.storeId, phoneNorm })
-    .lean()
-    .exec()) as unknown as {
-    _id: mongoose.Types.ObjectId;
-    addressKey: string;
-    customerName?: string;
-    deliveryAddress?: string;
-    postalCode?: string;
-  }[];
-
-  if (byPhone.length === 0) {
-    const doc = await opts.CustomerProfile.create({
+    if (!doc) {
+      throw createAppError('INTERNAL_ERROR', 'CustomerProfile upsert failed');
+    }
+    return (doc as { _id: mongoose.Types.ObjectId })._id;
+  } catch (err) {
+    if (!isMongoDuplicateKey(err)) throw err;
+    // 并发 upsert 偶发 E11000：再查一次并更新
+    const existing = (await opts.CustomerProfile.findOne({
       storeId: opts.storeId,
       phoneNorm,
       addressKey,
-      customerName: name,
-      deliveryAddress: addr,
-      postalCode: pc,
-      deliverySourceLast: opts.deliverySource,
-    });
-    return doc._id as mongoose.Types.ObjectId;
+    }).lean()) as { _id: mongoose.Types.ObjectId } | null;
+    if (!existing) throw err;
+    await opts.CustomerProfile.updateOne({ _id: existing._id }, { $set: payload });
+    return existing._id;
   }
-
-  const addrMatches = byPhone.filter((p) => p.addressKey === addressKey);
-  if (addrMatches.length === 1) {
-    const id = addrMatches[0]._id;
-    await opts.CustomerProfile.updateOne(
-      { _id: id },
-      {
-        $set: {
-          customerName: name,
-          deliveryAddress: addr,
-          postalCode: pc,
-          deliverySourceLast: opts.deliverySource,
-        },
-      },
-    );
-    return id;
-  }
-
-  if (addrMatches.length === 0) {
-    const doc = await opts.CustomerProfile.create({
-      storeId: opts.storeId,
-      phoneNorm,
-      addressKey,
-      customerName: name,
-      deliveryAddress: addr,
-      postalCode: pc,
-      deliverySourceLast: opts.deliverySource,
-    });
-    return doc._id as mongoose.Types.ObjectId;
-  }
-
-  throw createAppError('CONFLICT', '同一手机号存在多条相同地址的档案，请选择 customerProfileId', {
-    customerProfiles: addrMatches.map((p) => ({
-      _id: p._id,
-      customerName: p.customerName || '',
-      deliveryAddress: p.deliveryAddress || '',
-      postalCode: p.postalCode || '',
-    })),
-  });
 }

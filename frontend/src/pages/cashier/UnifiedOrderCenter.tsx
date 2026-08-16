@@ -577,7 +577,10 @@ export default function UnifiedOrderCenter() {
       if (res.ok) {
         const data = await res.json();
         setBusyId(null);
-        if (data?._id) void printCheckout(String(data._id), cashMeta).catch(() => {});
+        // 送餐司机回店结账：厨房单已在出餐流程打印，此处不再打小票
+        if (data?._id && order.type !== 'delivery') {
+          void printCheckout(String(data._id), cashMeta).catch(() => {});
+        }
         /** 收银结账已联动打印小票：顾客外卖单视为出餐/厨房步骤已满足 */
         if (order.type === 'takeout') {
           setTakeoutKitchenTicketPrintedIds((prev) => ({ ...prev, [order._id]: true }));

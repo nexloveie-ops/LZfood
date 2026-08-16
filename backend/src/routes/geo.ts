@@ -150,15 +150,25 @@ async function handleAddressGet(req: Request, res: Response, next: NextFunction)
     if (profileIdRaw && mongoose.Types.ObjectId.isValid(profileIdRaw)) {
       const { CustomerProfile } = getModels();
       const addressKey = normalizeDeliveryAddressKey(address, resolved.eircode);
-      await CustomerProfile.updateOne(
-        { _id: profileIdRaw, storeId: req.storeId },
-        {
-          $set: {
-            postalCode: resolved.eircode,
-            addressKey,
+      try {
+        await CustomerProfile.updateOne(
+          { _id: profileIdRaw, storeId: req.storeId },
+          {
+            $set: {
+              postalCode: resolved.eircode,
+              addressKey,
+            },
           },
-        },
-      ).catch(() => {});
+        );
+      } catch (err) {
+        // addressKey 已占用：写到已有档案，避免静默留下旧 key
+        if (err && typeof err === 'object' && (err as { code?: number }).code === 11000) {
+          await CustomerProfile.updateOne(
+            { storeId: req.storeId, addressKey },
+            { $set: { postalCode: resolved.eircode } },
+          ).catch(() => {});
+        }
+      }
     }
 
     res.json({
