@@ -152,9 +152,9 @@ const DEFAULT_ADDON_PRESETS: Array<{ name: string; code: string; description: st
     features: [FeatureKeys.PlatformPostOrderAdsManageAction, FeatureKeys.CustomerPostOrderAdsViewAction],
   },
   {
-    name: 'Sales Forecast',
+    name: '备货预测',
     code: 'sales-forecast',
-    description: '管理端销量预测：周/月备货预测、回测对比与校准',
+    description: '管理端备货预测：按菜品份数做周/月预计销量、回测对比与校准',
     features: [FeatureKeys.AdminSalesForecastPage],
   },
 ];
@@ -191,6 +191,18 @@ async function ensureDefaultFeatureProducts(): Promise<void> {
       { upsert: true },
     );
   }
+  /** Keep 备货预测 addon label/features in sync for platform UI */
+  await FeatureAddon.updateOne(
+    { code: 'sales-forecast' },
+    {
+      $set: {
+        name: '备货预测',
+        description: '管理端备货预测：按菜品份数做周/月预计销量、回测对比与校准',
+        features: [FeatureKeys.AdminSalesForecastPage],
+        isActive: true,
+      },
+    },
+  );
   /** 历史 Plan 仅含送餐键时补录独立会员键，避免升级后会员能力被误关 */
   await FeaturePlan.updateMany(
     { code: { $in: ['pro-base', 'enterprise-base'] }, features: FeatureKeys.CashierDeliveryPage },

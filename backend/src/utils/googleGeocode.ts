@@ -30,23 +30,25 @@ export type GeocodeCandidate = {
   partialMatch: boolean;
 };
 
-function httpsGetJson(url: string): Promise<GeocodeJson> {
+function httpsGetJson(url: string, timeoutMs = 8000): Promise<GeocodeJson> {
   return new Promise((resolve, reject) => {
-    https
-      .get(url, (res) => {
-        let d = '';
-        res.on('data', (c) => {
-          d += c;
-        });
-        res.on('end', () => {
-          try {
-            resolve(JSON.parse(d) as GeocodeJson);
-          } catch (e) {
-            reject(e);
-          }
-        });
-      })
-      .on('error', reject);
+    const req = https.get(url, (res) => {
+      let d = '';
+      res.on('data', (c) => {
+        d += c;
+      });
+      res.on('end', () => {
+        try {
+          resolve(JSON.parse(d) as GeocodeJson);
+        } catch (e) {
+          reject(e);
+        }
+      });
+    });
+    req.setTimeout(timeoutMs, () => {
+      req.destroy(new Error(`geocode timeout after ${timeoutMs}ms`));
+    });
+    req.on('error', reject);
   });
 }
 

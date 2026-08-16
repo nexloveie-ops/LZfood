@@ -6,11 +6,12 @@ import { requireAuthSameStore } from '../middleware/authForStore';
 import { createAppError } from '../middleware/errorHandler';
 import { requireFeature } from '../middleware/featureAccess';
 import { FeatureKeys } from '../utils/featureCatalog';
-import { CAL_CLIP_HI, CAL_CLIP_LO, FORECAST_TZ } from '../utils/salesForecast/constants';
+import { CAL_CLIP_HI, CAL_CLIP_LO, FORECAST_TZ, ORDER_LOAD_LOOKBACK_MONTHS, ORDER_LOAD_LOOKBACK_WEEKS } from '../utils/salesForecast/constants';
 import { nextPeriodStart, runSalesForecast } from '../utils/salesForecast/engine';
 import type { PeriodType } from '../utils/salesForecast/types';
 import { buildWeatherCalibration } from '../utils/salesForecast/weather';
 import {
+  addCalendarDays,
   dayKey,
   eachDayKeys,
   parseDayKey,
@@ -42,16 +43,116 @@ function models() {
   };
 }
 
-async function loadOrdersSince(storeId: mongoose.Types.ObjectId, since: Date) {
+const ORDER_SELECT =
+  'createdAt status items.itemName items.itemNameEn items.quantity items.menuItemId items.unitPrice items.lineKind items.refunded items.selectedOptions.extraPrice';
+
+/** How far back to pull order line items for a forecast (avoid since-2020 full dump). */
+function ordersLookbackSince(periodType: PeriodType, startDay: string): Date {
+  const { y, mo, d } = parseDayKey(startDay);
+  if (periodType === 'week') {
+    const back = addCalendarDays(y, mo, d, -(ORDER_LOAD_LOOKBACK_WEEKS * 7));
+    return zonedDayStart(back.y, back.mo, back.d);
+  }
+  let startMo = mo - ORDER_LOAD_LOOKBACK_MONTHS;
+  let startY = y;
+  while (startMo <= 0) {
+    startMo += 12;
+    startY -= 1;
+  }
+  return zonedDayStart(startY, startMo, 1);
+}
+
+async function loadOrdersSince(storeId: mongoose.Types.ObjectId, since: Date, untilExclusive?: Date) {
   const { Order } = models();
-  return Order.find({
+  const filter: Record<string, unknown> = {
     storeId,
-    createdAt: { $gte: since },
-  })
-    .select(
-      'createdAt status items.itemName items.itemNameEn items.quantity items.menuItemId items.unitPrice items.lineKind items.refunded items.selectedOptions.extraPrice',
-    )
-    .lean();
+    createdAt: untilExclusive ? { $gte: since, $lt: untilExclusive } : { $gte: since },
+  };
+  return Order.find(filter)
+    .select(ORDER_SELECT)
+    .lean()
+    .maxTimeMS(25_000);
+}
+
+/** Cheap min/max for monthPeriodAllowed without shipping years of items. */
+async function loadStoreOrderSpan(storeId: mongoose.Types.ObjectId): Promise<{
+  earliestOrderDay: string | null;
+  latestOrderDay: string | null;
+}> {
+  const { Order } = models();
+  const rows = (await Order.aggregate([
+    {
+      $match: {
+        storeId,
+        status: { $nin: ['refunded', 'cancelled'] },
+      },
+    },
+    {
+      $group: {
+        _id: null,
+        min: { $min: '$createdAt' },
+        max: { $max: '$createdAt' },
+      },
+    },
+  ]).option({ maxTimeMS: 15_000 })) as Array<{ min?: Date; max?: Date }>;
+  const row = rows[0];
+  if (!row?.min || !row?.max) return { earliestOrderDay: null, latestOrderDay: null };
+  return {
+    earliestOrderDay: dayKey(wallParts(new Date(row.min))),
+    latestOrderDay: dayKey(wallParts(new Date(row.max))),
+  };
+}
+
+async function loadForecastInputs(
+  storeId: mongoose.Types.ObjectId,
+  periodType: PeriodType,
+  startDay: string,
+  opts?: { withCalibrations?: boolean },
+) {
+  const { Offer, MenuItem } = models();
+  const since = ordersLookbackSince(periodType, startDay);
+  // Include target window itself for backtest actuals
+  const { y, mo, d } = parseDayKey(startDay);
+  const targetEnd =
+    periodType === 'week'
+      ? addCalendarDays(y, mo, d, 6)
+      : { y, mo, d: 31 }; // capped below via untilExclusive next month
+  let until: Date;
+  if (periodType === 'week') {
+    const after = addCalendarDays(targetEnd.y, targetEnd.mo, targetEnd.d, 1);
+    until = zonedDayStart(after.y, after.mo, after.d);
+  } else {
+    let nMo = mo + 1;
+    let nY = y;
+    if (nMo > 12) {
+      nMo = 1;
+      nY += 1;
+    }
+    until = zonedDayStart(nY, nMo, 1);
+  }
+
+  const tasks: [
+    ReturnType<typeof loadOrdersSince>,
+    Promise<any[]>,
+    Promise<any[]>,
+    ReturnType<typeof loadStoreOrderSpan>,
+    Promise<Record<string, { factor: number; source: 'stored'; note?: string }>> | Promise<null>,
+  ] = [
+    loadOrdersSince(storeId, since, until),
+    Offer.find({ storeId }).lean().maxTimeMS(10_000) as any,
+    MenuItem.find({ storeId }).select('_id categoryId price photoUrl translations').lean().maxTimeMS(10_000) as any,
+    loadStoreOrderSpan(storeId),
+    opts?.withCalibrations === false ? Promise.resolve(null) : loadCalMap(storeId),
+  ];
+
+  const [orders, offers, menuItems, storeOrderSpan, storedCalibrations] = await Promise.all(tasks);
+  return {
+    orders,
+    offers,
+    menuItems,
+    storeOrderSpan,
+    storedCalibrations: storedCalibrations || {},
+  };
 }
 
 async function loadCalMap(storeId: mongoose.Types.ObjectId) {
@@ -96,6 +197,7 @@ async function attachWeatherAndRun(opts: {
   storedCalibrations?: Record<string, { factor: number; source: 'stored'; note?: string }>;
   autoCalibrate?: boolean;
   useWeather: boolean;
+  storeOrderSpan?: { earliestOrderDay: string | null; latestOrderDay: string | null };
 }) {
   const base = {
     storeId: opts.storeId,
@@ -106,6 +208,7 @@ async function attachWeatherAndRun(opts: {
     menuItems: opts.menuItems,
     storedCalibrations: opts.storedCalibrations,
     autoCalibrate: opts.autoCalibrate,
+    storeOrderSpan: opts.storeOrderSpan,
   };
 
   if (!opts.useWeather) {
@@ -196,21 +299,24 @@ router.get('/status', ...guard, async (req: Request, res: Response, next: NextFu
   try {
     const storeId = requireStoreId(req);
     const periodType = (String(req.query.periodType || 'week') === 'month' ? 'month' : 'week') as PeriodType;
-    const since = zonedDayStart(2020, 1, 1);
-    const orders = await loadOrdersSince(storeId, since);
+    const startDay = nextPeriodStart(periodType);
+    const { orders, storeOrderSpan } = await loadForecastInputs(storeId, periodType, startDay, {
+      withCalibrations: false,
+    });
     const result = runSalesForecast({
       storeId,
       periodType,
-      startDay: nextPeriodStart(periodType),
+      startDay,
       orders: orders as any,
       offers: [],
       menuItems: [],
       autoCalibrate: false,
+      storeOrderSpan,
     });
     res.json({
       timezone: FORECAST_TZ,
       sample: result.sample,
-      suggestedNextStart: nextPeriodStart(periodType),
+      suggestedNextStart: startDay,
     });
   } catch (err) {
     next(err);
@@ -236,14 +342,11 @@ router.get('/', ...guard, async (req: Request, res: Response, next: NextFunction
     const autoCalibrate = req.query.autoCalibrate === '1' || req.query.autoCalibrate === 'true';
     const useWeather = !(req.query.weatherCal === '0' || req.query.weatherCal === 'false');
 
-    const { Offer, MenuItem } = models();
-    const since = zonedDayStart(2020, 1, 1);
-    const [orders, offers, menuItems, storedCalibrations] = await Promise.all([
-      loadOrdersSince(storeId, since),
-      Offer.find({ storeId }).lean(),
-      MenuItem.find({ storeId }).select('_id categoryId price photoUrl translations').lean(),
-      loadCalMap(storeId),
-    ]);
+    const { orders, offers, menuItems, storeOrderSpan, storedCalibrations } = await loadForecastInputs(
+      storeId,
+      periodType,
+      startDay,
+    );
 
     const result = await attachWeatherAndRun({
       storeId,
@@ -255,6 +358,7 @@ router.get('/', ...guard, async (req: Request, res: Response, next: NextFunction
       storedCalibrations,
       autoCalibrate,
       useWeather,
+      storeOrderSpan,
     });
 
     res.json(result);
@@ -339,13 +443,12 @@ router.post('/auto-calibrate', ...guard, async (req: Request, res: Response, nex
       throw createAppError('VALIDATION_ERROR', 'startDay YYYY-MM-DD required');
     }
 
-    const { Offer, MenuItem } = models();
-    const since = zonedDayStart(2020, 1, 1);
-    const [orders, offers, menuItems] = await Promise.all([
-      loadOrdersSince(storeId, since),
-      Offer.find({ storeId }).lean(),
-      MenuItem.find({ storeId }).select('_id categoryId price photoUrl translations').lean(),
-    ]);
+    const { orders, offers, menuItems, storeOrderSpan } = await loadForecastInputs(
+      storeId,
+      periodType,
+      startDay,
+      { withCalibrations: false },
+    );
 
     // Forecast the past window without stored cal to get baseline vs actual
     const result = await attachWeatherAndRun({
@@ -358,6 +461,7 @@ router.post('/auto-calibrate', ...guard, async (req: Request, res: Response, nex
       storedCalibrations: {},
       autoCalibrate: false,
       useWeather: true,
+      storeOrderSpan,
     });
 
     if (!result.isPastWindow) {

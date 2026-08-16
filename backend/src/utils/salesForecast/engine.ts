@@ -251,6 +251,8 @@ function buildSampleStatus(
   todayKey: string,
   /** Exclusive: history must end on/before this day (usually day before target.start) */
   historyEndCap: string,
+  /** Full-store span (cheap agg) so month gate works without loading years of items */
+  storeSpan?: { earliestOrderDay: string | null; latestOrderDay: string | null } | null,
 ): SampleStatus {
   const keys = Object.keys(daily).filter((k) => (daily[k]?.orders || 0) > 0 && k <= historyEndCap).sort();
   const allOrderDays = Object.keys(daily).filter((k) => (daily[k]?.orders || 0) > 0).sort();
@@ -258,8 +260,9 @@ function buildSampleStatus(
   const completeMonths = completeMonthsCount(allOrderDays);
   const earliest = keys[0] || null;
   const latestInCap = keys[keys.length - 1] || null;
-  const earliestAll = allOrderDays[0] || null;
-  const latestAll = allOrderDays.length ? allOrderDays[allOrderDays.length - 1] : null;
+  const earliestAll = storeSpan?.earliestOrderDay || allOrderDays[0] || null;
+  const latestAll =
+    storeSpan?.latestOrderDay || (allOrderDays.length ? allOrderDays[allOrderDays.length - 1] : null);
   const historySpanDays =
     earliestAll && latestAll ? eachDayKeys(earliestAll, latestAll).length : 0;
   const monthPeriodAllowed = historySpanDays >= MIN_HISTORY_DAYS_FOR_MONTH;
@@ -409,6 +412,11 @@ export type RunForecastInput = {
   weatherFactorByDay?: Record<string, number>;
   /** Attached to result for UI / explain. */
   weather?: ForecastResult['weather'];
+  /**
+   * Full-store earliest/latest order day (from cheap aggregation).
+   * Keeps monthPeriodAllowed accurate when orders payload is lookback-limited.
+   */
+  storeOrderSpan?: { earliestOrderDay: string | null; latestOrderDay: string | null };
 };
 
 export function runSalesForecast(input: RunForecastInput): ForecastResult {
@@ -444,7 +452,7 @@ export function runSalesForecast(input: RunForecastInput): ForecastResult {
   const yesterdayKey = `${yesterday.y}-${String(yesterday.mo).padStart(2, '0')}-${String(yesterday.d).padStart(2, '0')}`;
   if (historyEndCap > yesterdayKey) historyEndCap = yesterdayKey;
 
-  const sample = buildSampleStatus(periodType, daily, todayKey, historyEndCap);
+  const sample = buildSampleStatus(periodType, daily, todayKey, historyEndCap, input.storeOrderSpan);
   const menuById = new Map(menuItems.map((m) => [String(m._id), m]));
   const menuByName = new Map<string, MenuLite>();
   for (const mi of menuItems) {

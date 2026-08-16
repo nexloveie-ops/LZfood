@@ -15,6 +15,19 @@ export const MIN_HISTORY_DAYS_FOR_MONTH = 365;
 export const DEFAULT_HISTORY_WEEKS = 12;
 export const DEFAULT_HISTORY_MONTHS = 6;
 
+/**
+ * Mongo lookback for order payloads (not from 2020).
+ * Week: history window + lag-7 + week-trend prior weeks + slack.
+ * Month: enough for DEFAULT_HISTORY_MONTHS (+ slack); year-span via cheap min/max agg.
+ */
+export const ORDER_LOAD_LOOKBACK_WEEKS = DEFAULT_HISTORY_WEEKS + 8;
+export const ORDER_LOAD_LOOKBACK_MONTHS = DEFAULT_HISTORY_MONTHS + 2;
+
+/** Open-Meteo / geocode HTTP timeout (Cloud Run egress can hang otherwise). */
+export const WEATHER_FETCH_TIMEOUT_MS = 8000;
+/** In-process weather range cache TTL */
+export const WEATHER_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+
 /** Relative error bands (vs actual), when actual >= MIN_ACTUAL_FOR_BAND */
 export const HIT_OK = 0.2;
 export const HIT_WARN = 0.35;

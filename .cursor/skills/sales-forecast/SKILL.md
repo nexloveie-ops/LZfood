@@ -22,7 +22,8 @@ Wake phrase: **备货预测**. Also: 销量预测 / 预测销量 / 菜品销量 
 - Query Mongo via `backend` + `dotenv` (`LZFOOD_DBCON` or `DBCON`). Never echo secrets.
 - Calendar buckets in **Europe/Dublin**.
 - Engine: `backend/src/utils/salesForecast/`; API: `/api/sales-forecast`.
-- Sample gates: week ≥56 order days; month ≥3 full months. Auto window: 12 weeks / 6 months.
+- Sample gates: week ≥56 order days; month ≥3 full months **and** ≥1y span (span via cheap min/max agg). Auto window: 12 weeks / 6 months.
+- **Perf**: order payload lookback ~20 weeks (week) / ~8 months (month) — not since 2020; weather HTTP ≤8s + cache; geocode timeout 8s.
 - Error bands: ≤20% hit, ≤35% warn, >35% miss (red). Auto-cal: miss-only, half-step, clip 0.75–1.25.
 - Dish formula: mix = `0.7 × recency weekday + 0.3 × lag-7`; **store total** = same blend × dampened week trend (`1+(f-1)×0.4`) on week (or month growth on month); dishes **share-scaled** to store total. Promo SKUs: post-promo daily × days before scale.
 - **Revenue**: `Σ predicted portions × unit €` (menu price or hist avg; excludes delivery fee). Summary KPI only — prep remains portion-first.

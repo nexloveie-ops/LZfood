@@ -10,7 +10,9 @@ import {
   FORECAST_TZ,
   WEATHER_CAL_CLIP_HI,
   WEATHER_CAL_CLIP_LO,
+  WEATHER_CACHE_TTL_MS,
   WEATHER_CELL_MIN_N,
+  WEATHER_FETCH_TIMEOUT_MS,
   WEATHER_RAIN_LIGHT_MAX,
   WEATHER_RAIN_NONE_MAX,
 } from './constants';
@@ -55,6 +57,9 @@ type StoreGeoCache = { lat: number; lng: number; address: string; at: number };
 const geoCache = new Map<string, StoreGeoCache>();
 const GEO_TTL_MS = 60 * 60 * 1000;
 
+type WeatherRangeCache = { at: number; data: Record<string, DailyWeather> };
+const weatherRangeCache = new Map<string, WeatherRangeCache>();
+
 /** Dublin 1 / Moore St fallback when geocode unavailable but address mentions Dublin. */
 const DUBLIN1_FALLBACK = { lat: 53.3525, lng: -6.263 };
 
@@ -81,9 +86,15 @@ function cellKey(rain: RainBucket, temp: TempBand): string {
 }
 
 async function fetchJson(url: string): Promise<any> {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`weather HTTP ${res.status}`);
-  return res.json();
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), WEATHER_FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, { signal: ctrl.signal });
+    if (!res.ok) throw new Error(`weather HTTP ${res.status}`);
+    return await res.json();
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function loadStoreAddress(storeId: mongoose.Types.ObjectId): Promise<string> {
@@ -202,17 +213,28 @@ export async function fetchWeatherRange(
   endDay: string,
   todayKey: string,
 ): Promise<Record<string, DailyWeather>> {
+  const cacheKey = `${lat.toFixed(3)},${lng.toFixed(3)}:${startDay}:${endDay}:${todayKey}`;
+  const hit = weatherRangeCache.get(cacheKey);
+  if (hit && Date.now() - hit.at < WEATHER_CACHE_TTL_MS) {
+    return { ...hit.data };
+  }
+
   const out: Record<string, DailyWeather> = {};
   const archiveEnd = endDay < todayKey ? endDay : todayKey;
-  if (startDay <= archiveEnd) {
-    Object.assign(out, await fetchArchiveDaily(lat, lng, startDay, archiveEnd));
+  const needArchive = startDay <= archiveEnd;
+  const needForecast = endDay >= todayKey;
+
+  const [archive, forecast] = await Promise.all([
+    needArchive ? fetchArchiveDaily(lat, lng, startDay, archiveEnd).catch(() => ({} as Record<string, DailyWeather>)) : Promise.resolve({} as Record<string, DailyWeather>),
+    needForecast ? fetchForecastDaily(lat, lng, 16).catch(() => ({} as Record<string, DailyWeather>)) : Promise.resolve({} as Record<string, DailyWeather>),
+  ]);
+
+  Object.assign(out, archive);
+  for (const [dk, w] of Object.entries(forecast)) {
+    if (dk >= todayKey && dk <= endDay) out[dk] = w;
   }
-  if (endDay >= todayKey) {
-    const fc = await fetchForecastDaily(lat, lng, 16);
-    for (const [dk, w] of Object.entries(fc)) {
-      if (dk >= todayKey && dk <= endDay) out[dk] = w;
-    }
-  }
+
+  weatherRangeCache.set(cacheKey, { at: Date.now(), data: { ...out } });
   return out;
 }
 
