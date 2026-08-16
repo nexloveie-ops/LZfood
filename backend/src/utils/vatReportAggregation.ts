@@ -3,8 +3,12 @@ import { getModels } from '../getModels';
 import { orderCreatedAtFilterUtc } from './reportDateRange';
 import { bundleAdjustedLineTotals, lineGrossEuro, type LineLikeForBundle } from './bundleLineAllocation';
 
-export const FOOD_VAT_RATE = 0.135;
+/** Ireland reduced food rate (VAT-inclusive split). Was 13.5%; hospitality food now 9%. */
+export const FOOD_VAT_RATE = 0.09;
 export const DRINK_VAT_RATE = 0.23;
+/** Display label for Food VAT column / footer (derived from FOOD_VAT_RATE). */
+export const FOOD_VAT_RATE_LABEL = `${(FOOD_VAT_RATE * 100).toFixed(FOOD_VAT_RATE * 100 % 1 === 0 ? 0 : 1)}%`;
+export const DRINK_VAT_RATE_LABEL = `${(DRINK_VAT_RATE * 100).toFixed(DRINK_VAT_RATE * 100 % 1 === 0 ? 0 : 1)}%`;
 /** Delivery charges treated same as food rate for VAT worksheet (adjust if your accountant specifies otherwise). */
 export const DELIVERY_VAT_RATE = FOOD_VAT_RATE;
 

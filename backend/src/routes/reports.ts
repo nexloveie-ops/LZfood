@@ -537,7 +537,7 @@ router.get('/detailed', authMiddleware, requirePermission('report:view'), async 
   }
 });
 
-// GET /api/reports/vat-pdf?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD — VAT worksheet PDF (IE Food 13.5% / Drink 23%)
+// GET /api/reports/vat-pdf?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD — VAT worksheet PDF (IE Food 9% / Drink 23%)
 router.get('/vat-pdf', authMiddleware, requirePermission('report:view'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const storeId = requireStoreId(req);
