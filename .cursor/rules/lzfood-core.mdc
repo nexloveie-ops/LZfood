@@ -22,6 +22,7 @@ alwaysApply: true
 - After backend changes, user often asks to restart backend/frontend.
 - Prefer discuss-first when asked; secrets only via env — never echo Mongo/API/SMTP/Deliveroo keys into docs or chat summaries.
 - Test stores: `demo`, `tasteofhongkong`, `meet-fresh`, `dragoninn` (customer import).
+- Wake phrase **备货预测** (also 销量预测) → load sales-forecast skill / `lzfood-sales-forecast` rule (dish prep portions from Mongo; promo-aware; not order totals).
 
 ## Env names (values never in rules)
 - DB: `LZFOOD_DBCON` or `DBCON`; `JWT_SECRET`; `DEFAULT_STORE_SLUG` / `VITE_DEFAULT_STORE_SLUG`.

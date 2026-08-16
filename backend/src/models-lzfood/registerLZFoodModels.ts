@@ -5,6 +5,7 @@ import { AllergenSchema } from '../models/Allergen';
 import { OrderSchema } from '../models/Order';
 import { CheckoutSchema } from '../models/Checkout';
 import { OfferSchema } from '../models/Offer';
+import { ForecastCalibrationSchema } from '../models/ForecastCalibration';
 import { CouponSchema } from '../models/Coupon';
 import { VoucherCampaignSchema, NumberedVoucherSchema } from '../models/NumberedVoucher';
 import { OptionGroupTemplateSchema } from '../models/OptionGroupTemplate';
@@ -74,6 +75,7 @@ export type LZFoodModels = {
   OptionGroupTemplate: Model<unknown>;
   OptionGroupTemplateRule: Model<unknown>;
   Offer: Model<unknown>;
+  ForecastCalibration: Model<unknown>;
   Coupon: Model<unknown>;
   VoucherCampaign: Model<unknown>;
   NumberedVoucher: Model<unknown>;
@@ -127,6 +129,12 @@ export function registerLZFoodModels(conn: Connection): LZFoodModels {
     'option_group_template_rules',
   );
   const Offer = m('Offer', withStoreId(OfferSchema), 'offers');
+  const ForecastCalibration = m(
+    'ForecastCalibration',
+    withStoreId(ForecastCalibrationSchema),
+    'forecast_calibrations',
+  );
+  ForecastCalibration.schema.index({ storeId: 1, itemName: 1 }, { unique: true });
   const Coupon = m('Coupon', withStoreId(CouponSchema), 'coupons');
   const VoucherCampaign = m('VoucherCampaign', withStoreId(VoucherCampaignSchema), 'voucher_campaigns');
   const NumberedVoucher = m('NumberedVoucher', withStoreId(NumberedVoucherSchema), 'numbered_vouchers');
@@ -181,6 +189,7 @@ export function registerLZFoodModels(conn: Connection): LZFoodModels {
     OptionGroupTemplate,
     OptionGroupTemplateRule,
     Offer,
+    ForecastCalibration,
     Coupon,
     VoucherCampaign,
     NumberedVoucher,

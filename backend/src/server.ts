@@ -22,6 +22,7 @@ import optionGroupTemplatesRouter from './routes/optionGroupTemplates';
 import inventoryRouter from './routes/inventory';
 import rawMaterialsRouter from './routes/rawMaterials';
 import reportsRouter from './routes/reports';
+import salesForecastRouter from './routes/salesForecast';
 import offersRouter from './routes/offers';
 import { createPaymentsRouter } from './routes/payments';
 import couponsRouter from './routes/coupons';
@@ -137,6 +138,9 @@ app.use('/api/raw-materials', rawMaterialsRouter);
 
 // Reports routes
 app.use('/api/reports', reportsRouter);
+
+// Sales forecast addon
+app.use('/api/sales-forecast', salesForecastRouter);
 
 // Offers routes
 app.use('/api/offers', offersRouter);

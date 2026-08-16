@@ -14,6 +14,8 @@ export const FeatureKeys = {
   /** 管理端「客人通知」页 + 订单短信/WhatsApp 提醒（电话单/送餐） */
   AdminCustomerNotificationsPage: 'admin.customerNotifications.page',
   AdminReportsVatExportAction: 'admin.reports.vatExport.action',
+  /** 管理端「备货预测」页（独立 addon；菜品份数，非总单数） */
+  AdminSalesForecastPage: 'admin.salesForecast.page',
   AdminInventoryRestoreTimeAction: 'admin.inventory.restoreTime.action',
   /**
    * 统一的「库存追踪」总开关。覆盖：

@@ -8,6 +8,7 @@ export { CheckoutSchema } from './Checkout';
 export { SystemConfigSchema } from './SystemConfig';
 export { DailyOrderCounterSchema } from './DailyOrderCounter';
 export { OfferSchema, OfferSlotSchema } from './Offer';
+export { ForecastCalibrationSchema } from './ForecastCalibration';
 export { CouponSchema } from './Coupon';
 export { VoucherCampaignSchema, NumberedVoucherSchema } from './NumberedVoucher';
 export { OptionGroupTemplateSchema } from './OptionGroupTemplate';

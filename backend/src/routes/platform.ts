@@ -151,6 +151,12 @@ const DEFAULT_ADDON_PRESETS: Array<{ name: string; code: string; description: st
     description: '开启下单后广告管理与顾客侧展示',
     features: [FeatureKeys.PlatformPostOrderAdsManageAction, FeatureKeys.CustomerPostOrderAdsViewAction],
   },
+  {
+    name: 'Sales Forecast',
+    code: 'sales-forecast',
+    description: '管理端销量预测：周/月备货预测、回测对比与校准',
+    features: [FeatureKeys.AdminSalesForecastPage],
+  },
 ];
 
 async function ensureDefaultFeatureProducts(): Promise<void> {

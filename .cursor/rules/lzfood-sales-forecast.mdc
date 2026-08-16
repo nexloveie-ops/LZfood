@@ -1,0 +1,38 @@
+---
+description: >-
+  备货预测 — dish/prep portion forecast (not order totals), weekday-recency +
+  lag7 blend, store-total share-scale, holdout compare, promo-adjusted SKUs.
+  Wake when user says 备货预测 (also 销量预测, sales forecast, 预测销量, 菜品销量).
+alwaysApply: false
+---
+
+# 备货预测（ops + product）
+
+## Product surface
+- Feature key: `admin.salesForecast.page` (addon code `sales-forecast`)
+- Admin: `/{slug}/admin/sales-forecast` — cashier-like grid of **suggested prep** per dish
+- **Do not** surface predicted order counts as a KPI; totals bar = sum of dish prep + dish hit rates on backtest
+- Click dish → explain drawer + manual calibration (0.75–1.25)
+- Auto-cal: miss-only, half-step; history window ends **before** target start
+- Engine method: dish mix (70% recency weekday + 30% lag-7) share-scaled to store total; week trend dampened (`×0.4` residual) on total only; month growth on month period only
+- YoY: `yoyStatus` reserved; inactive until ~14 months
+
+## When woken
+User says **备货预测** (or 销量预测 / equivalent). Default: **read-only** DB analysis; **do not modify code** unless they explicitly ask to implement.
+
+## Data
+- Connect via backend `dotenv` + `LZFOOD_DBCON` / `DBCON`. Never print connection strings.
+- Resolve store by `slug`. Timezone: **Europe/Dublin**.
+- Orders: `orders` with `storeId`, `createdAt`, `items[]` (`itemName` / `itemNameEn`, `quantity`, `menuItemId`).
+- Promos: `offers` — exclude active promo window from SKU baseline; use post-promo daily mean × target days.
+
+## Method (prep-first)
+1. History: last 12 weeks / 6 full months ending day before target.
+2. Dish **mix** from recency weekday + lag-7; **store total** from same blend × dampened week trend (week) or month growth (month); scale mix to total.
+3. Holdout metrics: dish hit ≤20%, hit+warn ≤35%, MAPE, Top20 hit — **not** order-count error.
+4. Promo adjustment required for marketed SKUs (e.g. 辣袋 in 特惠套餐).
+
+## Report shape
+- Dish prep: predicted vs actual vs band.
+- Optional: aggregate portion sum as secondary.
+- Keep answers concise; no code changes unless asked.

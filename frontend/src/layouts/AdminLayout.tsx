@@ -24,6 +24,7 @@ const sidebarItems = [
   { path: 'members', icon: '👤', key: 'admin.membersNav', featureKey: 'cashier.member.wallet' },
   { path: 'orders', icon: '📋', key: 'admin.orderHistory', featureKey: 'admin.orderHistory.page' },
   { path: 'reports', icon: '📊', key: 'admin.reports' },
+  { path: 'sales-forecast', icon: '📈', key: 'admin.salesForecast.nav', featureKey: 'admin.salesForecast.page' },
   { path: 'business-hours', icon: '🕒', key: 'admin.businessHours' },
   { path: 'customer-notifications', icon: '🔔', key: 'admin.customerNotify.nav', featureKey: 'admin.customerNotifications.page' },
   { path: 'users', icon: '👥', key: 'admin.users' },
