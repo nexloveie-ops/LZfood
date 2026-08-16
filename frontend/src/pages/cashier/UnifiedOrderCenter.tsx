@@ -16,6 +16,7 @@ import CashierMemberCheckoutBlock, {
 import CashierCheckoutDiscountPanel from '../../components/cashier/CashierCheckoutDiscountPanel';
 import type { NumberedVoucherPreview } from '../../components/cashier/CashierNumberedVoucherBlock';
 import OrderItemOptionGroupList from '../../components/cashier/OrderItemOptionGroupList';
+import { cashierOrderItemDisplayName } from '../../utils/cashierOrderItemOptions';
 
 type OrderType = 'dine_in' | 'takeout' | 'phone' | 'delivery';
 type OrderStatus = 'pending' | 'paid_online' | 'checked_out' | 'completed' | 'refunded' | 'checked_out-hide' | 'completed-hide';
@@ -2741,7 +2742,7 @@ export default function UnifiedOrderCenter() {
                             }}
                           />
                           <span style={{ flex: 1, minWidth: 0 }}>
-                            {it.itemName}
+                            {cashierOrderItemDisplayName(it, isEn)}
                             <span style={{ color: '#888' }}> · max {maxQ}</span>
                           </span>
                         </label>
@@ -3068,7 +3069,7 @@ export default function UnifiedOrderCenter() {
                 >
                   <div style={{ flex: 1, minWidth: 0, color: '#333' }}>
                     <div style={{ fontWeight: 600 }}>
-                      {item.itemName} ×{item.quantity}
+                      {cashierOrderItemDisplayName(item, isEn)} ×{item.quantity}
                     </div>
                     <OrderItemOptionGroupList options={item.selectedOptions} isEn={isEn} compact />
                   </div>
@@ -3186,7 +3187,7 @@ export default function UnifiedOrderCenter() {
                         setPartialQtyByLineId((prev) => ({ ...prev, [it._id]: on ? maxQ : 0 }));
                       }}
                     />
-                    <span style={{ flex: 1, minWidth: 0 }}>{it.itemName}</span>
+                    <span style={{ flex: 1, minWidth: 0 }}>{cashierOrderItemDisplayName(it, isEn)}</span>
                     <span style={{ fontSize: 11, color: '#888', whiteSpace: 'nowrap' }}>max {maxQ}</span>
                   </label>
                 );

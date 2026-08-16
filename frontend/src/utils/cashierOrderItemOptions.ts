@@ -48,3 +48,25 @@ export function groupCashierSelectedOptions(
 
   return orderKeys.map((k) => byKey.get(k)!);
 }
+
+/** Order line dish name for cashier UI (EN prefers itemNameEn). */
+export function cashierOrderItemDisplayName(
+  item: { itemName?: string; itemNameEn?: string },
+  isEn: boolean,
+): string {
+  const zh = String(item.itemName || '').trim();
+  const en = String(item.itemNameEn || '').trim();
+  if (isEn) return en || zh;
+  return zh || en;
+}
+
+/** Bundle / offer label for cashier UI. */
+export function cashierBundleDisplayName(
+  b: { name?: string; nameEn?: string },
+  isEn: boolean,
+): string {
+  const zh = String(b.name || '').trim();
+  const en = String(b.nameEn || '').trim();
+  if (isEn) return en || zh;
+  return zh || en;
+}

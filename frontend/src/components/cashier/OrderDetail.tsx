@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next';
 import OrderItemOptionGroupList from './OrderItemOptionGroupList';
+import { cashierBundleDisplayName, cashierOrderItemDisplayName } from '../../utils/cashierOrderItemOptions';
 
 export interface OrderItem {
   _id: string;
@@ -66,7 +67,7 @@ export default function OrderDetail({ orders }: OrderDetailProps) {
                     <div style={{
                       display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 13,
                     }}>
-                      <span style={{ fontWeight: 500 }}>{item.itemName}</span>
+                      <span style={{ fontWeight: 500 }}>{cashierOrderItemDisplayName(item, isEn)}</span>
                       <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
                         <span style={{ color: 'var(--text-light)' }}>×{item.quantity}</span>
                         <span style={{ fontWeight: 600, color: 'var(--red-primary)', minWidth: 50, textAlign: 'right' }}>
@@ -85,7 +86,7 @@ export default function OrderDetail({ orders }: OrderDetailProps) {
                   <div style={{ padding: '6px 0' }}>
                     {order.appliedBundles.map((b, i) => (
                       <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 13, color: '#E65100' }}>
-                        <span>🎁 {b.name}</span>
+                        <span>🎁 {cashierBundleDisplayName(b, isEn)}</span>
                         <span style={{ fontWeight: 600, minWidth: 50, textAlign: 'right' }}>-€{b.discount.toFixed(2)}</span>
                       </div>
                     ))}

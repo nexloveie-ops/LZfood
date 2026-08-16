@@ -5,6 +5,7 @@ import { useAuth } from '../../context/AuthContext';
 import { type Order, type OrderItem } from '../../components/cashier/OrderDetail';
 import ReceiptPrint from '../../components/cashier/ReceiptPrint';
 import OrderItemOptionGroupList from '../../components/cashier/OrderItemOptionGroupList';
+import { cashierOrderItemDisplayName } from '../../utils/cashierOrderItemOptions';
 import { apiFetch } from '../../api/client';
 import { computeCustomerFacingPayableEuro } from '../../utils/orderPayableEuro';
 import CashierMemberCheckoutBlock, {
@@ -425,7 +426,7 @@ export default function CheckoutFlow() {
               return (
                 <tr key={item.menuItemId} style={{ borderBottom: '1px solid #f0f0f0' }}>
                   <td style={{ padding: '8px 0', fontWeight: 500 }}>
-                    {item.itemName}
+                    {cashierOrderItemDisplayName(item, isEn)}
                     <OrderItemOptionGroupList options={item.selectedOptions} isEn={isEn} compact />
                   </td>
                   <td style={{ padding: '8px 0', textAlign: 'center' }}>×{item.quantity}</td>

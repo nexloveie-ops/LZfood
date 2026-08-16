@@ -11,8 +11,23 @@ import CashierMemberCheckoutBlock, {
   type CashierMemberPreview,
 } from '../../components/cashier/CashierMemberCheckoutBlock';
 import OrderItemOptionGroupList from '../../components/cashier/OrderItemOptionGroupList';
+import { cashierBundleDisplayName, cashierOrderItemDisplayName } from '../../utils/cashierOrderItemOptions';
 
-interface OrderItem { _id: string; menuItemId: string; quantity: number; unitPrice: number; itemName: string; selectedOptions?: { groupName: string; groupNameEn?: string; choiceName: string; choiceNameEn?: string; extraPrice: number }[]; }
+interface OrderItem {
+  _id: string;
+  menuItemId: string;
+  quantity: number;
+  unitPrice: number;
+  itemName: string;
+  itemNameEn?: string;
+  selectedOptions?: {
+    groupName: string;
+    groupNameEn?: string;
+    choiceName: string;
+    choiceNameEn?: string;
+    extraPrice: number;
+  }[];
+}
 interface TakeoutOrder {
   _id: string; type: string; dailyOrderNumber?: number; status: string;
   items: OrderItem[]; createdAt: string;
@@ -258,7 +273,7 @@ export default function TakeoutOrderList() {
             {selectedOrder.items.map(item => (
               <div key={item._id} style={{ padding: '8px 0', borderBottom: '1px solid #f0f0f0', fontSize: 13 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span>{item.itemName} ×{item.quantity}</span>
+                  <span>{cashierOrderItemDisplayName(item, isEn)} ×{item.quantity}</span>
                   <span style={{ fontWeight: 600, color: 'var(--red-primary)' }}>€{((item.unitPrice + (item.selectedOptions || []).reduce((a: number, o: { extraPrice?: number }) => a + (o.extraPrice || 0), 0)) * item.quantity).toFixed(2)}</span>
                 </div>
                 <OrderItemOptionGroupList options={item.selectedOptions} isEn={isEn} compact />
@@ -270,7 +285,7 @@ export default function TakeoutOrderList() {
               <div style={{ padding: '8px 10px', background: '#FFF3E0', borderRadius: 8, fontSize: 13 }}>
                 {selectedOrder.appliedBundles.map((b, i) => (
                   <div key={i} style={{ display: 'flex', justifyContent: 'space-between', color: '#E65100' }}>
-                    <span>🎁 {b.name}</span>
+                    <span>🎁 {cashierBundleDisplayName(b, isEn)}</span>
                     <span style={{ fontWeight: 600 }}>-€{b.discount.toFixed(2)}</span>
                   </div>
                 ))}
