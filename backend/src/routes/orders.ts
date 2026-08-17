@@ -375,6 +375,10 @@ export function createOrdersRouter(io: SocketIOServer): Router {
 
       // Build order items with price/name snapshots
       const staffAllowed = isStaffCashierOrOwner(req);
+      const waiterPlacement =
+        staffAllowed &&
+        ((req.body as { waiterPlacement?: unknown }).waiterPlacement === true ||
+          (req.body as { waiterPlacement?: unknown }).waiterPlacement === 'true');
       const orderItems = await buildOrderItemsPayload(req.storeId!, items, menuItemMap, staffAllowed);
       const orderData: Record<string, unknown> = {
         storeId: req.storeId,
@@ -399,8 +403,9 @@ export function createOrdersRouter(io: SocketIOServer): Router {
             ? String((req.body as { dineInGuestLabel: string }).dineInGuestLabel).trim()
             : '';
         orderData.dineInGuestLabel = rawGuest.slice(0, 40);
-        if (dineInWf === 'pay_after') {
+        if (dineInWf === 'pay_after' || waiterPlacement) {
           // 首次下单对店端可见；顾客点「改单」会先调 dine-in-exposed 隐藏
+          // waiterPlacement：先付店也走未结，必须进订单中心
           orderData.dineInExposedToStaff = true;
         }
       }
@@ -551,7 +556,7 @@ export function createOrdersRouter(io: SocketIOServer): Router {
       const placementMethod =
         rawPlacementMethod === 'card' || rawPlacementMethod === 'member' ? rawPlacementMethod : null;
       let prepaidAtPlacement = false;
-      if (wantsPhoneCard || placementMethod) {
+      if ((wantsPhoneCard || placementMethod) && !waiterPlacement) {
         if (!isStaffCashierOrOwner(req)) {
           throw createAppError('FORBIDDEN', 'placementPrepaidMethod requires cashier or owner session');
         }
@@ -594,6 +599,7 @@ export function createOrdersRouter(io: SocketIOServer): Router {
         type,
         takeoutPlacementSource: takeoutSrc === 'cashier' ? 'cashier' : takeoutSrc === 'customer' ? 'customer' : undefined,
         deliverySource: deliverySrc,
+        waiterPlacement,
       });
       if (kitchenAtPlacement) {
         for (const line of orderItems as { lineKind?: string; kitchenPrintedQty?: number; quantity: number }[]) {
@@ -611,6 +617,7 @@ export function createOrdersRouter(io: SocketIOServer): Router {
           takeoutPlacementSource: takeoutSrc === 'cashier' ? 'cashier' : takeoutSrc === 'customer' ? 'customer' : undefined,
           deliverySource: deliverySrc,
           prepaidAtPlacement,
+          waiterPlacement,
         }),
       );
 

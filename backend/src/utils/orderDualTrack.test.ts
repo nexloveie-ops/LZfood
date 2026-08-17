@@ -73,6 +73,12 @@ describe('isCashierKitchenAtPlacement', () => {
     expect(isCashierKitchenAtPlacement({ type: 'delivery', deliverySource: 'qr' })).toBe(false);
     expect(isCashierKitchenAtPlacement({ type: 'takeout', takeoutPlacementSource: 'cashier' })).toBe(true);
     expect(isCashierKitchenAtPlacement({ type: 'takeout', takeoutPlacementSource: 'customer' })).toBe(false);
+    expect(isCashierKitchenAtPlacement({ type: 'phone', waiterPlacement: true })).toBe(false);
+    expect(isCashierKitchenAtPlacement({
+      type: 'takeout',
+      takeoutPlacementSource: 'cashier',
+      waiterPlacement: true,
+    })).toBe(false);
   });
 });
 

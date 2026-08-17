@@ -133,7 +133,10 @@ export function isCashierKitchenAtPlacement(input: {
   type?: string;
   takeoutPlacementSource?: 'cashier' | 'customer';
   deliverySource?: string;
+  /** Waiter phone app: no on-device printer; POS 订单中心再送厨房 */
+  waiterPlacement?: boolean;
 }): boolean {
+  if (input.waiterPlacement) return false;
   if (input.type === 'phone') return true;
   if (input.type === 'delivery' && input.deliverySource === 'phone') return true;
   if (input.type === 'takeout' && input.takeoutPlacementSource === 'cashier') return true;
@@ -145,6 +148,7 @@ export function initialDualTrackForCreate(input: {
   takeoutPlacementSource?: 'cashier' | 'customer';
   deliverySource?: string;
   prepaidAtPlacement?: boolean;
+  waiterPlacement?: boolean;
 }): { dualTrackVersion: number; paymentStatus: PaymentStatus; fulfillmentStatus: FulfillmentStatus } {
   const base = {
     dualTrackVersion: DUAL_TRACK_VERSION,

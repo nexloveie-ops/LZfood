@@ -1,0 +1,52 @@
+plugins {
+    id 'com.android.application'
+}
+
+def readWaiterOrigin = {
+    def propsFile = rootProject.file('waiter.properties')
+    def fallback = 'https://food.lztechserve.com'
+    if (!propsFile.exists()) {
+        return fallback
+    }
+    def props = new Properties()
+    propsFile.withInputStream { props.load(it) }
+    def url = props.getProperty('waiter.origin', fallback)?.trim()
+    if (url != null && url.endsWith('/')) {
+        url = url.substring(0, url.length() - 1)
+    }
+    return (url != null && !url.isEmpty()) ? url : fallback
+}
+
+android {
+    namespace 'ie.lzfood.waiter'
+    compileSdk 36
+
+    defaultConfig {
+        applicationId 'ie.lzfood.waiter'
+        minSdk 26
+        targetSdk 36
+        versionCode 1
+        versionName '1.0.0'
+        resValue 'string', 'waiter_origin', readWaiterOrigin()
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+}
+
+configurations.configureEach {
+    exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk7'
+    exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk8'
+}
+
+dependencies {
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+}

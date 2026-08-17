@@ -17,6 +17,7 @@ import CashierCheckoutDiscountPanel from '../../components/cashier/CashierChecko
 import type { NumberedVoucherPreview } from '../../components/cashier/CashierNumberedVoucherBlock';
 import OrderItemOptionGroupList from '../../components/cashier/OrderItemOptionGroupList';
 import { cashierOrderItemDisplayName } from '../../utils/cashierOrderItemOptions';
+import { isWaiterMode } from '../../utils/waiterMode';
 
 type OrderType = 'dine_in' | 'takeout' | 'phone' | 'delivery';
 type OrderStatus = 'pending' | 'paid_online' | 'checked_out' | 'completed' | 'refunded' | 'checked_out-hide' | 'completed-hide';
@@ -395,6 +396,7 @@ export default function UnifiedOrderCenter() {
   const canDelivery = hasFeature('cashier.delivery.page');
   const canMemberWallet = hasFeature('cashier.member.wallet');
   const canCustomerNotify = hasFeature('admin.customerNotifications.page');
+  const waiterMode = isWaiterMode();
   const [orders, setOrders] = useState<OrderRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -684,6 +686,12 @@ export default function UnifiedOrderCenter() {
   );
 
   const openCheckoutModal = (order: OrderRow) => {
+    if (waiterMode) {
+      alert(isEn
+        ? 'Payment is not available in the waiter app. Use the cashier POS.'
+        : '手机点单不支持收款，请在收银台结账。');
+      return;
+    }
     setCheckoutModalOrder(order);
     setCheckoutModalTable(null);
     setTableCheckoutStep('pay');
@@ -701,6 +709,12 @@ export default function UnifiedOrderCenter() {
   };
 
   const openTableCheckoutModal = (tableNumber: number, tableOrders: OrderRow[]) => {
+    if (waiterMode) {
+      alert(isEn
+        ? 'Payment is not available in the waiter app. Use the cashier POS.'
+        : '手机点单不支持收款，请在收银台结账。');
+      return;
+    }
     setCheckoutModalOrder(null);
     setCheckoutModalTable({ tableNumber, orders: tableOrders });
     setTableCheckoutStep(dineInPayAfter ? 'lines' : 'pay');

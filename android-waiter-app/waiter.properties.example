@@ -1,0 +1,5 @@
+# Production origin (no trailing slash)
+waiter.origin=https://food.lztechserve.com
+
+# Local Vite (phone must reach this host):
+# waiter.origin=http://192.168.1.16:5173

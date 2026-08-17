@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useStoreSlug } from '../context/StoreContext';
 import { useTranslation } from 'react-i18next';
+import { isWaiterMode, syncWaiterModeFromSearch } from '../utils/waiterMode';
 import { useRestaurantConfig } from '../hooks/useRestaurantConfig';
 import {
   completeOwnerPasswordReset,
@@ -16,7 +17,7 @@ import './store-login.css';
 type LoginView = 'signin' | 'forgot' | 'forgotDone';
 
 export default function LoginPage() {
-  const { login, user, isAuthenticated, isStoreStaffSessionReady } = useAuth();
+  const { login, logout, user, isAuthenticated, isStoreStaffSessionReady } = useAuth();
   const storeSlug = useStoreSlug();
   const navigate = useNavigate();
   const { t, i18n } = useTranslation();
@@ -50,10 +51,24 @@ export default function LoginPage() {
   }, [i18n.language, t, titleMain]);
 
   useEffect(() => {
+    syncWaiterModeFromSearch(window.location.search);
+  }, []);
+
+  useEffect(() => {
     if (!isAuthenticated || !user || !isStoreStaffSessionReady) return;
+    if (isWaiterMode()) {
+      if (user.role !== 'cashier') {
+        logout();
+        setError(t('storeLogin.cashierOnly'));
+        setView('signin');
+        return;
+      }
+      navigate('../cashier/order?waiter=1', { replace: true, relative: 'path' });
+      return;
+    }
     const isAdmin = user.role === 'owner' || user.role === 'platform_owner';
     navigate(isAdmin ? '../admin' : '../cashier', { replace: true, relative: 'path' });
-  }, [isAuthenticated, user, isStoreStaffSessionReady, navigate]);
+  }, [isAuthenticated, user, isStoreStaffSessionReady, navigate, logout, t]);
 
   const setLanguage = (lng: string) => {
     void i18n.changeLanguage(lng);
@@ -120,21 +135,37 @@ export default function LoginPage() {
     }
   };
 
+  const waiterApp = syncWaiterModeFromSearch(
+    typeof window !== 'undefined' ? window.location.search : '',
+  );
+
   return (
     <div className="portal-light store-login-page">
       <header className="portal-light-header">
-        <a href="/" className="portal-light-brand">
-          <span className="portal-light-logo-wrap">
-            <img src={portalLogoSrc()} alt="" className="portal-light-logo-img" />
+        {waiterApp ? (
+          <span className="portal-light-brand">
+            <span className="portal-light-logo-wrap">
+              <img src={portalLogoSrc()} alt="" className="portal-light-logo-img" />
+            </span>
+            <div className="portal-light-brand-text">
+              <strong>{t('portal.brandName')}</strong>
+              <span>{t('storeLogin.waiterAppHint')}</span>
+            </div>
           </span>
-          <div className="portal-light-brand-text">
-            <strong>{t('portal.brandName')}</strong>
-            <span>{t('portal.tagline')}</span>
-          </div>
-        </a>
+        ) : (
+          <a href="/" className="portal-light-brand">
+            <span className="portal-light-logo-wrap">
+              <img src={portalLogoSrc()} alt="" className="portal-light-logo-img" />
+            </span>
+            <div className="portal-light-brand-text">
+              <strong>{t('portal.brandName')}</strong>
+              <span>{t('portal.tagline')}</span>
+            </div>
+          </a>
+        )}
 
         <nav className="portal-light-nav" aria-label="Store login">
-          <a href="/">{t('storeLogin.backPortal')}</a>
+          {!waiterApp ? <a href="/">{t('storeLogin.backPortal')}</a> : null}
           <div className="portal-light-lang" role="group" aria-label={t('common.language')}>
             <button
               type="button"
@@ -171,7 +202,9 @@ export default function LoginPage() {
             <p className="store-login-subtitle">
               {view === 'forgot' || view === 'forgotDone'
                 ? t('storeLogin.forgotSubtitle')
-                : t('storeLogin.subtitle')}
+                : waiterApp
+                  ? t('storeLogin.waiterAppHint')
+                  : t('storeLogin.subtitle')}
             </p>
             <span className="store-login-slug-badge">/{storeSlug}</span>
           </div>
@@ -209,15 +242,17 @@ export default function LoginPage() {
                 >
                   {t('login.submit')}
                 </button>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={view === 'forgot'}
-                  className={view === 'forgot' ? 'is-active' : ''}
-                  onClick={() => switchView('forgot')}
-                >
-                  {t('storeLogin.forgotTab')}
-                </button>
+                {!waiterApp ? (
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={view === 'forgot'}
+                    className={view === 'forgot' ? 'is-active' : ''}
+                    onClick={() => switchView('forgot')}
+                  >
+                    {t('storeLogin.forgotTab')}
+                  </button>
+                ) : null}
               </div>
 
               {view === 'signin' ? (
@@ -338,8 +373,12 @@ export default function LoginPage() {
           )}
 
           <footer className="store-login-footer">
-            <Link to={`/${storeSlug}`}>{t('storeLogin.viewStorefront')}</Link>
-            <a href="/#get-started">{t('storeLogin.wrongStore')}</a>
+            {!waiterApp ? (
+              <>
+                <Link to={`/${storeSlug}`}>{t('storeLogin.viewStorefront')}</Link>
+                <a href="/#get-started">{t('storeLogin.wrongStore')}</a>
+              </>
+            ) : null}
             <p className="store-login-powered">
               {t('storeLogin.poweredBy')} <strong>{t('portal.brandName')}</strong>
             </p>

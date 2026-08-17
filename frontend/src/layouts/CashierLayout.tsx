@@ -1,4 +1,4 @@
-import { Outlet, NavLink, useNavigate, useParams } from 'react-router-dom';
+import { Outlet, NavLink, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useTranslation } from 'react-i18next';
 import { useState, useEffect, useCallback } from 'react';
@@ -15,6 +15,7 @@ import { printHtmlReceipt } from '../utils/posPrint';
 import LanguageSwitcher from '../components/LanguageSwitcher';
 import { useRestaurantConfig } from '../hooks/useRestaurantConfig';
 import { apiFetch } from '../api/client';
+import { isWaiterMode, syncWaiterModeFromSearch, waiterQuerySuffix } from '../utils/waiterMode';
 import './cashier-shell.css';
 
 export default function CashierLayout() {
@@ -27,6 +28,21 @@ export default function CashierLayout() {
   const [showSettle, setShowSettle] = useState(false);
   const [settling, setSettling] = useState(false);
   const [toasts, setToasts] = useState<{ id: string; text: string }[]>([]);
+  const [waiterMode, setWaiterMode] = useState(() => isWaiterMode());
+  const [waiterNavOpen, setWaiterNavOpen] = useState(false);
+  const location = useLocation();
+
+  useEffect(() => {
+    setWaiterMode(syncWaiterModeFromSearch(window.location.search));
+  }, []);
+
+  useEffect(() => {
+    if (!waiterMode || !user) return;
+    if (user.role !== 'cashier') {
+      logout();
+      navigate(`/${storeSlug}/login?waiter=1`, { replace: true });
+    }
+  }, [waiterMode, user, logout, navigate, storeSlug]);
 
   useEffect(() => {
     const check = () => {
@@ -89,7 +105,7 @@ export default function CashierLayout() {
 
   const handleLogout = () => {
     logout();
-    navigate(`/${storeSlug}/login`);
+    navigate(`/${storeSlug}/login${waiterQuerySuffix()}`);
   };
 
   const handleSettle = useCallback(async () => {
@@ -151,16 +167,32 @@ export default function CashierLayout() {
   const tabClass = ({ isActive }: { isActive: boolean }) =>
     `cashier-saas-tab${isActive ? ' is-active' : ''}`;
 
+  const waiterOnOrder = /\/cashier\/order\/?$/.test(location.pathname);
+  const waiterPageTitle = waiterOnOrder ? t('cashier.newOrder', '点单') : t('cashier.orderCenter');
+
+  const closeWaiterNav = () => setWaiterNavOpen(false);
+
   return (
-    <div className="cashier-saas">
+    <div className={`cashier-saas${waiterMode ? ' is-waiter' : ''}`}>
       <header className="cashier-saas-header">
+        {waiterMode ? (
+          <button
+            type="button"
+            className="waiter-nav-toggle"
+            aria-label={t('cashier.waiterNavOpen', '菜单')}
+            aria-expanded={waiterNavOpen}
+            onClick={() => setWaiterNavOpen(true)}
+          >
+            ☰
+          </button>
+        ) : null}
         <div className="cashier-saas-brand">
-          <strong>{displayName || storeSlug}</strong>
-          {storeSlug ? <span className="cashier-saas-slug">/{storeSlug}</span> : null}
-          <span className="cashier-saas-role">{t('cashier.title')}</span>
+          <strong>{waiterMode ? waiterPageTitle : (displayName || storeSlug)}</strong>
+          {!waiterMode && storeSlug ? <span className="cashier-saas-slug">/{storeSlug}</span> : null}
+          {!waiterMode ? <span className="cashier-saas-role">{t('cashier.title')}</span> : null}
         </div>
         <div className="cashier-saas-actions">
-          {showSettle && (
+          {showSettle && !waiterMode && (
             <button
               type="button"
               className="btn cashier-saas-settle"
@@ -171,19 +203,46 @@ export default function CashierLayout() {
               {settling ? '...' : `💰 ${t('cashier.dailySettlement')}`}
             </button>
           )}
-          <LanguageSwitcher />
-          <span className="cashier-saas-user">{user?.username}</span>
-          <button
-            type="button"
-            className="btn btn-outline"
-            style={{ padding: '6px 14px', fontSize: 12, minHeight: 'auto' }}
-            onClick={handleLogout}
-          >
-            {t('login.logout', '退出')}
-          </button>
+          {!waiterMode ? <LanguageSwitcher /> : null}
+          {!waiterMode ? <span className="cashier-saas-user">{user?.username}</span> : null}
+          {!waiterMode ? (
+            <button
+              type="button"
+              className="btn btn-outline"
+              style={{ padding: '6px 14px', fontSize: 12, minHeight: 'auto' }}
+              onClick={handleLogout}
+            >
+              {t('login.logout', '退出')}
+            </button>
+          ) : null}
         </div>
       </header>
 
+      {waiterMode ? (
+        <>
+          {waiterNavOpen ? (
+            <button type="button" className="waiter-nav-backdrop" aria-label={t('cashier.waiterNavOpen')} onClick={closeWaiterNav} />
+          ) : null}
+          <aside className={`waiter-nav-drawer${waiterNavOpen ? ' is-open' : ''}`} aria-hidden={!waiterNavOpen}>
+            <div className="waiter-nav-drawer-head">
+              <strong>{displayName || storeSlug}</strong>
+              <span>{user?.username}</span>
+            </div>
+            <NavLink to="." end className={({ isActive }) => `waiter-nav-link${isActive ? ' is-active' : ''}`} onClick={closeWaiterNav}>
+              {t('cashier.orderCenter')}
+            </NavLink>
+            <NavLink to="order" className={({ isActive }) => `waiter-nav-link${isActive ? ' is-active' : ''}`} onClick={closeWaiterNav}>
+              {t('cashier.newOrder', '点单')}
+            </NavLink>
+            <div className="waiter-nav-drawer-foot">
+              <LanguageSwitcher />
+              <button type="button" className="btn btn-outline" style={{ width: '100%' }} onClick={handleLogout}>
+                {t('login.logout', '退出')}
+              </button>
+            </div>
+          </aside>
+        </>
+      ) : (
       <nav className="cashier-saas-tabs" aria-label={t('cashier.title')}>
         <NavLink to="." end className={tabClass}>
           {t('cashier.orderCenter')}
@@ -203,6 +262,7 @@ export default function CashierLayout() {
           </NavLink>
         )}
       </nav>
+      )}
 
       <main className="cashier-saas-content">
         <Outlet />

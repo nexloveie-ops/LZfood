@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">LZFOOD Waiter</string>
+    <string name="slug_title">Enter store slug</string>
+    <string name="slug_hint">e.g. demo</string>
+    <string name="slug_open">Open store</string>
+    <string name="slug_invalid">Enter a valid store slug</string>
+    <string name="menu_reload">Reload</string>
+    <string name="menu_change_store">Change store</string>
+    <!-- waiter_origin: injected from waiter.properties at build time -->
+</resources>

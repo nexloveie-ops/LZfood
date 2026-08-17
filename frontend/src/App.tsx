@@ -28,6 +28,7 @@ import TakeoutDelivery from './pages/cashier/TakeoutDelivery';
 import CheckoutFlow from './pages/cashier/CheckoutFlow';
 import UnifiedOrderCenter from './pages/cashier/UnifiedOrderCenter';
 import RestockPage from './pages/cashier/RestockPage';
+import { syncWaiterModeFromSearch } from './utils/waiterMode';
 import CategoryManager from './pages/admin/CategoryManager';
 import MenuItemManager from './pages/admin/MenuItemManager';
 import OptionGroupTemplates from './pages/admin/OptionGroupTemplates';
@@ -94,7 +95,12 @@ function SessionInvalidationBridge() {
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, user, isStoreStaffSessionReady } = useAuth();
   const { storeSlug } = useParams<{ storeSlug: string }>();
-  if (!isAuthenticated) return <Navigate to={`/${storeSlug}/login`} replace />;
+  const waiter = typeof window !== 'undefined'
+    ? syncWaiterModeFromSearch(window.location.search)
+    : false;
+  if (!isAuthenticated) {
+    return <Navigate to={`/${storeSlug}/login${waiter ? '?waiter=1' : ''}`} replace />;
+  }
   if (user?.role !== 'platform_owner' && !isStoreStaffSessionReady) return null;
   return <>{children}</>;
 }

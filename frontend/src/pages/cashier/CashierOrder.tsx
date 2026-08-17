@@ -37,6 +37,7 @@ import {
   emptyBomSnapshot,
   isItemServingBlocked,
 } from '../../utils/bomAvailability';
+import { isWaiterMode, syncWaiterModeFromSearch } from '../../utils/waiterMode';
 
 interface Translation { locale: string; name: string; description?: string; }
 interface Category { _id: string; sortOrder: number; translations: Translation[]; }
@@ -258,6 +259,12 @@ export default function CashierOrder() {
   const { token, hasFeature } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const editOrderIdParam = searchParams.get('editOrderId')?.trim() || '';
+  const [waiterMode, setWaiterMode] = useState(() =>
+    syncWaiterModeFromSearch(typeof window !== 'undefined' ? window.location.search : ''),
+  );
+  const [waiterCartOpen, setWaiterCartOpen] = useState(false);
+  const [waiterTypeUi, setWaiterTypeUi] = useState<'closed' | 'pick' | 'form'>('closed');
+  const [waiterTypeError, setWaiterTypeError] = useState('');
   const canDelivery = hasFeature('cashier.delivery.page');
   const canMemberWallet = hasFeature('cashier.member.wallet');
   const canInventoryTracking = hasFeature('inventory.tracking');
@@ -425,6 +432,16 @@ export default function CashierOrder() {
     } catch {
       return 'pay_first';
     }
+  }, []);
+
+  useEffect(() => {
+    setWaiterMode(syncWaiterModeFromSearch(searchParams.toString()));
+  }, [searchParams]);
+
+  useEffect(() => {
+    if (waiterMode) setWaiterTypeUi('pick');
+    // first landing: choose type before ordering
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /** 全店菜单：缓存秒开 + 始终后台刷新（售罄/库存与后台同步） */
@@ -1545,6 +1562,65 @@ export default function CashierOrder() {
     }
   };
 
+  const waiterTypeLabel = (typ: 'dine_in' | 'takeout' | 'phone' | 'delivery') => {
+    if (typ === 'dine_in') return t('cashier.orderTypeDineIn');
+    if (typ === 'takeout') return t('cashier.orderTypeTakeout');
+    if (typ === 'phone') return t('cashier.orderTypePhone');
+    return t('cashier.orderTypeDelivery');
+  };
+
+  const waiterTypeSummaryText = () => {
+    if (orderType === 'dine_in') {
+      const table = counterTableInput.trim();
+      const guest = counterGuestLabel.trim();
+      if (!table) return t('cashier.waiterNeedTable', '请填写桌号');
+      return guest ? `${t('cashier.table')} ${table} · ${guest}` : `${t('cashier.table')} ${table}`;
+    }
+    if (orderType === 'phone') {
+      const bits = [phoneGuestPhone.trim(), phoneGuestName.trim()].filter(Boolean);
+      return bits.length ? bits.join(' · ') : t('cashier.waiterPhoneOptional', '电话 / 姓名选填');
+    }
+    if (orderType === 'delivery') {
+      const bits = [deliveryCustomerName.trim(), deliveryCustomerPhone.trim(), deliveryPostalCode.trim()].filter(Boolean);
+      return bits.length ? bits.join(' · ') : t('cashier.waiterNeedDelivery', '请填写送餐信息');
+    }
+    return t('cashier.orderTypeTakeout');
+  };
+
+  const applyWaiterOrderType = (next: 'dine_in' | 'takeout' | 'phone' | 'delivery') => {
+    if (editingOrderId) return;
+    if (next === 'delivery' && !canDelivery) {
+      setWaiterTypeError(t('cashier.deliveryNotEnabledPlan'));
+      return;
+    }
+    switchOrderType(next);
+    setWaiterTypeError('');
+    if (next === 'takeout') {
+      setWaiterTypeUi('closed');
+      return;
+    }
+    setWaiterTypeUi('form');
+  };
+
+  const confirmWaiterTypeForm = () => {
+    setWaiterTypeError('');
+    if (orderType === 'dine_in') {
+      const rawTable = counterTableInput.trim();
+      const tableNum = parseInt(rawTable, 10);
+      if (rawTable === '' || !Number.isFinite(tableNum) || tableNum < 1) {
+        setWaiterTypeError(t('cashier.counterTableRequired'));
+        return;
+      }
+    }
+    if (orderType === 'delivery') {
+      if (!deliveryCustomerName.trim() || !deliveryCustomerPhone.trim() || !deliveryAddress.trim() || !deliveryPostalCode.trim()) {
+        setWaiterTypeError(t('cashier.errDeliveryNeedFields'));
+        return;
+      }
+    }
+    setWaiterTypeUi('closed');
+  };
+
   // Phone order: create order only, print kitchen receipt, no payment
   const handlePhoneOrder = async () => {
     setPaying(true);
@@ -1564,10 +1640,11 @@ export default function CashierOrder() {
       if (matchedBundles.length > 0) {
         orderBody.appliedBundles = matchedBundles.map(b => ({ offerId: b.offer._id, name: b.offer.name, nameEn: b.offer.nameEn, discount: b.savings }));
       }
-      if (phoneCardPaidAtPlacement) {
+      if (phoneCardPaidAtPlacement && !waiterMode) {
         orderBody.placementPrepaidMethod = 'card';
         orderBody.phoneCardPaidAtPlacement = true;
       }
+      if (waiterMode) orderBody.waiterPlacement = true;
       const orderRes = await apiFetch('/api/orders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -1577,7 +1654,8 @@ export default function CashierOrder() {
       const orderData = await orderRes.json();
       applyInventoryUpdates(orderData?.inventoryUpdates || []);
 
-      // Print receipt for phone order
+      // Print receipt for phone order (POS only — waiter app has no printer)
+      if (!waiterMode) {
       try {
         const configRes = await apiFetch('/api/admin/config');
         const cfg = configRes.ok ? await configRes.json() : {};
@@ -1602,6 +1680,7 @@ export default function CashierOrder() {
           copies: 1,
         });
       } catch { /* print error ignored */ }
+      }
 
       setPhoneOrderId(orderData._id);
       setOrder([]);
@@ -1669,10 +1748,11 @@ export default function CashierOrder() {
       if (profileIdRaw && profileIdRaw !== DELIVERY_PROFILE_NEW_MANUAL && isMongoObjectId(profileIdRaw)) {
         orderBody.customerProfileId = profileIdRaw;
       }
-      if (phoneCardPaidAtPlacement) {
+      if (phoneCardPaidAtPlacement && !waiterMode) {
         orderBody.placementPrepaidMethod = 'card';
         orderBody.phoneCardPaidAtPlacement = true;
       }
+      if (waiterMode) orderBody.waiterPlacement = true;
       const orderRes = await apiFetch('/api/orders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -1692,6 +1772,7 @@ export default function CashierOrder() {
       }
       const orderData = await orderRes.json();
       applyInventoryUpdates(orderData?.inventoryUpdates || []);
+      if (!waiterMode) {
       try {
         const configRes = await apiFetch('/api/admin/config');
         const cfg = configRes.ok ? await configRes.json() : {};
@@ -1790,6 +1871,7 @@ export default function CashierOrder() {
         });
       } catch {
         /* print error ignored */
+      }
       }
       setPhoneOrderId(orderData._id);
       setOrder([]);
@@ -1977,13 +2059,15 @@ export default function CashierOrder() {
     }
   };
 
-  /** 后结堂食：仅 POST 订单，不结账（与先结+外卖路径隔离） */
+  /** 后结堂食 / 服务员手机：仅 POST 订单，不结账（与先结+外卖路径隔离） */
   const handleSubmitDineInPayAfterOnly = async () => {
     if (order.length === 0) return;
-    const wf = await refreshDineInWorkflowMode();
-    if (wf !== 'pay_after') {
-      setError(t('cashier.dineInModeSwitchedToPayFirst'));
-      return;
+    if (!waiterMode) {
+      const wf = await refreshDineInWorkflowMode();
+      if (wf !== 'pay_after') {
+        setError(t('cashier.dineInModeSwitchedToPayFirst'));
+        return;
+      }
     }
     const rawTable = counterTableInput.trim();
     if (rawTable === '') {
@@ -2015,6 +2099,7 @@ export default function CashierOrder() {
           discount: b.savings,
         }));
       }
+      if (waiterMode) orderBody.waiterPlacement = true;
       const orderRes = await apiFetch('/api/orders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -2044,7 +2129,8 @@ export default function CashierOrder() {
         }>;
       };
 
-      // 客人凭条：后结堂食提交成功后自动打印 1 份
+      // 客人凭条：后结堂食提交成功后自动打印 1 份（服务员手机不下单打印）
+      if (!waiterMode) {
       try {
         const configRes = await apiFetch('/api/admin/config');
         const cfg = configRes.ok ? await configRes.json() : {};
@@ -2089,6 +2175,7 @@ export default function CashierOrder() {
         });
       } catch {
         /* guest slip print is best-effort */
+      }
       }
 
       applyInventoryUpdates(orderData?.inventoryUpdates || []);
@@ -2138,11 +2225,75 @@ export default function CashierOrder() {
     }
   };
 
+  const handleWaiterTakeoutOrder = async () => {
+    if (order.length === 0) return;
+    setPaying(true);
+    setError('');
+    try {
+      if (!(await ensureOrderNotSoldOut())) return;
+      const orderBody: Record<string, unknown> = {
+        type: 'takeout',
+        items: buildGroupedItems(),
+        staffTakeoutPlacement: true,
+        waiterPlacement: true,
+      };
+      if (matchedBundles.length > 0) {
+        orderBody.appliedBundles = matchedBundles.map((b) => ({
+          offerId: b.offer._id,
+          name: b.offer.name,
+          nameEn: b.offer.nameEn,
+          discount: b.savings,
+        }));
+      }
+      const orderRes = await apiFetch('/api/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(orderBody),
+      });
+      if (!orderRes.ok) {
+        const d = await orderRes.json().catch(() => null);
+        throw new Error(d?.error?.message || t('common.error'));
+      }
+      const orderData = await orderRes.json();
+      applyInventoryUpdates(orderData?.inventoryUpdates || []);
+      setPhoneOrderId(orderData._id);
+      setOrder([]);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : t('common.error'));
+    } finally {
+      setPaying(false);
+    }
+  };
+
   const handlePrimaryAction = async () => {
     if (order.length === 0) return;
     if (editingOrderId) {
+      if (waiterMode) {
+        setError(t('cashier.waiterNoEditCheckout', { defaultValue: '手机点单不支持改单结账，请在收银台处理。' }));
+        return;
+      }
       if (!(await ensureOrderNotSoldOut())) return;
       await handleOpenPayment();
+      return;
+    }
+    if (waiterMode) {
+      if (orderType === 'phone') {
+        await handlePhoneOrder();
+        return;
+      }
+      if (orderType === 'delivery') {
+        if (!canDelivery) {
+          setError(t('cashier.deliveryNotEnabledPlan'));
+          return;
+        }
+        await handleDeliveryPhoneOrder();
+        return;
+      }
+      if (orderType === 'dine_in') {
+        await handleSubmitDineInPayAfterOnly();
+        return;
+      }
+      await handleWaiterTakeoutOrder();
       return;
     }
     if (orderType === 'phone') {
@@ -2293,6 +2444,9 @@ export default function CashierOrder() {
               orderNo: no,
             })}
           </p>
+          {waiterMode ? (
+            <p style={{ fontSize: 13, color: '#E65100', marginBottom: 16 }}>{t('cashier.waiterPlacedBody')}</p>
+          ) : null}
           <button className="btn btn-primary" onClick={() => setDineInSubmittedInfo(null)} style={{ marginBottom: 20 }}>
             {t('cashier.continueOrder')}
           </button>
@@ -2307,8 +2461,12 @@ export default function CashierOrder() {
       <div style={{ maxWidth: 500, margin: '0 auto' }}>
         <div style={{ textAlign: 'center', padding: 20 }}>
           <div style={{ fontSize: 48, marginBottom: 8 }}>📞</div>
-          <h2 style={{ color: 'var(--blue, #1976D2)', marginBottom: 12 }}>{t('cashier.phoneOrderCreated')}</h2>
-          <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 16 }}>{t('cashier.phoneOrderPayLater')}</p>
+          <h2 style={{ color: 'var(--blue, #1976D2)', marginBottom: 12 }}>
+            {waiterMode ? t('cashier.waiterPlacedTitle') : t('cashier.phoneOrderCreated')}
+          </h2>
+          <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 16 }}>
+            {waiterMode ? t('cashier.waiterPlacedBody') : t('cashier.phoneOrderPayLater')}
+          </p>
           <button className="btn btn-primary" onClick={() => setPhoneOrderId(null)} style={{ marginBottom: 20 }}>{t('cashier.continueOrder')}</button>
         </div>
       </div>
@@ -2340,9 +2498,25 @@ export default function CashierOrder() {
   }
 
   return (
-    <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden', gap: 0 }}>
+    <div className={`cashier-order-root${waiterMode ? ' is-waiter' : ''}`} style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden', gap: 0 }}>
+      {waiterMode ? (
+        <>
+          <div className="waiter-order-toolbar">
+            <input className="input cashier-menu-search" placeholder={t('cashier.searchMenuPlaceholder')} value={search} onChange={(e) => setSearch(e.target.value)} />
+            <button type="button" className="waiter-type-btn" onClick={() => { setWaiterTypeError(''); setWaiterTypeUi('pick'); }}>
+              {waiterTypeLabel(orderType)} ▾
+            </button>
+          </div>
+          <div className="waiter-type-summary">
+            <span>{waiterTypeSummaryText()}</span>
+            <button type="button" onClick={() => { setWaiterTypeError(''); setWaiterTypeUi(orderType === 'takeout' ? 'pick' : 'form'); }}>
+              {t('cashier.waiterEditType', '修改')}
+            </button>
+          </div>
+        </>
+      ) : null}
       {/* Left: Category Sidebar */}
-      <div style={{ width: 110, flexShrink: 0, background: 'var(--bg-white)', borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column', overflowY: 'auto', padding: '8px 0' }}>
+      <div className="cashier-order-cats" style={{ width: 110, flexShrink: 0, background: 'var(--bg-white)', borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column', overflowY: 'auto', padding: '8px 0' }}>
         {menuSections.map((sec) => {
           const cat = sec.category;
           const isActive = activeCat === cat._id;
@@ -2363,10 +2537,12 @@ export default function CashierOrder() {
       </div>
 
       {/* Center: Menu Grid */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <div className="cashier-order-menu" style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        {!waiterMode ? (
         <div style={{ padding: '10px 12px', background: 'var(--bg-white)', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
           <input className="input cashier-menu-search" placeholder={t('cashier.searchMenuPlaceholder')} value={search} onChange={e => setSearch(e.target.value)} />
         </div>
+        ) : null}
         {search.trim() ? (
           <div style={{ padding: '10px 12px 6px', fontSize: 14, fontWeight: 700, background: 'var(--bg)', flexShrink: 0 }}>
             {t('cashier.searchResultsFor', { q: search.trim() })}
@@ -2412,7 +2588,7 @@ export default function CashierOrder() {
       </div>
 
       {/* Right: Order Panel */}
-      <div style={{ width: 320, flexShrink: 0, background: 'var(--bg-white)', borderLeft: '2px solid var(--border)', display: 'flex', flexDirection: 'column' }}>
+      <div className={`cashier-order-cart${waiterMode && waiterCartOpen ? ' is-open' : ''}`} style={{ width: 320, flexShrink: 0, background: 'var(--bg-white)', borderLeft: '2px solid var(--border)', display: 'flex', flexDirection: 'column' }}>
         {editOrderLoading ? (
           <div style={{ padding: '10px 12px', fontSize: 12, color: 'var(--text-light)', borderBottom: '1px solid var(--border)' }}>
             {t('cashier.editOrderLoading', '正在载入订单…')}
@@ -2436,6 +2612,7 @@ export default function CashierOrder() {
             </button>
           </div>
         ) : null}
+        {!waiterMode ? (
         <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)', opacity: editingOrderId ? 0.45 : 1, pointerEvents: editingOrderId ? 'none' : 'auto' }}>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
             <button
@@ -2506,8 +2683,9 @@ export default function CashierOrder() {
             ) : null}
           </div>
         </div>
+        ) : null}
 
-        {orderType === 'delivery' && deliveryCustomerCollapsed ? (
+        {!waiterMode && orderType === 'delivery' && deliveryCustomerCollapsed ? (
           <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)', background: 'var(--bg)', flexShrink: 0 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
               <span style={{ fontSize: 12, fontWeight: 700 }}>{t('cashier.deliverySummaryTitle')}</span>
@@ -2542,7 +2720,7 @@ export default function CashierOrder() {
             </div>
           </div>
         ) : null}
-        {orderType === 'delivery' && !deliveryCustomerCollapsed ? (
+        {!waiterMode && orderType === 'delivery' && !deliveryCustomerCollapsed ? (
           <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)', display: 'grid', gap: 6, flexShrink: 0 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
               <span style={{ fontSize: 12, fontWeight: 700 }}>{t('cashier.deliverySummaryTitle')}</span>
@@ -2636,7 +2814,7 @@ export default function CashierOrder() {
           </div>
         ) : null}
 
-        {orderType === 'dine_in' && dineInWorkflowMode === 'pay_after' && (
+        {!waiterMode && orderType === 'dine_in' && dineInWorkflowMode === 'pay_after' && (
           <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 8 }}>
             <div style={{ display: 'flex', gap: 8, alignItems: 'stretch' }}>
               <label style={{ flex: '0 0 96px', display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
@@ -2756,7 +2934,7 @@ export default function CashierOrder() {
           </div>
         )}
 
-        {orderType === 'phone' && (
+        {!waiterMode && orderType === 'phone' && (
           <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 8 }}>
             <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>{t('cashier.phoneGuestPhoneOptionalLabel')}</label>
             <input
@@ -2906,7 +3084,7 @@ export default function CashierOrder() {
               <span style={{ fontSize: 22, fontWeight: 700, color: 'var(--red-primary)', fontFamily: "'Noto Serif SC', serif" }}>€{displayTotal.toFixed(2)}</span>
             </div>
           </div>
-          {(orderType === 'phone' || orderType === 'delivery') && (
+          {(orderType === 'phone' || orderType === 'delivery') && !waiterMode && (
             <div style={{ marginBottom: 10 }}>
               <label
                 style={{
@@ -2937,6 +3115,8 @@ export default function CashierOrder() {
           >
             {editingOrderId
               ? t('cashier.editOrderSaveCheckout', '保存并结账')
+              : waiterMode
+                ? t('cashier.waiterPlaceUnpaid')
               : orderType === 'phone'
               ? t('cashier.createPhoneOrder')
               : orderType === 'delivery'
@@ -2947,6 +3127,92 @@ export default function CashierOrder() {
           </button>
         </div>
       </div>
+
+      {waiterMode ? (
+        <div className="waiter-cart-dock">
+          <button type="button" className="btn btn-outline" onClick={() => setWaiterCartOpen((v) => !v)}>
+            {waiterCartOpen ? t('cashier.waiterCartHide', '收起') : t('cashier.waiterCartShow', '购物车')}
+          </button>
+          <div className="waiter-cart-dock-info">
+            <strong>€{displayTotal.toFixed(2)}</strong>
+            <span>{t('cashier.totalItemsLine', { count: order.length })}</span>
+          </div>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => void handlePrimaryAction()}
+            disabled={order.length === 0 || paying || paymentModalPreparing || editOrderLoading || !!editOrderLoadError}
+          >
+            {t('cashier.waiterPlaceUnpaid')}
+          </button>
+        </div>
+      ) : null}
+
+      {waiterMode && waiterTypeUi !== 'closed' ? (
+        <div className="waiter-modal-backdrop" onClick={() => setWaiterTypeUi('closed')} role="presentation">
+          <div className="waiter-modal-sheet" onClick={(e) => e.stopPropagation()}>
+            {waiterTypeUi === 'pick' ? (
+              <>
+                <h3 style={{ margin: 0, fontSize: 18 }}>{t('cashier.waiterPickType', '选择订单类型')}</h3>
+                <div className="waiter-type-grid">
+                  {(['dine_in', 'takeout', 'phone'] as const).map((typ) => (
+                    <button key={typ} type="button" className={orderType === typ ? 'is-current' : ''} onClick={() => applyWaiterOrderType(typ)}>
+                      {waiterTypeLabel(typ)}
+                    </button>
+                  ))}
+                  {canDelivery ? (
+                    <button type="button" className={orderType === 'delivery' ? 'is-current' : ''} onClick={() => applyWaiterOrderType('delivery')}>
+                      {waiterTypeLabel('delivery')}
+                    </button>
+                  ) : null}
+                </div>
+                {waiterTypeError ? <p style={{ color: 'var(--red-primary)', fontSize: 13 }}>{waiterTypeError}</p> : null}
+              </>
+            ) : (
+              <>
+                <h3 style={{ margin: 0, fontSize: 18 }}>{t('cashier.waiterFillType', '填写订单信息')} · {waiterTypeLabel(orderType)}</h3>
+                <div className="waiter-form-stack">
+                  {orderType === 'dine_in' ? (
+                    <>
+                      <label>
+                        <span style={{ fontSize: 12, fontWeight: 600 }}>{t('cashier.table')} *</span>
+                        <input className="input" type="number" inputMode="numeric" min={1} placeholder={t('cashier.counterTablePlaceholder')} value={counterTableInput} onChange={(e) => setCounterTableInput(e.target.value)} />
+                      </label>
+                      <label>
+                        <span style={{ fontSize: 12, fontWeight: 600 }}>{t('cashier.dineInGuestLabelShort')}</span>
+                        <input className="input" type="text" maxLength={40} placeholder={t('cashier.dineInGuestInputPh')} value={counterGuestLabel} onChange={(e) => setCounterGuestLabel(e.target.value)} />
+                      </label>
+                    </>
+                  ) : null}
+                  {orderType === 'phone' ? (
+                    <>
+                      <input className="input" type="tel" inputMode="tel" placeholder={t('cashier.phoneGuestPhoneExamplePlaceholder')} value={phoneGuestPhone} onChange={(e) => setPhoneGuestPhone(e.target.value)} />
+                      <input className="input" type="text" placeholder={t('cashier.deliveryCustomerNamePlaceholder')} value={phoneGuestName} onChange={(e) => setPhoneGuestName(e.target.value)} />
+                    </>
+                  ) : null}
+                  {orderType === 'delivery' ? (
+                    <>
+                      <input className="input" placeholder={t('cashier.deliveryPhonePlaceholder')} value={deliveryCustomerPhone} onChange={(e) => { deliveryPhoneRef.current = e.target.value; setDeliveryCustomerPhone(e.target.value); }} onBlur={(e) => void runMemberDeliveryLookup(e.currentTarget.value)} />
+                      <input className="input" placeholder={t('cashier.deliveryCustomerNamePlaceholder')} value={deliveryCustomerName} onChange={(e) => setDeliveryCustomerName(e.target.value)} />
+                      <input className="input" placeholder={t('cashier.deliveryEircodePlaceholder')} value={deliveryPostalCode} onChange={(e) => setDeliveryPostalCode(e.target.value)} autoCapitalize="characters" />
+                      <input className="input" placeholder={t('cashier.deliveryAddressPlaceholder')} value={deliveryAddress} onChange={(e) => setDeliveryAddress(e.target.value)} />
+                      {renderDeliveryGeoSection()}
+                      {renderDeliveryFeeField(false)}
+                    </>
+                  ) : null}
+                  {waiterTypeError ? <p style={{ color: 'var(--red-primary)', fontSize: 13, margin: 0 }}>{waiterTypeError}</p> : null}
+                  <button type="button" className="btn btn-primary" style={{ width: '100%', padding: '12px 0' }} onClick={confirmWaiterTypeForm}>
+                    {t('cashier.waiterStartOrder', '开始点单')}
+                  </button>
+                  <button type="button" className="btn btn-ghost" style={{ width: '100%' }} onClick={() => setWaiterTypeUi('pick')}>
+                    {t('cashier.waiterPickType', '选择订单类型')}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      ) : null}
 
       {/* Payment Modal */}
       {showPayment && (
