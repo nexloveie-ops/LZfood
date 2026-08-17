@@ -53,7 +53,12 @@ public class MainActivity extends AppCompatActivity {
         settings.setUseWideViewPort(true);
         settings.setSupportZoom(false);
         webView.addJavascriptInterface(new WaiterBridge(), "LZFOODWaiter");
-        webView.setWebViewClient(new WaiterWebViewClient(this::cashierOrderUrl, this::injectWaiterFlag));
+        webView.setWebViewClient(new WaiterWebViewClient(new WaiterWebViewClient.StoreUrls() {
+            @Override public String origin() { return origin; }
+            @Override public String slug() { return storeSlug; }
+            @Override public String loginUrl() { return MainActivity.this.loginUrl(); }
+            @Override public String cashierOrderUrl() { return MainActivity.this.cashierOrderUrl(); }
+        }, this::injectWaiterFlag));
 
         String saved = getSharedPreferences(PREFS, MODE_PRIVATE).getString(KEY_SLUG, "");
         if (saved != null && !saved.isEmpty()) {

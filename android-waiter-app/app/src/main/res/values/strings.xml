@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">LZFOOD Waiter</string>
+    <string name="app_name">Taste Of Hong Kong</string>
     <string name="slug_title">Enter store slug</string>
     <string name="slug_hint">e.g. demo</string>
     <string name="slug_open">Open store</string>

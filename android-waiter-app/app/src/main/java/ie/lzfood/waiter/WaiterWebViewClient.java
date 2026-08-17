@@ -11,8 +11,10 @@ import android.webkit.WebViewClient;
 import java.util.function.Supplier;
 
 /**
- * Keep the waiter WebView on this store's login / cashier pages.
- * Admin, customer, and portal URLs are bounced back to cashier order.
+ * Waiter WebView may only stay on:
+ *   /{slug}/login?waiter=1
+ *   /{slug}/cashier/... ?waiter=1
+ * Everything else (portal, customer, admin) is sent to cashier order.
  */
 public class WaiterWebViewClient extends WebViewClient {
 
@@ -22,11 +24,18 @@ public class WaiterWebViewClient extends WebViewClient {
         void inject(WebView view);
     }
 
-    private final Supplier<String> cashierOrderUrl;
+    public interface StoreUrls {
+        String origin();
+        String slug();
+        String loginUrl();
+        String cashierOrderUrl();
+    }
+
+    private final StoreUrls urls;
     private final FlagInjector flagInjector;
 
-    public WaiterWebViewClient(Supplier<String> cashierOrderUrl, FlagInjector flagInjector) {
-        this.cashierOrderUrl = cashierOrderUrl;
+    public WaiterWebViewClient(StoreUrls urls, FlagInjector flagInjector) {
+        this.urls = urls;
         this.flagInjector = flagInjector;
     }
 
@@ -51,19 +60,84 @@ public class WaiterWebViewClient extends WebViewClient {
         return false;
     }
 
+    @Override
+    public void doUpdateVisitedHistory(WebView view, String url, boolean isReload) {
+        super.doUpdateVisitedHistory(view, url, isReload);
+        // SPA (React Router) changes path without shouldOverrideUrlLoading.
+        if (url == null || !(url.startsWith("http://") || url.startsWith("https://"))) {
+            return;
+        }
+        String rewritten = rewriteToWaiterPage(url);
+        if (rewritten == null) {
+            Log.i(TAG, "block off-path: " + url);
+            view.loadUrl(urls.cashierOrderUrl());
+            return;
+        }
+        if (!rewritten.equals(url)) {
+            Log.i(TAG, "rewrite " + url + " -> " + rewritten);
+            view.loadUrl(rewritten);
+        }
+    }
+
     private boolean handleUrl(WebView view, String url) {
         if (url == null) return true;
         if (!(url.startsWith("http://") || url.startsWith("https://"))) {
             return true;
         }
-        Uri uri = Uri.parse(url);
-        String path = uri.getPath() != null ? uri.getPath() : "";
-        if (path.contains("/admin") || path.contains("/customer") || path.equals("/") || path.isEmpty()) {
-            Log.i(TAG, "block leave-cashier: " + url);
-            view.loadUrl(cashierOrderUrl.get());
+        String rewritten = rewriteToWaiterPage(url);
+        if (rewritten == null) {
+            Log.i(TAG, "block off-path: " + url);
+            view.loadUrl(urls.cashierOrderUrl());
+            return true;
+        }
+        if (!rewritten.equals(url)) {
+            Log.i(TAG, "rewrite " + url + " -> " + rewritten);
+            view.loadUrl(rewritten);
             return true;
         }
         return false;
+    }
+
+    /**
+     * @return same URL, or URL with waiter=1, or null if not allowed
+     */
+    String rewriteToWaiterPage(String url) {
+        Uri uri = Uri.parse(url);
+        String origin = urls.origin();
+        String slug = urls.slug();
+        if (origin == null || slug == null || slug.isEmpty()) return null;
+
+        String hostPath = uri.getScheme() + "://" + uri.getAuthority();
+        if (!origin.equalsIgnoreCase(hostPath)) {
+            return null;
+        }
+
+        String path = uri.getPath() != null ? uri.getPath() : "";
+        String prefix = "/" + slug;
+        String loginPath = prefix + "/login";
+        String cashierPrefix = prefix + "/cashier";
+
+        boolean login = path.equals(loginPath) || path.equals(loginPath + "/");
+        boolean cashier = path.equals(cashierPrefix)
+                || path.startsWith(cashierPrefix + "/");
+        if (!login && !cashier) {
+            return null;
+        }
+
+        if ("1".equals(uri.getQueryParameter("waiter"))) {
+            return url;
+        }
+        Uri.Builder b = uri.buildUpon().clearQuery();
+        if (uri.getQueryParameterNames() != null) {
+            for (String key : uri.getQueryParameterNames()) {
+                if ("waiter".equals(key)) continue;
+                for (String val : uri.getQueryParameters(key)) {
+                    b.appendQueryParameter(key, val);
+                }
+            }
+        }
+        b.appendQueryParameter("waiter", "1");
+        return b.build().toString();
     }
 
     @Override
