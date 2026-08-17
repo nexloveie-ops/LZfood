@@ -37,7 +37,7 @@ import {
   emptyBomSnapshot,
   isItemServingBlocked,
 } from '../../utils/bomAvailability';
-import { isWaiterMode, syncWaiterModeFromSearch } from '../../utils/waiterMode';
+import { syncWaiterModeFromSearch } from '../../utils/waiterMode';
 
 interface Translation { locale: string; name: string; description?: string; }
 interface Category { _id: string; sortOrder: number; translations: Translation[]; }
