@@ -3354,7 +3354,7 @@ export default function CashierOrder() {
           menuItemId={optionModal._id}
           bomSnapshot={bomSnapshot}
           reservedDemand={orderBomDemand}
-          layout="cashier"
+          layout={waiterMode ? 'waiter' : 'cashier'}
           onConfirm={(opts) => addToOrderWithOptions(optionModal, opts)}
           onClose={() => setOptionModal(null)}
         />

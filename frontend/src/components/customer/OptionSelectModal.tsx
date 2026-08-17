@@ -33,8 +33,8 @@ interface Props {
   optionGroups: OptionGroup[];
   onConfirm: (options: CartItemOption[]) => void;
   onClose: () => void;
-  /** customer: 底部窄 sheet；cashier: 居中宽面板，选项多列排布 */
-  layout?: 'customer' | 'cashier';
+  /** customer: 底部窄 sheet；cashier: 居中宽面板；waiter: 收银面板但加料三列 */
+  layout?: 'customer' | 'cashier' | 'waiter';
   /** BoM 库存：选选项时禁用缺料 choice */
   menuItemId?: string;
   bomSnapshot?: BomAvailabilitySnapshot | null;
@@ -169,7 +169,8 @@ export default function OptionSelectModal({
     };
   }, [onClose]);
 
-  const isCashier = layout === 'cashier';
+  const isCashier = layout === 'cashier' || layout === 'waiter';
+  const isWaiter = layout === 'waiter';
 
   const sheet = (
     <div
@@ -202,7 +203,7 @@ export default function OptionSelectModal({
         aria-modal="true"
         aria-labelledby="option-modal-title"
         onClick={(e) => e.stopPropagation()}
-        className={`option-sheet${isCashier ? ' option-sheet--cashier' : ''}`}
+        className={`option-sheet${isCashier ? ' option-sheet--cashier' : ''}${isWaiter ? ' option-sheet--waiter' : ''}`}
         style={{
           position: 'relative',
           zIndex: 1,
@@ -235,7 +236,7 @@ export default function OptionSelectModal({
 
         <div className="option-sheet__body">
           {optionGroups.map(group => (
-            <div key={group._id} className="option-group">
+            <div key={group._id} className={`option-group${group.required ? ' option-group--required' : ' option-group--optional'}`}>
               <div className="option-group__head">
                 <span className="option-group__title">{getName(group.translations)}</span>
                 {group.required ? (

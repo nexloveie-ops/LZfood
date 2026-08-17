@@ -3,8 +3,6 @@ package ie.lzfood.waiter;
 import android.annotation.SuppressLint;
 import android.content.SharedPreferences;
 import android.os.Bundle;
-import android.view.Menu;
-import android.view.MenuItem;
 import android.view.View;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebSettings;
@@ -74,7 +72,6 @@ public class MainActivity extends AppCompatActivity {
     private void showSlugScreen() {
         storeSlug = "";
         setContentView(slugScreen);
-        setTitle(R.string.app_name);
     }
 
     private void openStore(String raw) {
@@ -89,7 +86,6 @@ public class MainActivity extends AppCompatActivity {
         ed.putString(KEY_SLUG, slug);
         ed.apply();
         setContentView(webView);
-        setTitle("/" + slug);
         webView.loadUrl(loginUrl());
     }
 
@@ -113,32 +109,14 @@ public class MainActivity extends AppCompatActivity {
     }
 
     @Override
-    public boolean onCreateOptionsMenu(Menu menu) {
-        menu.add(0, 1, 0, getString(R.string.menu_reload));
-        menu.add(0, 2, 1, getString(R.string.menu_change_store));
-        return true;
-    }
-
-    @Override
-    public boolean onOptionsItemSelected(MenuItem item) {
-        if (item.getItemId() == 1) {
-            if (webView.getParent() != null && storeSlug.length() > 0) {
-                webView.reload();
-            }
-            return true;
-        }
-        if (item.getItemId() == 2) {
-            showSlugScreen();
-            return true;
-        }
-        return super.onOptionsItemSelected(item);
-    }
-
-    @Override
     @SuppressWarnings("deprecation")
     public void onBackPressed() {
         if (webView.getParent() != null && webView.canGoBack()) {
             webView.goBack();
+            return;
+        }
+        if (webView.getParent() != null) {
+            showSlugScreen();
             return;
         }
         super.onBackPressed();

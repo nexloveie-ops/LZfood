@@ -384,6 +384,7 @@
 .cashier-saas.is-waiter .cashier-saas-header {
   padding: 8px 10px;
   gap: 8px;
+  flex-wrap: nowrap;
 }
 
 .cashier-saas.is-waiter .cashier-saas-content {
@@ -393,6 +394,11 @@
 
 .cashier-saas.is-waiter .cashier-saas-actions {
   width: auto;
+  margin-left: auto;
+}
+
+.cashier-saas.is-waiter .cashier-saas-brand {
+  flex: 1;
 }
 
 .waiter-nav-toggle {

@@ -998,6 +998,10 @@
   gap: 10px;
 }
 
+.option-sheet--waiter .option-group--optional .option-group__choices {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .option-sheet--cashier .option-sheet__footer {
   flex-direction: row;
   padding: 12px 20px 16px;

@@ -203,7 +203,7 @@ export default function CashierLayout() {
               {settling ? '...' : `💰 ${t('cashier.dailySettlement')}`}
             </button>
           )}
-          {!waiterMode ? <LanguageSwitcher /> : null}
+          <LanguageSwitcher variant={waiterMode ? 'text' : 'flags'} />
           {!waiterMode ? <span className="cashier-saas-user">{user?.username}</span> : null}
           {!waiterMode ? (
             <button
@@ -235,7 +235,7 @@ export default function CashierLayout() {
               {t('cashier.newOrder', '点单')}
             </NavLink>
             <div className="waiter-nav-drawer-foot">
-              <LanguageSwitcher />
+              <LanguageSwitcher variant="text" />
               <button type="button" className="btn btn-outline" style={{ width: '100%' }} onClick={handleLogout}>
                 {t('login.logout', '退出')}
               </button>
