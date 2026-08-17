@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../../context/AuthContext';
 import { apiFetch } from '../../api/client';
@@ -24,7 +24,7 @@ interface OfferData {
   endDate?: string;
 }
 
-interface CategoryOption { _id: string; name: string; }
+interface CategoryOption { _id: string; name: string; sortOrder: number; }
 interface MenuItemOption { _id: string; name: string; categoryId: string; price: number; }
 
 export default function OfferManager() {
@@ -66,17 +66,43 @@ export default function OfferManager() {
         apiFetch('/api/menu/items?ownOptionGroups=1'),
       ]);
       if (offersRes.ok) setOffers(await offersRes.json());
+      let catOrder = new Map<string, number>();
       if (catsRes.ok) {
-        const cats = await catsRes.json();
-        setCategories(cats.map((c: { _id: string; translations: { locale: string; name: string }[] }) => ({
-          _id: c._id, name: getName(c.translations),
-        })));
+        const cats = await catsRes.json() as Array<{
+          _id: string;
+          sortOrder?: number;
+          translations: { locale: string; name: string }[];
+        }>;
+        const mapped = cats
+          .map((c) => ({
+            _id: c._id,
+            name: getName(c.translations),
+            sortOrder: Number(c.sortOrder) || 0,
+          }))
+          .sort((a, b) => a.sortOrder - b.sortOrder);
+        catOrder = new Map(mapped.map((c, i) => [c._id, i]));
+        setCategories(mapped);
       }
       if (itemsRes.ok) {
-        const items = await itemsRes.json();
-        setMenuItems(items.map((i: { _id: string; categoryId: string; price: number; translations: { locale: string; name: string }[] }) => ({
-          _id: i._id, name: getName(i.translations), categoryId: i.categoryId, price: i.price,
-        })));
+        const items = await itemsRes.json() as Array<{
+          _id: string;
+          categoryId: string;
+          price: number;
+          translations: { locale: string; name: string }[];
+        }>;
+        const mapped = items.map((i) => ({
+          _id: i._id,
+          name: getName(i.translations),
+          categoryId: i.categoryId,
+          price: i.price,
+        }));
+        mapped.sort((a, b) => {
+          const oa = catOrder.has(a.categoryId) ? catOrder.get(a.categoryId)! : 9999;
+          const ob = catOrder.has(b.categoryId) ? catOrder.get(b.categoryId)! : 9999;
+          if (oa !== ob) return oa - ob;
+          return 0;
+        });
+        setMenuItems(mapped);
       }
     } catch { /* ignore */ }
     finally { setLoading(false); }
@@ -159,6 +185,39 @@ export default function OfferManager() {
     await apiFetch(`/api/offers/${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
     fetchData();
   };
+
+  const excludeItemGroups = useMemo(() => {
+    const remaining = menuItems.filter((i) => !formExcluded.includes(i._id));
+    const byCat = new Map<string, MenuItemOption[]>();
+    for (const it of remaining) {
+      const key = it.categoryId || '__uncategorized__';
+      const arr = byCat.get(key) || [];
+      arr.push(it);
+      byCat.set(key, arr);
+    }
+    const groups: Array<{ id: string; name: string; items: MenuItemOption[] }> = [];
+    const seen = new Set<string>();
+    for (const cat of categories) {
+      const list = byCat.get(cat._id);
+      if (!list || list.length === 0) continue;
+      groups.push({ id: cat._id, name: cat.name, items: list });
+      seen.add(cat._id);
+    }
+    const orphanItems: MenuItemOption[] = [];
+    for (const [cid, list] of byCat) {
+      if (cid === '__uncategorized__' || seen.has(cid)) continue;
+      orphanItems.push(...list);
+    }
+    const tail = [...orphanItems, ...(byCat.get('__uncategorized__') || [])];
+    if (tail.length > 0) {
+      groups.push({
+        id: '__uncategorized__',
+        name: t('admin.uncategorized', { defaultValue: '其它' }),
+        items: tail,
+      });
+    }
+    return groups;
+  }, [menuItems, categories, formExcluded, t]);
 
   const handleToggle = async (offer: OfferData) => {
     await apiFetch(`/api/offers/${offer._id}`, {
@@ -344,8 +403,12 @@ export default function OfferManager() {
                 }
               }} style={{ width: '100%', marginBottom: 8 }}>
                 <option value="">+ 选择要排除的菜品...</option>
-                {menuItems.filter(i => !formExcluded.includes(i._id)).map(i => (
-                  <option key={i._id} value={i._id}>{i.name} (€{i.price})</option>
+                {excludeItemGroups.map((g) => (
+                  <optgroup key={g.id} label={g.name}>
+                    {g.items.map((i) => (
+                      <option key={i._id} value={i._id}>{i.name} (€{i.price})</option>
+                    ))}
+                  </optgroup>
                 ))}
               </select>
               {formExcluded.length > 0 && (
