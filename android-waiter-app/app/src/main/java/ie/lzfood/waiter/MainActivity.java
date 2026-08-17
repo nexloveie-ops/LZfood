@@ -4,14 +4,20 @@ import android.annotation.SuppressLint;
 import android.content.SharedPreferences;
 import android.os.Bundle;
 import android.view.View;
+import android.view.ViewGroup;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsCompat;
 
 import java.util.Locale;
 import java.util.regex.Pattern;
@@ -27,6 +33,8 @@ public class MainActivity extends AppCompatActivity {
     private static final Pattern SLUG = Pattern.compile("^[a-z0-9][a-z0-9-]{0,62}$");
 
     private WebView webView;
+    private FrameLayout webHost;
+    private FrameLayout slugHost;
     private View slugScreen;
     private EditText slugInput;
     private String origin;
@@ -36,11 +44,18 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
         origin = getString(R.string.waiter_origin).replaceAll("/+$", "");
 
         slugScreen = getLayoutInflater().inflate(R.layout.activity_slug, null);
         slugInput = slugScreen.findViewById(R.id.slug_input);
         Button open = slugScreen.findViewById(R.id.slug_open);
+
+        slugHost = new FrameLayout(this);
+        slugHost.addView(slugScreen, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+        padForIme(slugHost);
 
         webView = new WebView(this);
         WebSettings settings = webView.getSettings();
@@ -58,6 +73,12 @@ public class MainActivity extends AppCompatActivity {
             @Override public String cashierOrderUrl() { return MainActivity.this.cashierOrderUrl(); }
         }, this::injectWaiterFlag));
 
+        webHost = new FrameLayout(this);
+        webHost.addView(webView, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+        padForIme(webHost);
+
         String saved = getSharedPreferences(PREFS, MODE_PRIVATE).getString(KEY_SLUG, "");
         if (saved != null && !saved.isEmpty()) {
             slugInput.setText(saved);
@@ -69,9 +90,18 @@ public class MainActivity extends AppCompatActivity {
         open.setOnClickListener(v -> openStore(slugInput.getText().toString()));
     }
 
+    private void padForIme(View host) {
+        ViewCompat.setOnApplyWindowInsetsListener(host, (v, insets) -> {
+            Insets ime = insets.getInsets(WindowInsetsCompat.Type.ime());
+            Insets sys = insets.getInsets(WindowInsetsCompat.Type.systemBars());
+            v.setPadding(sys.left, sys.top, sys.right, Math.max(ime.bottom, sys.bottom));
+            return insets;
+        });
+    }
+
     private void showSlugScreen() {
         storeSlug = "";
-        setContentView(slugScreen);
+        setContentView(slugHost);
     }
 
     private void openStore(String raw) {
@@ -85,7 +115,7 @@ public class MainActivity extends AppCompatActivity {
         SharedPreferences.Editor ed = getSharedPreferences(PREFS, MODE_PRIVATE).edit();
         ed.putString(KEY_SLUG, slug);
         ed.apply();
-        setContentView(webView);
+        setContentView(webHost);
         webView.loadUrl(loginUrl());
     }
 
@@ -98,7 +128,16 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void injectWaiterFlag(WebView view) {
-        view.evaluateJavascript("window.LZFOODWaiter={isWaiter:true};", null);
+        view.evaluateJavascript(
+                "window.LZFOODWaiter={isWaiter:true};"
+                        + "document.documentElement.classList.add('lzfood-waiter');"
+                        + "(function(){"
+                        + "if(document.getElementById('lz-waiter-css'))return;"
+                        + "var s=document.createElement('style');s.id='lz-waiter-css';"
+                        + "s.textContent='html.lzfood-waiter .option-group__choices{grid-template-columns:repeat(3,minmax(0,1fr))!important}';"
+                        + "document.documentElement.appendChild(s);"
+                        + "})();",
+                null);
     }
 
     static String normalizeSlug(String raw) {
@@ -111,11 +150,11 @@ public class MainActivity extends AppCompatActivity {
     @Override
     @SuppressWarnings("deprecation")
     public void onBackPressed() {
-        if (webView.getParent() != null && webView.canGoBack()) {
+        if (webView.getParent() != null && webHost.getParent() != null && webView.canGoBack()) {
             webView.goBack();
             return;
         }
-        if (webView.getParent() != null) {
+        if (webHost.getParent() != null) {
             showSlugScreen();
             return;
         }

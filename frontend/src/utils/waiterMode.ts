@@ -24,6 +24,9 @@ export function activateWaiterMode(): void {
   } catch {
     /* private mode */
   }
+  if (typeof document !== 'undefined') {
+    document.documentElement.classList.add('lzfood-waiter');
+  }
 }
 
 export function isWaiterMode(): boolean {
@@ -49,4 +52,37 @@ export function syncWaiterModeFromSearch(search: string): boolean {
 
 export function waiterQuerySuffix(): string {
   return isWaiterMode() ? '?waiter=1' : '';
+}
+
+/** Lift bottom sheets above the Android IME when the WebView does not resize. */
+export function bindWaiterKeyboardInset(): () => void {
+  const root = document.documentElement;
+  root.classList.add('lzfood-waiter');
+  const sync = () => {
+    const vv = window.visualViewport;
+    if (!vv) {
+      root.style.setProperty('--waiter-keyboard', '0px');
+      return;
+    }
+    const inset = Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop));
+    root.style.setProperty('--waiter-keyboard', `${inset}px`);
+  };
+  const onFocus = (e: FocusEvent) => {
+    const el = e.target;
+    if (!(el instanceof HTMLElement)) return;
+    if (!/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) return;
+    window.setTimeout(() => {
+      el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+    }, 280);
+  };
+  sync();
+  window.visualViewport?.addEventListener('resize', sync);
+  window.visualViewport?.addEventListener('scroll', sync);
+  window.addEventListener('focusin', onFocus);
+  return () => {
+    window.visualViewport?.removeEventListener('resize', sync);
+    window.visualViewport?.removeEventListener('scroll', sync);
+    window.removeEventListener('focusin', onFocus);
+    root.style.removeProperty('--waiter-keyboard');
+  };
 }

@@ -3149,8 +3149,8 @@ export default function CashierOrder() {
       ) : null}
 
       {waiterMode && waiterTypeUi !== 'closed' ? (
-        <div className="waiter-modal-backdrop" onClick={() => setWaiterTypeUi('closed')} role="presentation">
-          <div className="waiter-modal-sheet" onClick={(e) => e.stopPropagation()}>
+        <div className={`waiter-modal-backdrop${waiterTypeUi === 'form' ? ' is-form' : ''}`} onClick={() => setWaiterTypeUi('closed')} role="presentation">
+          <div className={`waiter-modal-sheet${waiterTypeUi === 'form' ? ' is-form' : ''}`} onClick={(e) => e.stopPropagation()}>
             {waiterTypeUi === 'pick' ? (
               <>
                 <h3 style={{ margin: 0, fontSize: 18 }}>{t('cashier.waiterPickType', '选择订单类型')}</h3>

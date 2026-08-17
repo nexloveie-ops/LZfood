@@ -15,7 +15,7 @@ import { printHtmlReceipt } from '../utils/posPrint';
 import LanguageSwitcher from '../components/LanguageSwitcher';
 import { useRestaurantConfig } from '../hooks/useRestaurantConfig';
 import { apiFetch } from '../api/client';
-import { isWaiterMode, syncWaiterModeFromSearch, waiterQuerySuffix } from '../utils/waiterMode';
+import { bindWaiterKeyboardInset, isWaiterMode, syncWaiterModeFromSearch, waiterQuerySuffix } from '../utils/waiterMode';
 import './cashier-shell.css';
 
 export default function CashierLayout() {
@@ -35,6 +35,11 @@ export default function CashierLayout() {
   useEffect(() => {
     setWaiterMode(syncWaiterModeFromSearch(window.location.search));
   }, []);
+
+  useEffect(() => {
+    if (!waiterMode) return;
+    return bindWaiterKeyboardInset();
+  }, [waiterMode]);
 
   useEffect(() => {
     if (!waiterMode || !user) return;

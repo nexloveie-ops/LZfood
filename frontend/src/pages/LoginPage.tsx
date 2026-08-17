@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useStoreSlug } from '../context/StoreContext';
 import { useTranslation } from 'react-i18next';
-import { isWaiterMode, syncWaiterModeFromSearch } from '../utils/waiterMode';
+import { bindWaiterKeyboardInset, isWaiterMode, syncWaiterModeFromSearch } from '../utils/waiterMode';
 import { useRestaurantConfig } from '../hooks/useRestaurantConfig';
 import {
   completeOwnerPasswordReset,
@@ -52,6 +52,11 @@ export default function LoginPage() {
 
   useEffect(() => {
     syncWaiterModeFromSearch(window.location.search);
+  }, []);
+
+  useEffect(() => {
+    if (!isWaiterMode()) return;
+    return bindWaiterKeyboardInset();
   }, []);
 
   useEffect(() => {

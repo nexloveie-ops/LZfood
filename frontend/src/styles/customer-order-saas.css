@@ -998,8 +998,22 @@
   gap: 10px;
 }
 
+@media (max-width: 900px) {
+  .option-sheet--cashier .option-group__choices {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+html.lzfood-waiter .option-sheet--cashier .option-group__choices {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .option-sheet--waiter .option-group--optional .option-group__choices {
   grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.option-sheet--waiter {
+  margin-bottom: var(--waiter-keyboard, 0px);
 }
 
 .option-sheet--cashier .option-sheet__footer {
