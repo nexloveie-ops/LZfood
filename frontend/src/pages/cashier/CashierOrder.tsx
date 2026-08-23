@@ -1663,7 +1663,7 @@ export default function CashierOrder() {
           checkoutId: orderData._id,
           type: 'seat' as const,
           totalAmount: finalTotal,
-          paymentMethod: ((orderData as { phoneCardPaidAtPlacement?: boolean }).phoneCardPaidAtPlacement ? 'card' : 'cash') as 'cash' | 'card',
+          paymentMethod: ((orderData as { phoneCardPaidAtPlacement?: boolean }).phoneCardPaidAtPlacement ? 'card' : 'pending') as 'card' | 'pending',
           checkedOutAt: new Date().toISOString(),
           orders: [{
             _id: orderData._id,
@@ -1842,7 +1842,7 @@ export default function CashierOrder() {
           checkoutId: orderData._id,
           type: 'seat' as const,
           totalAmount: foodGross + feeGross - disc,
-          paymentMethod: ((orderData as { phoneCardPaidAtPlacement?: boolean }).phoneCardPaidAtPlacement ? 'card' : 'cash') as 'cash' | 'card',
+          paymentMethod: ((orderData as { phoneCardPaidAtPlacement?: boolean }).phoneCardPaidAtPlacement ? 'card' : 'pending') as 'card' | 'pending',
           checkedOutAt: new Date().toISOString(),
           orders: [
             {
