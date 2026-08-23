@@ -19,6 +19,11 @@ import {
   type ReceiptCatalogMeta,
   type ReceiptCatalogSection,
 } from '../../utils/receiptCatalogGroup';
+import {
+  receiptPaymentMethodLabel,
+  receiptPaymentStatusLabel,
+  type ReceiptPaymentMethod,
+} from '../../utils/receiptPaymentMethod';
 
 interface ReceiptOrderItem {
   _id: string;
@@ -149,13 +154,11 @@ function catalogHeaderLabel(meta: ReceiptCatalogMeta): string {
   return formatCatalogHeader(meta);
 }
 
-function paymentMethodLabel(pm: ReceiptData['paymentMethod']): string {
-  if (pm === 'cash') return 'Cash';
-  if (pm === 'card') return 'Card';
-  if (pm === 'online') return 'Online';
-  if (pm === 'member') return 'Member balance';
-  if (pm === 'pending') return 'Pay later / 后结待付';
-  return 'Mixed';
+function formatReceiptPaymentBlock(pm: ReceiptPaymentMethod): { status: string; method: string } {
+  return {
+    status: receiptPaymentStatusLabel(pm),
+    method: receiptPaymentMethodLabel(pm),
+  };
 }
 
 interface RestaurantConfig {
@@ -426,7 +429,7 @@ function buildReceiptPlainText(
   const isPhone = receipt.orders.some((o) => o.type === 'phone');
   const isDelivery = receipt.orders.some((o) => o.type === 'delivery');
   const checkedOutAt = new Date(receipt.checkedOutAt);
-  const paymentLabel = paymentMethodLabel(receipt.paymentMethod);
+  const paymentBlock = formatReceiptPaymentBlock(receipt.paymentMethod);
   const restaurantName = config.restaurant_name_en || config.restaurant_name_zh || '';
   const termsSegments = config.receipt_terms ? parseQRCodes(config.receipt_terms) : [];
   const receiptItemQty = countReceiptItemQty(receipt);
@@ -554,7 +557,8 @@ function buildReceiptPlainText(
     if (showLegacyDeliveryRow) lines.push(plainRow('Delivery', formatPlainEuro(deliveryAmt)));
     lines.push(plainTotalRow('Total', formatPlainEuro(receipt.totalAmount)));
   }
-  lines.push(plainRow('Payment', paymentLabel));
+  lines.push(plainRow('Status / 付款', paymentBlock.status));
+  lines.push(plainRow('Payment / 支付', paymentBlock.method));
   if ((receipt.memberCreditUsed ?? 0) > 0.001) {
     lines.push(plainRow('Member credit', formatPlainEuro(receipt.memberCreditUsed ?? 0)));
   }
@@ -603,7 +607,7 @@ function buildReceiptHTML(
   const isPhone = receipt.orders.some(o => o.type === 'phone');
   const isDelivery = receipt.orders.some(o => o.type === 'delivery');
   const checkedOutAt = new Date(receipt.checkedOutAt);
-  const paymentLabel = paymentMethodLabel(receipt.paymentMethod);
+  const paymentBlock = formatReceiptPaymentBlock(receipt.paymentMethod);
   const restaurantName = config.restaurant_name_en || config.restaurant_name_zh || '';
   const termsSegments = config.receipt_terms ? parseQRCodes(config.receipt_terms) : [];
   const receiptItemQty = countReceiptItemQty(receipt);
@@ -786,7 +790,8 @@ function buildReceiptHTML(
     }
     html += `<div class="row" style="font-size:18px"><span>Total</span><span>€${receipt.totalAmount.toFixed(2)}</span></div>`;
   }
-  html += `<div class="row" style="margin-top:4px"><span>Payment</span><span>${paymentLabel}</span></div>`;
+  html += `<div class="row" style="margin-top:4px"><span>Status / 付款</span><span>${paymentBlock.status}</span></div>`;
+  html += `<div class="row"><span>Payment / 支付</span><span>${paymentBlock.method}</span></div>`;
   if ((receipt.memberCreditUsed ?? 0) > 0.001) {
     html += `<div class="row"><span>Member credit</span><span>€${(receipt.memberCreditUsed ?? 0).toFixed(2)}</span></div>`;
   }
@@ -911,7 +916,7 @@ export default function ReceiptPrint({ checkoutId, cashReceived, changeAmount, b
   const previewDeliveryAddr = previewDel?.deliveryAddress?.trim();
   const previewDeliveryPc = previewDel?.postalCode?.trim();
   const checkedOutAt = new Date(receipt.checkedOutAt);
-  const paymentLabel = paymentMethodLabel(receipt.paymentMethod);
+  const paymentBlock = formatReceiptPaymentBlock(receipt.paymentMethod);
   const restaurantName = config.restaurant_name_en || config.restaurant_name_zh || '';
   const termsSegments = config.receipt_terms ? parseQRCodes(config.receipt_terms) : [];
   const partialDescPreview = describeDineInPartialLines(receipt);
@@ -1083,7 +1088,8 @@ export default function ReceiptPrint({ checkoutId, cashReceived, changeAmount, b
           </>
         );
       })()}
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}><span>Payment</span><span>{paymentLabel}</span></div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}><span>Status / 付款</span><span>{paymentBlock.status}</span></div>
+      <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Payment / 支付</span><span>{paymentBlock.method}</span></div>
       {(receipt.memberCreditUsed ?? 0) > 0.001 && (
         <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Member credit</span><span>€{(receipt.memberCreditUsed ?? 0).toFixed(2)}</span></div>
       )}
@@ -1299,6 +1305,8 @@ export async function printBuiltReceipt(
     changeAmount?: number;
     bundleDiscounts?: BundleDiscountInfo[];
     copies?: number;
+    /** Reprint page: one customer receipt only — no catalog kitchen split slips. */
+    reprintOnly?: boolean;
   },
 ) {
   const enriched = await enrichReceiptWithCatalog(receipt);
@@ -1320,7 +1328,7 @@ export async function printBuiltReceipt(
     opts?.bundleDiscounts,
   );
 
-  if (mode === 'off') {
+  if (opts?.reprintOnly || mode === 'off') {
     return printHtmlReceipt({ html: fullHtml, plainText: fullPlain, copies });
   }
 

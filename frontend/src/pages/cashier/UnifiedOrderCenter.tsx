@@ -18,6 +18,7 @@ import type { NumberedVoucherPreview } from '../../components/cashier/CashierNum
 import OrderItemOptionGroupList from '../../components/cashier/OrderItemOptionGroupList';
 import { cashierOrderItemDisplayName } from '../../utils/cashierOrderItemOptions';
 import { isWaiterMode } from '../../utils/waiterMode';
+import { resolveReceiptPaymentMethodFromOrder } from '../../utils/receiptPaymentMethod';
 
 type OrderType = 'dine_in' | 'takeout' | 'phone' | 'delivery';
 type OrderStatus = 'pending' | 'paid_online' | 'checked_out' | 'completed' | 'refunded' | 'checked_out-hide' | 'completed-hide';
@@ -1084,19 +1085,9 @@ export default function UnifiedOrderCenter() {
       const receiptOrderType = src.type;
       const isPayAfterDineIn = dineInPayAfterEligibleForKitchenMark(src, config.dine_in_workflow_mode === 'pay_after');
 
-      const isPhoneCardPlacement =
-        !!(src as OrderRow).phoneCardPaidAtPlacement && (src.type === 'phone' || src.type === 'delivery');
-
       const mapItemToReceipt = mapOrderItemToReceipt;
 
-      const pm: 'cash' | 'online' | 'member' | 'card' =
-        src.status !== 'paid_online'
-          ? 'cash'
-          : !String(src.stripePaymentIntentId || '').trim() && (Number(src.memberCreditUsed) || 0) > 0.001
-            ? 'member'
-            : isPhoneCardPlacement
-              ? 'card'
-              : 'online';
+      const pm = resolveReceiptPaymentMethodFromOrder(src);
 
       const useDelta =
         kitchenTicket === 'auto' &&

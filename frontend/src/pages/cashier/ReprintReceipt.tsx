@@ -155,7 +155,7 @@ export default function ReprintReceipt() {
         items: o.items,
       })),
     };
-    void printBuiltReceipt(receiptData, config, { copies: 1 });
+    void printBuiltReceipt(receiptData, config, { copies: 1, reprintOnly: true });
     setTimeout(() => setPrinting(null), 2000);
   };
 
