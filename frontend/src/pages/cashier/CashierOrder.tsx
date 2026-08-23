@@ -1671,6 +1671,14 @@ export default function CashierOrder() {
             dailyOrderNumber: orderData.dailyOrderNumber,
             status: (orderData.status as string) || 'pending',
             items: orderData.items,
+            customerName:
+              typeof orderData.customerName === 'string' && orderData.customerName.trim()
+                ? orderData.customerName.trim()
+                : phoneGuestName.trim(),
+            customerPhone:
+              typeof orderData.customerPhone === 'string' && orderData.customerPhone.trim()
+                ? orderData.customerPhone.trim()
+                : phoneGuestPhone.trim(),
           }],
         };
         void printBuiltReceipt(receiptData, cfg, {
