@@ -14,6 +14,7 @@ import { getModels } from '../src/getModels';
 import { orderCreatedAtFilterUtc } from '../src/utils/reportDateRange';
 import { aggregateVatSalesByMonth, sumVatBucketTotals } from '../src/utils/vatReportAggregation';
 import { bundleAdjustedLineTotals, lineGrossEuro } from '../src/utils/bundleLineAllocation';
+import { aggregateDeliveryFeeExclusions } from '../src/utils/reportNetRevenue';
 
 function itemToLineLike(
   item: {
@@ -126,6 +127,18 @@ async function main(): Promise<void> {
 
   const netLedger = grossLedger - refundedAmount;
 
+  const deliveryFeeMap = new Map<string, { totalAmount: number; paymentMethod?: string; cashAmount?: number; cardAmount?: number }>();
+  for (const [oid, co] of orderCheckoutMap.entries()) {
+    deliveryFeeMap.set(oid, {
+      totalAmount: Number(co.totalAmount) || 0,
+      paymentMethod: co.paymentMethod,
+      cashAmount: co.cashAmount,
+      cardAmount: co.cardAmount,
+    });
+  }
+  const { total: deliveryFeeExcluded } = aggregateDeliveryFeeExclusions(allOrders, deliveryFeeMap);
+  const storeNetLedger = netLedger - deliveryFeeExcluded;
+
   const { byMonth } = await aggregateVatSalesByMonth(storeId, startDate, endDate);
   const vatTotal = sumVatBucketTotals(byMonth);
 
@@ -211,9 +224,11 @@ async function main(): Promise<void> {
   console.log(`账本 gross（每结账 totalAmount 计一次）: ${grossLedger.toFixed(2)}`);
   console.log(`退款估算 refundedAmount: ${refundedAmount.toFixed(2)}`);
   console.log(`账本 net（gross - refund）: ${netLedger.toFixed(2)}`);
+  console.log(`剔除送餐费 deliveryFeeExcluded: ${deliveryFeeExcluded.toFixed(2)}`);
+  console.log(`店铺净营业额（gross - refund - 送餐费）: ${storeNetLedger.toFixed(2)}`);
   console.log('');
-  console.log(`VAT 桶合计（vat-pdf 用，不含 delivery_fee 行；与净营业额账本可能不同）: ${vatTotal.toFixed(2)}`);
-  console.log(`账本 net 与 VAT 桶差: ${(netLedger - vatTotal).toFixed(2)}`);
+  console.log(`VAT 桶合计（vat-pdf 用，不含 delivery_fee 行）: ${vatTotal.toFixed(2)}`);
+  console.log(`店铺净营业额 与 VAT 桶差: ${(storeNetLedger - vatTotal).toFixed(2)}`);
   console.log('');
   console.log(
     `按类型汇总（当前 API：每笔订单加整单 checkout.totalAmount — 多订单结账会重复）: ${naiveTypeSum.toFixed(2)}`,

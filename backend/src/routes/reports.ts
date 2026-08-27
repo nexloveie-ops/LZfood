@@ -6,6 +6,13 @@ import { createAppError } from '../middleware/errorHandler';
 import { aggregateVatSalesByMonth } from '../utils/vatReportAggregation';
 import { buildVatReportPdfBuffer } from '../utils/vatReportPdf';
 import { checkoutCheckedOutFilterUtc, orderCreatedAtFilterUtc } from '../utils/reportDateRange';
+import { deliveryFeePortionEuro } from '../utils/orderPayableTotal';
+import {
+  aggregateDeliveryFeeExclusions,
+  computeOrderRefundAmount,
+  deliveryFeeExcludedFromOrderNet,
+  type ReportCheckoutLike,
+} from '../utils/reportNetRevenue';
 
 const router = Router();
 
@@ -58,6 +65,23 @@ async function checkoutIdsToSkipWhenLinkedOrderHidden(
     if (anyHide) skip.add(String(c._id));
   }
   return skip;
+}
+
+function toReportCheckout(co: unknown): ReportCheckoutLike | undefined {
+  if (!co || typeof co !== 'object') return undefined;
+  const c = co as {
+    totalAmount?: unknown;
+    paymentMethod?: string;
+    cashAmount?: number;
+    cardAmount?: number;
+  };
+  if (c.totalAmount == null) return undefined;
+  return {
+    totalAmount: Number(c.totalAmount) || 0,
+    paymentMethod: c.paymentMethod,
+    cashAmount: c.cashAmount,
+    cardAmount: c.cardAmount,
+  };
 }
 
 // GET /api/reports/orders — 默认不含 hide（与营业报表一致）；订单历史传 includeHiddenOrders=1
@@ -353,34 +377,7 @@ router.get('/detailed', authMiddleware, requirePermission('report:view'), async 
       if (refundedItems.length === 0) continue;
 
       refundedCount += refundedItems.length;
-
-      // Calculate refund amount considering bundle discounts
-      const allRefunded = order.items.length > 0 && order.items.every((item: { refunded?: boolean }) => (item as unknown as { refunded?: boolean }).refunded);
-      let amt: number;
-
-      if (allRefunded && checkout) {
-        // Full refund: use actual checkout amount (already includes bundle discount)
-        amt = checkout.totalAmount;
-      } else {
-        // Partial refund: calculate item prices and proportionally distribute bundle discount
-        let refundedItemsTotal = 0;
-        let allItemsTotal = 0;
-        for (const item of order.items) {
-          const optExtra = ((item.selectedOptions || []) as { extraPrice?: number }[]).reduce((s, o) => s + (o.extraPrice || 0), 0);
-          const itemAmt = (item.unitPrice + optExtra) * item.quantity;
-          allItemsTotal += itemAmt;
-          if ((item as unknown as { refunded?: boolean }).refunded) {
-            refundedItemsTotal += itemAmt;
-          }
-        }
-        const bundleDisc = ((order as unknown as { appliedBundles?: { discount: number }[] }).appliedBundles || []).reduce((s: number, b: { discount: number }) => s + b.discount, 0);
-        // Proportionally reduce refund by bundle discount ratio
-        if (allItemsTotal > 0 && bundleDisc > 0) {
-          amt = refundedItemsTotal * (1 - bundleDisc / allItemsTotal);
-        } else {
-          amt = refundedItemsTotal;
-        }
-      }
+      const amt = computeOrderRefundAmount(order, toReportCheckout(checkout));
 
       refundedAmount += amt;
       if (pm === 'cash') cashRefund += amt;
@@ -398,10 +395,20 @@ router.get('/detailed', authMiddleware, requirePermission('report:view'), async 
       else if (pm === 'member') memberRefund += amt;
     }
 
-    // 净营业额：结账账本净值 = 每结账 totalAmount 去重求和 − 本区间退款分摊。
-    // 与现金/刷卡/… 各行「毛额 − 退款」在全额退单场景下一致（例如刷卡 9.99 全退则净额 0，净营业额应为 0）。
-    // 退单区块仅作明细展示，不在此重复用 VAT 桶负行拉低净营业额（VAT 报表见 GET /reports/vat-pdf）。
-    const totalRevenue = grossRevenue - refundedAmount;
+    const deliveryFeeCheckoutMap = new Map<string, ReportCheckoutLike>();
+    for (const [oid, co] of orderCheckoutMap.entries()) {
+      deliveryFeeCheckoutMap.set(oid, {
+        totalAmount: Number(co.totalAmount) || 0,
+        paymentMethod: co.paymentMethod,
+        cashAmount: co.cashAmount,
+        cardAmount: co.cardAmount,
+      });
+    }
+    const { total: deliveryFeeExcludedFromNet, byPayment: deliveryFeeByPayment } =
+      aggregateDeliveryFeeExclusions(allOrders, deliveryFeeCheckoutMap);
+
+    // 净营业额：结账账本 − 退款 − 送餐费（司机代收/代付，非店铺餐食销售；QR 与货到付款均剔除）
+    const totalRevenue = grossRevenue - refundedAmount - deliveryFeeExcludedFromNet;
 
     // Order counts and revenue by type
     const activeOrders = allOrders.filter((o: any) => o.status !== 'refunded');
@@ -436,7 +443,11 @@ router.get('/detailed', authMiddleware, requirePermission('report:view'), async 
         phoneRevenue += checkout?.totalAmount ?? orderItemTotal;
       } else if (order.type === 'delivery') {
         deliveryCount++;
-        deliveryRevenue += checkout?.totalAmount ?? orderItemTotal;
+        const co = toReportCheckout(checkout);
+        const refundAmt = computeOrderRefundAmount(order, co);
+        const grossOrder = co?.totalAmount ?? orderItemTotal;
+        const feeExcluded = deliveryFeeExcludedFromOrderNet(order, co, refundAmt);
+        deliveryRevenue += Math.max(0, grossOrder - refundAmt - feeExcluded);
       } else {
         otherTypeCount++;
       }
@@ -469,6 +480,7 @@ router.get('/detailed', authMiddleware, requirePermission('report:view'), async 
     for (const order of allOrders) {
       for (const item of order.items) {
         if ((item as unknown as { refunded?: boolean }).refunded) continue;
+        if ((item as { lineKind?: string }).lineKind === 'delivery_fee') continue;
         const key = item.itemName;
         const optExtra = ((item.selectedOptions || []) as { extraPrice?: number }[]).reduce((s, o) => s + (o.extraPrice || 0), 0);
         const existing = itemMap.get(key);
@@ -497,16 +509,17 @@ router.get('/detailed', authMiddleware, requirePermission('report:view'), async 
     res.json({
       totalRevenue: Math.round(totalRevenue * 100) / 100,
       grossRevenue: Math.round(grossRevenue * 100) / 100,
+      deliveryFeeExcludedFromNet: Math.round(deliveryFeeExcludedFromNet * 100) / 100,
       orderCount: activeOrders.length,
-      cashTotal: Math.round((cashTotal - cashRefund) * 100) / 100,
-      cardTotal: Math.round((cardTotal - cardRefund) * 100) / 100,
+      cashTotal: Math.round((cashTotal - cashRefund - deliveryFeeByPayment.cash) * 100) / 100,
+      cardTotal: Math.round((cardTotal - cardRefund - deliveryFeeByPayment.card) * 100) / 100,
       mixedTotal: Math.round((mixedTotal - mixedRefund) * 100) / 100,
       cashCount,
       cardCount,
       mixedCount,
-      onlineTotal: Math.round((onlineTotal - onlineRefund) * 100) / 100,
+      onlineTotal: Math.round((onlineTotal - onlineRefund - deliveryFeeByPayment.online) * 100) / 100,
       onlineCount,
-      memberTotal: Math.round((memberTotal - memberRefund) * 100) / 100,
+      memberTotal: Math.round((memberTotal - memberRefund - deliveryFeeByPayment.member) * 100) / 100,
       memberCount,
       couponCount,
       couponTotalAmount: Math.round(couponTotalAmount * 100) / 100,

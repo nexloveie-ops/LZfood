@@ -12,6 +12,7 @@ interface TopItem {
 interface DetailedStats {
   totalRevenue: number;
   grossRevenue: number;
+  deliveryFeeExcludedFromNet?: number;
   orderCount: number;
   cashTotal: number;
   cardTotal: number;
@@ -346,8 +347,18 @@ export default function ReportDashboard() {
           <div style={{ marginBottom: 20 }}>
             <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 10, color: 'var(--text-secondary)' }}>💰 营业概览</h3>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12 }}>
-              <StatCard label="净营业额" value={euro(stats.totalRevenue)} color="var(--red-primary)" icon="💰"
-                onClick={() => openDetail({ title: '💰 全部订单', icon: '💰', filters: {} })} />
+              <StatCard
+                label="净营业额"
+                value={euro(stats.totalRevenue)}
+                subtitle={
+                  (stats.deliveryFeeExcludedFromNet ?? 0) > 0
+                    ? `已不含送餐费 €${(stats.deliveryFeeExcludedFromNet ?? 0).toFixed(2)}`
+                    : '不含送餐费（司机代收/代付）'
+                }
+                color="var(--red-primary)"
+                icon="💰"
+                onClick={() => openDetail({ title: '💰 全部订单', icon: '💰', filters: {} })}
+              />
               <StatCard label="订单数量" value={String(stats.orderCount)} color="var(--blue, #1976D2)" icon="📋"
                 onClick={() => openDetail({ title: '📋 全部订单', icon: '📋', filters: {} })} />
               <StatCard label="现金收入" value={euro(stats.cashTotal)} color="var(--green, #388E3C)" icon="💵"
@@ -436,7 +447,7 @@ export default function ReportDashboard() {
                     送餐费 €{(stats.deliveryDriverFeeTotal ?? 0).toFixed(2)}
                   </div>
                   <div style={{ fontSize: 11, color: 'var(--text-light)', marginTop: 4 }}>
-                    司机代收，与店铺营收无关
+                    司机代收/代付，已从净营业额中剔除
                   </div>
                 </div>
               </div>
@@ -670,9 +681,9 @@ export default function ReportDashboard() {
 }
 
 function StatCard({
-  label, value, color, icon, onClick,
+  label, value, color, icon, subtitle, onClick,
 }: {
-  label: string; value: string; color: string; icon: string; onClick?: () => void;
+  label: string; value: string; color: string; icon: string; subtitle?: string; onClick?: () => void;
 }) {
   return (
     <div className="card" style={{ padding: 20, textAlign: 'center', cursor: onClick ? 'pointer' : 'default', transition: 'box-shadow 0.2s' }}
@@ -682,6 +693,9 @@ function StatCard({
       <div style={{ fontSize: 28, marginBottom: 8 }}>{icon}</div>
       <div style={{ fontSize: 12, color: 'var(--text-light)', marginBottom: 4 }}>{label}</div>
       <div style={{ fontSize: 24, fontWeight: 700, color, fontFamily: "'Noto Serif SC', serif" }}>{value}</div>
+      {subtitle ? (
+        <div style={{ fontSize: 10, color: 'var(--text-light)', marginTop: 6, lineHeight: 1.35 }}>{subtitle}</div>
+      ) : null}
       {onClick && <div style={{ fontSize: 10, color: 'var(--text-light)', marginTop: 6 }}>点击查看详情 →</div>}
     </div>
   );
