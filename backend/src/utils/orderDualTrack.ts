@@ -169,6 +169,18 @@ export function fulfillmentAfterKitchenPrintAll(current: FulfillmentStatus | und
   return 'kitchen';
 }
 
+/** Delivery: kitchen release implies accepted; keeps deliveryStage aligned with kitchenPrintedQty. */
+export function maybeAdvanceDeliveryStageOnKitchenReady(order: {
+  type?: string;
+  deliveryStage?: string;
+}): void {
+  if (String(order.type) !== 'delivery') return;
+  const stage = String(order.deliveryStage ?? 'new').trim() || 'new';
+  if (stage === 'new') {
+    (order as { deliveryStage?: string }).deliveryStage = 'accepted';
+  }
+}
+
 /**
  * Recompute paymentStatus + fulfillmentStatus from legacy fields (dual-track orders only).
  * Call after mutating status / items / deliveryStage.

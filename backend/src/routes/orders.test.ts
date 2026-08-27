@@ -1227,6 +1227,68 @@ describe('dual-track order workflow', () => {
     expect(stageRes.body.status).toBe('pending');
     expect(stageRes.body.fulfillmentStatus).toBe('fulfilled');
   });
+
+  it('kitchen-printed-all on QR delivery advances deliveryStage new to accepted', async () => {
+    const item = await createMenuItem({ price: 12 });
+    const order = await Order.create({
+      storeId: TEST_STORE_ID,
+      type: 'delivery',
+      deliverySource: 'qr',
+      status: 'checked_out',
+      dualTrackVersion: 1,
+      paymentStatus: 'paid',
+      fulfillmentStatus: 'ordered',
+      deliveryStage: 'new',
+      dailyOrderNumber: 13,
+      items: [{
+        menuItemId: item._id,
+        quantity: 1,
+        unitPrice: 12,
+        itemName: 'Test dish',
+        kitchenPrintedQty: 0,
+      }],
+    });
+
+    const res = await request(app)
+      .post(`/api/orders/${order._id}/kitchen-printed-all`)
+      .set('Authorization', `Bearer ${cashierToken}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.deliveryStage).toBe('accepted');
+    expect(res.body.items[0].kitchenPrintedQty).toBe(1);
+  });
+
+  it('picked_up_by_driver from new completes paid QR delivery when kitchen already printed', async () => {
+    const item = await createMenuItem({ price: 12 });
+    const order = await Order.create({
+      storeId: TEST_STORE_ID,
+      type: 'delivery',
+      deliverySource: 'qr',
+      status: 'checked_out',
+      dualTrackVersion: 1,
+      paymentStatus: 'paid',
+      fulfillmentStatus: 'kitchen',
+      deliveryStage: 'new',
+      dailyOrderNumber: 13,
+      items: [{
+        menuItemId: item._id,
+        quantity: 1,
+        unitPrice: 12,
+        itemName: 'Test dish',
+        kitchenPrintedQty: 1,
+      }],
+    });
+
+    const res = await request(app)
+      .put(`/api/orders/${order._id}/delivery-stage`)
+      .set('Authorization', `Bearer ${cashierToken}`)
+      .send({ deliveryStage: 'picked_up_by_driver' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.deliveryStage).toBe('picked_up_by_driver');
+    expect(res.body.status).toBe('completed');
+    expect(res.body.fulfillmentStatus).toBe('fulfilled');
+  });
 });
 
 describe('DELETE /api/orders/:id', () => {

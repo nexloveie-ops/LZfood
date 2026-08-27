@@ -1050,19 +1050,29 @@ export default function UnifiedOrderCenter() {
     [fetchAll, isEn, token],
   );
 
-  const setDeliveryStage = useCallback(async (orderId: string, stage: DeliveryStage) => {
+  const setDeliveryStage = useCallback(async (orderId: string, stage: DeliveryStage): Promise<boolean> => {
     setBusyId(orderId);
     try {
-      await apiFetch(`/api/orders/${orderId}/delivery-stage`, {
+      const res = await apiFetch(`/api/orders/${orderId}/delivery-stage`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ deliveryStage: stage }),
       });
+      if (!res.ok) {
+        const errBody = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
+        alert(
+          isEn
+            ? `Could not update delivery stage: ${errBody?.error?.message || res.status}`
+            : `无法更新配送阶段：${errBody?.error?.message || res.status}`,
+        );
+        return false;
+      }
       await fetchAll();
+      return true;
     } finally {
       setBusyId(null);
     }
-  }, [fetchAll, token]);
+  }, [fetchAll, isEn, token]);
 
 
   type KitchenTicketMode = 'auto' | 'full_mark_all' | 'full_no_mark';
@@ -1578,14 +1588,21 @@ export default function UnifiedOrderCenter() {
       await printOrderTicket(order, 'auto');
       const stage = order.deliveryStage;
       if (!stage || stage === 'new') {
-        await setDeliveryStage(order._id, 'accepted');
+        const ok = await setDeliveryStage(order._id, 'accepted');
+        if (!ok) {
+          alert(
+            isEn
+              ? 'Kitchen was marked printed but delivery stage could not be updated. Use “Driver picked up” when ready, or refresh and retry.'
+              : '厨房已标记出单，但未能更新配送阶段。请稍后点「司机取走」，或刷新后重试。',
+          );
+        }
       } else {
         await fetchAll();
       }
     } finally {
       setBusyId(null);
     }
-  }, [fetchAll, printOrderTicket, setDeliveryStage]);
+  }, [fetchAll, isEn, printOrderTicket, setDeliveryStage]);
 
   const handleDeliveryDriverPickup = useCallback(async (order: OrderRow) => {
     if (!isOrderKitchenFullyPrinted(order)) {
@@ -2209,7 +2226,7 @@ export default function UnifiedOrderCenter() {
                         style={{ fontSize: 11, padding: '2px 8px', lineHeight: 1.2 }}
                         onClick={(e) => {
                           e.stopPropagation();
-                          void printOrderTicket(o);
+                          void printOrderTicket(o, o.type === 'delivery' ? 'full_no_mark' : 'auto');
                         }}
                         title={L.printReceipt}
                       >
@@ -2432,7 +2449,7 @@ export default function UnifiedOrderCenter() {
                         <div style={{ padding: 8, border: '1px solid #e6e6e6', borderRadius: 8, background: '#fff' }}>
                           <div style={{ fontSize: 11, color: '#666', marginBottom: 6, fontWeight: 600 }}>{L.deliveryStage}</div>
                           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                            {o.deliveryStage === 'accepted' ? (
+                            {(!o.deliveryStage || o.deliveryStage === 'new' || o.deliveryStage === 'accepted') ? (
                               <button
                                 className="btn btn-primary"
                                 style={{ fontSize: 12 }}

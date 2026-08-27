@@ -51,6 +51,7 @@ import {
   isCashierKitchenAtPlacement,
   isKitchenPrintSatisfied,
   isLegacyPaymentSettled,
+  maybeAdvanceDeliveryStageOnKitchenReady,
   resolveTakeoutPlacementSource,
   syncDualTrackBeforeSave,
 } from '../utils/orderDualTrack';
@@ -1256,7 +1257,8 @@ export function createOrdersRouter(io: SocketIOServer): Router {
         if (!isKitchenPrintSatisfied(order)) {
           throw createAppError('VALIDATION_ERROR', '须先送厨房制作后再安排司机取餐');
         }
-        if (order.deliveryStage !== 'accepted') {
+        const curStage = String(order.deliveryStage || 'new').trim() || 'new';
+        if (curStage !== 'accepted' && curStage !== 'new') {
           throw createAppError('VALIDATION_ERROR', '订单须为已接单状态后才能标记司机取走');
         }
       }
@@ -1492,6 +1494,9 @@ export function createOrdersRouter(io: SocketIOServer): Router {
         if (Number(order.dualTrackVersion) === DUAL_TRACK_VERSION) {
           order.fulfillmentStatus = fulfillmentAfterKitchenPrintAll(order.fulfillmentStatus);
         }
+        if (isKitchenPrintSatisfied(order)) {
+          maybeAdvanceDeliveryStageOnKitchenReady(order);
+        }
         order.markModified('items');
         const wfKitchen = order.type === 'dine_in' ? await getDineInWorkflowModeForStore(req.storeId!) : undefined;
         syncDualTrackBeforeSave(order, { dineInWorkflowMode: wfKitchen });
@@ -1536,6 +1541,7 @@ export function createOrdersRouter(io: SocketIOServer): Router {
         if (Number(order.dualTrackVersion) === DUAL_TRACK_VERSION) {
           order.fulfillmentStatus = fulfillmentAfterKitchenPrintAll(order.fulfillmentStatus);
         }
+        maybeAdvanceDeliveryStageOnKitchenReady(order);
         order.markModified('items');
         const wfKitchenAll = order.type === 'dine_in' ? await getDineInWorkflowModeForStore(req.storeId!) : undefined;
         syncDualTrackBeforeSave(order, { dineInWorkflowMode: wfKitchenAll });

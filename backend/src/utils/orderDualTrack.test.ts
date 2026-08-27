@@ -5,6 +5,7 @@ import {
   isCashierKitchenAtPlacement,
   isKitchenPrintSatisfied,
   isOrderClosed,
+  maybeAdvanceDeliveryStageOnKitchenReady,
   maybeAutoCompleteClosedOrder,
   recomputeDualTrackFields,
   resolveTakeoutPlacementSource,
@@ -63,6 +64,26 @@ describe('orderDualTrack derive', () => {
       items: [{ lineKind: 'menu', quantity: 1, kitchenPrintedQty: 0 }],
     };
     expect(isKitchenPrintSatisfied(o)).toBe(true);
+  });
+});
+
+describe('maybeAdvanceDeliveryStageOnKitchenReady', () => {
+  it('advances delivery new to accepted', () => {
+    const o = { type: 'delivery', deliveryStage: 'new' };
+    maybeAdvanceDeliveryStageOnKitchenReady(o);
+    expect(o.deliveryStage).toBe('accepted');
+  });
+
+  it('no-op when already accepted', () => {
+    const o = { type: 'delivery', deliveryStage: 'accepted' };
+    maybeAdvanceDeliveryStageOnKitchenReady(o);
+    expect(o.deliveryStage).toBe('accepted');
+  });
+
+  it('no-op for non-delivery', () => {
+    const o = { type: 'takeout', deliveryStage: 'new' };
+    maybeAdvanceDeliveryStageOnKitchenReady(o);
+    expect(o.deliveryStage).toBe('new');
   });
 });
 
