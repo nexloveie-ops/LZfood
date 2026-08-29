@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type React
 import { useTranslation } from 'react-i18next';
 import { apiFetch } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
-import ReportSegmentConfigPanel from '../../components/ReportSegmentConfigPanel';
+import ReportSegmentConfigPanel, { type SegmentGroupRow } from '../../components/ReportSegmentConfigPanel';
 import './report-segments.css';
 
 interface SegmentGroup {
@@ -179,7 +179,7 @@ function buildChartNodeLabels(params: {
   return out;
 }
 
-function metricValue(m: GroupMetrics | undefined, row: BreakdownRow, metric: SegmentMetric): number {
+function metricValue(m: GroupMetrics | undefined, _row: BreakdownRow, metric: SegmentMetric): number {
   if (!m) return 0;
   if (metric === 'sales') return m.sales;
   if (metric === 'orders') return m.orderCount;
@@ -734,6 +734,16 @@ function SegmentBarChart({
   );
 }
 
+function toSegmentGroups(rows: SegmentGroupRow[]): SegmentGroup[] {
+  return rows.map((g, i) => ({
+    id: g.id ?? `local-${i}`,
+    sortOrder: g.sortOrder,
+    nameZh: g.nameZh,
+    nameEn: g.nameEn,
+    categoryIds: g.categoryIds,
+  }));
+}
+
 export default function ReportSegmentDashboard() {
   const { i18n } = useTranslation();
   const locale = i18n.language;
@@ -758,10 +768,11 @@ export default function ReportSegmentDashboard() {
   const [chartGroups, setChartGroups] = useState<Set<string>>(new Set());
   const [chartType, setChartType] = useState<ChartType>('line');
 
-  const handleConfigSaved = useCallback((payload: { enabled: boolean; groups: SegmentGroup[] }) => {
+  const handleConfigSaved = useCallback((payload: { enabled: boolean; groups: SegmentGroupRow[] }) => {
     setEnabled(payload.enabled);
-    setGroups(payload.groups);
-    setChartGroups(new Set(payload.groups.map((g) => g.id)));
+    const nextGroups = toSegmentGroups(payload.groups);
+    setGroups(nextGroups);
+    setChartGroups(new Set(nextGroups.map((g) => g.id)));
   }, []);
 
   useEffect(() => {
