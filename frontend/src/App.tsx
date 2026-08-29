@@ -40,6 +40,7 @@ import I18nEditor from './pages/admin/I18nEditor';
 import QRCodeManager from './pages/admin/QRCodeManager';
 import OrderHistory from './pages/admin/OrderHistory';
 import ReportDashboard from './pages/admin/ReportDashboard';
+import ReportSegmentDashboard from './pages/admin/ReportSegmentDashboard';
 import SalesForecastPage from './pages/admin/SalesForecastPage';
 import UserManager from './pages/admin/UserManager';
 import SystemConfig from './pages/admin/SystemConfig';
@@ -195,6 +196,7 @@ export default function App() {
               <Route path="qr-codes" element={<QRCodeManager />} />
               <Route path="orders" element={<RequireFeature featureKey="admin.orderHistory.page"><OrderHistory /></RequireFeature>} />
               <Route path="reports" element={<ReportDashboard />} />
+              <Route path="report-segments" element={<RequireFeature featureKey="admin.reportSegments.page"><ReportSegmentDashboard /></RequireFeature>} />
               <Route path="sales-forecast" element={<RequireFeature featureKey="admin.salesForecast.page"><SalesForecastPage /></RequireFeature>} />
               <Route path="business-hours" element={<BusinessHours />} />
               <Route path="customer-notifications" element={<RequireFeature featureKey="admin.customerNotifications.page"><CustomerNotifications /></RequireFeature>} />

@@ -157,6 +157,12 @@ const DEFAULT_ADDON_PRESETS: Array<{ name: string; code: string; description: st
     description: '管理端备货预测：按菜品份数做周/月预计销量、回测对比与校准',
     features: [FeatureKeys.AdminSalesForecastPage],
   },
+  {
+    name: '品类结构报表',
+    code: 'report-segments',
+    description: '管理端品类结构：按餐品目录分组统计营业额占比与趋势',
+    features: [FeatureKeys.AdminReportSegmentsPage],
+  },
 ];
 
 async function ensureDefaultFeatureProducts(): Promise<void> {
@@ -199,6 +205,18 @@ async function ensureDefaultFeatureProducts(): Promise<void> {
         name: '备货预测',
         description: '管理端备货预测：按菜品份数做周/月预计销量、回测对比与校准',
         features: [FeatureKeys.AdminSalesForecastPage],
+        isActive: true,
+      },
+    },
+  );
+  /** Keep 品类结构 addon label/features in sync for platform UI */
+  await FeatureAddon.updateOne(
+    { code: 'report-segments' },
+    {
+      $set: {
+        name: '品类结构报表',
+        description: '管理端品类结构：按餐品目录分组统计营业额占比与趋势',
+        features: [FeatureKeys.AdminReportSegmentsPage],
         isActive: true,
       },
     },
@@ -633,6 +651,7 @@ router.delete('/stores/:storeId/admins/:adminId', ...platformAuth, async (req: R
     next(err);
   }
 });
+
 
 // —— 顾客下单完成页横幅广告（全平台） ——
 

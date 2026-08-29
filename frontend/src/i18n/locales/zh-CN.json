@@ -839,6 +839,7 @@
     "topupCardsTsvTextareaLabel": "原始 TSV（含表头）",
     "orderHistory": "订单历史",
     "reports": "营业报表",
+    "reportSegments": "品类结构",
     "salesForecast": {
       "nav": "备货预测",
       "title": "备货预测",

@@ -42,7 +42,7 @@ interface FeatureAddonRow {
  */
 const FEATURE_GROUPS: {
   section: string;
-  options: { key: string; label: string; checkedAliases?: string[] }[];
+  options: { key: string; label: string; checkedAliases?: string[]; infoOnly?: boolean }[];
 }[] = [
   {
     section: 'Cashier',
@@ -68,6 +68,7 @@ const FEATURE_GROUPS: {
       { key: 'admin.reports.vatExport.action', label: '报表-VAT 导出' },
       { key: 'admin.inventory.restoreTime.action', label: '库存-恢复供应时间' },
       { key: 'admin.salesForecast.page', label: '管理员-备货预测（菜品份数预测 / 回测与校准）' },
+      { key: 'admin.reportSegments.page', label: '管理员-品类结构报表（按餐品目录分组统计营业额）' },
     ],
   },
   {
@@ -86,7 +87,9 @@ const FEATURE_GROUPS: {
   },
 ];
 
-const FEATURE_OPTIONS: { key: string; label: string }[] = FEATURE_GROUPS.flatMap((g) => g.options);
+const FEATURE_OPTIONS: { key: string; label: string }[] = FEATURE_GROUPS.flatMap((g) =>
+  g.options.filter((o) => !o.infoOnly),
+);
 
 const FEATURE_OVERRIDE_TEMPLATE: Record<string, boolean> = Object.fromEntries(
   FEATURE_OPTIONS.map((f) => [f.key, false]),
@@ -108,6 +111,13 @@ function FeatureCheckboxList(props: {
         <div key={group.section} style={{ marginBottom: 10 }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: '#455a64', marginBottom: 6, letterSpacing: 0.2 }}>{group.section}</div>
           {group.options.map((opt) => {
+            if (opt.infoOnly) {
+              return (
+                <p key={opt.key} style={{ fontSize: 12, color: '#546e7a', margin: '0 0 8px 4px', lineHeight: 1.45 }}>
+                  {opt.label}
+                </p>
+              );
+            }
             const isOn = selected.includes(opt.key)
               || (opt.checkedAliases?.some((a) => selected.includes(a)) ?? false);
             return (

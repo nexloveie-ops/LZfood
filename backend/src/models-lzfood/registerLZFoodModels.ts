@@ -14,6 +14,7 @@ import { InventoryTxnSchema } from '../models/InventoryTxn';
 import { RawMaterialSchema } from '../models/RawMaterial';
 import mongoose from 'mongoose';
 import { StoreSchema } from './Store';
+import { StoreReportSegmentConfigSchema } from './StoreReportSegmentConfig';
 import { AdminAuditLogSchema } from './AdminAuditLog';
 import { LZFoodAdminSchema } from './LZFoodAdmin';
 import { PostOrderAdSchema } from './PostOrderAd';
@@ -101,6 +102,7 @@ export type LZFoodModels = {
   NotificationTemplate: Model<unknown>;
   NotificationLog: Model<unknown>;
   StoreWhatsAppConfig: Model<unknown>;
+  StoreReportSegmentConfig: Model<unknown>;
 };
 
 let cached: LZFoodModels | null = null;
@@ -180,6 +182,11 @@ export function registerLZFoodModels(conn: Connection): LZFoodModels {
     StoreWhatsAppConfigSchema,
     'store_whatsapp_configs',
   );
+  const StoreReportSegmentConfig = m(
+    'StoreReportSegmentConfig',
+    StoreReportSegmentConfigSchema,
+    'store_report_segment_configs',
+  );
 
   cached = {
     Store,
@@ -215,6 +222,7 @@ export function registerLZFoodModels(conn: Connection): LZFoodModels {
     NotificationTemplate,
     NotificationLog,
     StoreWhatsAppConfig,
+    StoreReportSegmentConfig,
   };
   return cached;
 }

@@ -840,6 +840,7 @@
     "topupCardsTsvTextareaLabel": "Raw TSV (with header)",
     "orderHistory": "Order History",
     "reports": "Reports",
+    "reportSegments": "Category mix",
     "salesForecast": {
       "nav": "Prep forecast",
       "title": "Prep forecast",

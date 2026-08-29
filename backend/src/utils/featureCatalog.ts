@@ -16,6 +16,8 @@ export const FeatureKeys = {
   AdminReportsVatExportAction: 'admin.reports.vatExport.action',
   /** 管理端「备货预测」页（独立 addon；菜品份数，非总单数） */
   AdminSalesForecastPage: 'admin.salesForecast.page',
+  /** 管理端「品类结构」报表：按餐品目录分组统计营业额占比 */
+  AdminReportSegmentsPage: 'admin.reportSegments.page',
   AdminInventoryRestoreTimeAction: 'admin.inventory.restoreTime.action',
   /**
    * 统一的「库存追踪」总开关。覆盖：

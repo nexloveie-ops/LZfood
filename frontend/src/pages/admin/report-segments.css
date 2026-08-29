@@ -1,0 +1,341 @@
+/* 品类结构报表 — admin SaaS toolbar & chart controls */
+
+.rs-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.rs-page-header {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.rs-page-title {
+  margin: 0;
+  font-size: 1.35rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+}
+
+.rs-page-sub {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  max-width: 720px;
+}
+
+.rs-empty {
+  padding: 18px 20px;
+  font-size: 14px;
+  color: var(--text-secondary);
+  background: linear-gradient(180deg, var(--bg-white) 0%, #f8fafc 100%);
+}
+
+/* —— 查询工具栏 —— */
+.rs-toolbar {
+  padding: 0;
+  overflow: hidden;
+}
+
+.rs-toolbar-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 14px 18px 10px;
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+}
+
+.rs-toolbar-title {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.rs-range-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--portal-accent, #0369a1);
+  background: var(--portal-accent-soft, #e0f2fe);
+  border: 1px solid rgba(3, 105, 161, 0.12);
+}
+
+.rs-toolbar-body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px 14px;
+  padding: 14px 18px 16px;
+}
+
+.rs-toolbar-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px 12px;
+}
+
+.rs-toolbar-group--compare {
+  flex: 1 1 100%;
+  padding-top: 12px;
+  margin-top: 2px;
+  border-top: 1px dashed var(--border);
+}
+
+.rs-toolbar-group-label {
+  flex: 0 0 100%;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-light);
+  text-align: center;
+}
+
+.rs-field {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 5px;
+  min-width: 0;
+}
+
+.rs-field-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.rs-field .input {
+  min-height: 38px;
+  min-width: 132px;
+  width: 100%;
+  font-size: 13px;
+  border-radius: 10px;
+  border-color: var(--border);
+  background: var(--bg-white);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.rs-field--date .input {
+  min-width: 148px;
+}
+
+.rs-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 38px;
+  padding: 0 4px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.rs-switch-input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.rs-switch-track {
+  position: relative;
+  flex-shrink: 0;
+  width: 40px;
+  height: 22px;
+  border-radius: 999px;
+  background: #cbd5e1;
+  transition: background 0.2s ease;
+}
+
+.rs-switch-track::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.18);
+  transition: transform 0.2s ease;
+}
+
+.rs-switch-input:checked + .rs-switch-track {
+  background: linear-gradient(135deg, #0369a1 0%, #0891b2 100%);
+}
+
+.rs-switch-input:checked + .rs-switch-track::after {
+  transform: translateX(18px);
+}
+
+.rs-switch-input:focus-visible + .rs-switch-track {
+  box-shadow: 0 0 0 3px var(--portal-accent-soft, #e0f2fe);
+}
+
+.rs-toolbar-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: flex-end;
+}
+
+.rs-run-btn {
+  min-height: 38px;
+  min-width: 96px;
+  padding: 0 18px;
+  border-radius: 10px;
+  font-weight: 600;
+}
+
+/* —— 图表面板 —— */
+.rs-chart-panel {
+  padding: 0;
+  overflow: hidden;
+}
+
+.rs-chart-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+}
+
+.rs-chart-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.rs-segmented {
+  display: inline-flex;
+  padding: 3px;
+  border-radius: 10px;
+  background: #eef2f7;
+  border: 1px solid var(--border);
+}
+
+.rs-segmented-btn {
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 7px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.rs-segmented-btn:hover {
+  color: var(--text-primary);
+}
+
+.rs-segmented-btn.is-active {
+  background: var(--bg-white);
+  color: var(--portal-accent, #0369a1);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+}
+
+.rs-segment-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 18px 0;
+}
+
+.rs-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-white);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.rs-pill:hover {
+  border-color: #cbd5e1;
+  color: var(--text-primary);
+}
+
+.rs-pill.is-active {
+  border-color: rgba(3, 105, 161, 0.28);
+  background: var(--portal-accent-soft, #e0f2fe);
+  color: var(--portal-accent, #0369a1);
+  box-shadow: 0 1px 2px rgba(3, 105, 161, 0.08);
+}
+
+.rs-pill-input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.rs-pill-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.rs-chart-body {
+  padding: 12px 18px 16px;
+}
+
+.rs-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px 18px;
+  align-items: center;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.rs-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+@media (max-width: 720px) {
+  .rs-toolbar-actions {
+    margin-left: 0;
+    width: 100%;
+  }
+
+  .rs-run-btn {
+    width: 100%;
+  }
+}

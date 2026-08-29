@@ -2,7 +2,9 @@ import { Router, Request, Response, NextFunction } from 'express';
 import mongoose from 'mongoose';
 import { getModels } from '../getModels';
 import { authMiddleware, requirePermission } from '../middleware/auth';
+import { requireFeature } from '../middleware/featureAccess';
 import { createAppError } from '../middleware/errorHandler';
+import { FeatureKeys } from '../utils/featureCatalog';
 import { aggregateVatSalesByMonth } from '../utils/vatReportAggregation';
 import { buildVatReportPdfBuffer } from '../utils/vatReportPdf';
 import { checkoutCheckedOutFilterUtc, orderCreatedAtFilterUtc } from '../utils/reportDateRange';
@@ -13,6 +15,13 @@ import {
   deliveryFeeExcludedFromOrderNet,
   type ReportCheckoutLike,
 } from '../utils/reportNetRevenue';
+import {
+  computeSegmentBreakdown,
+  mapSegmentGroupsFromDoc,
+  queryUtcBoundsForZonedRange,
+  validateSegmentConfigPayload,
+  type SegmentBreakdownResult,
+} from '../utils/reportSegmentBreakdown';
 
 const router = Router();
 
@@ -619,6 +628,182 @@ router.get('/item-options', authMiddleware, requirePermission('report:view'), as
 
     res.json({ itemName, totalSold, withPaidOptions, totalOptionRevenue, options });
   } catch (err) { next(err); }
+});
+
+function segmentReportModels() {
+  return getModels() as {
+    StoreReportSegmentConfig: mongoose.Model<any>;
+    MenuCategory: mongoose.Model<any>;
+    MenuItem: mongoose.Model<any>;
+    Order: mongoose.Model<any>;
+  };
+}
+
+async function loadSegmentConfigResponse(storeId: mongoose.Types.ObjectId) {
+  const { StoreReportSegmentConfig, MenuCategory } = segmentReportModels();
+  const [config, categories] = await Promise.all([
+    StoreReportSegmentConfig.findOne({ storeId }).lean(),
+    MenuCategory.find({ storeId }).sort({ sortOrder: 1 }).lean(),
+  ]);
+
+  const catRows = (categories as { _id: mongoose.Types.ObjectId; translations?: { locale: string; name: string }[] }[]).map((c) => ({
+    _id: String(c._id),
+    nameZh: c.translations?.find((t) => t.locale === 'zh-CN')?.name ?? c.translations?.[0]?.name ?? '',
+    nameEn: c.translations?.find((t) => t.locale === 'en-US')?.name ?? '',
+  }));
+
+  return {
+    enabled: !!(config as { enabled?: boolean } | null)?.enabled,
+    groups: mapSegmentGroupsFromDoc(config as Parameters<typeof mapSegmentGroupsFromDoc>[0]),
+    categories: catRows,
+  };
+}
+
+async function loadEnabledSegmentConfig(storeId: mongoose.Types.ObjectId) {
+  const { StoreReportSegmentConfig } = segmentReportModels();
+  const doc = await StoreReportSegmentConfig.findOne({ storeId }).lean() as {
+    enabled?: boolean;
+    groups?: unknown[];
+  } | null;
+  if (!doc?.enabled) return null;
+  const groups = mapSegmentGroupsFromDoc(doc as Parameters<typeof mapSegmentGroupsFromDoc>[0]);
+  if (groups.length === 0) return null;
+  return { doc, groups };
+}
+
+function parseYmd(value: unknown, field: string): string {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    throw createAppError('VALIDATION_ERROR', `${field} 须为 YYYY-MM-DD`);
+  }
+  return value;
+}
+
+async function fetchSegmentOrders(
+  storeId: mongoose.Types.ObjectId,
+  from: string,
+  to: string,
+): Promise<unknown[]> {
+  const { Order } = segmentReportModels();
+  const { start, endExclusive } = queryUtcBoundsForZonedRange(from, to);
+  return Order.find({
+    storeId,
+    status: { $in: REPORT_STATS_ORDER_STATUSES },
+    createdAt: { $gte: start, $lt: endExclusive },
+  }).lean();
+}
+
+async function buildSegmentBreakdownForRange(
+  storeId: mongoose.Types.ObjectId,
+  groups: ReturnType<typeof mapSegmentGroupsFromDoc>,
+  from: string,
+  to: string,
+  granularity: 'day' | 'hour',
+): Promise<SegmentBreakdownResult> {
+  const { MenuItem } = segmentReportModels();
+  const [orders, items] = await Promise.all([
+    fetchSegmentOrders(storeId, from, to),
+    MenuItem.find({ storeId }).select('_id categoryId').lean(),
+  ]);
+  const itemCat = new Map(
+    (items as unknown as { _id: mongoose.Types.ObjectId; categoryId: mongoose.Types.ObjectId }[]).map((m) => [
+      String(m._id),
+      String(m.categoryId),
+    ]),
+  );
+  return computeSegmentBreakdown({
+    groups,
+    orders: orders as Parameters<typeof computeSegmentBreakdown>[0]['orders'],
+    itemCat,
+    from,
+    to,
+    granularity,
+  });
+}
+
+const segmentFeature = requireFeature(FeatureKeys.AdminReportSegmentsPage);
+
+// GET /api/reports/segment-config — 店铺管理员读取/编辑分组配置
+router.get('/segment-config', authMiddleware, requirePermission('report:view'), segmentFeature, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const storeId = requireStoreId(req);
+    res.json(await loadSegmentConfigResponse(storeId));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PUT /api/reports/segment-config — 店铺 owner 保存分组配置
+router.put('/segment-config', authMiddleware, requirePermission('menu:write'), segmentFeature, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const storeId = requireStoreId(req);
+    const { StoreReportSegmentConfig, MenuCategory } = segmentReportModels();
+    const categories = await MenuCategory.find({ storeId }).select('_id').lean();
+    const storeCategoryIds = new Set(categories.map((c) => String((c as { _id: mongoose.Types.ObjectId })._id)));
+
+    let normalized;
+    try {
+      normalized = validateSegmentConfigPayload(req.body, storeCategoryIds);
+    } catch (e) {
+      throw createAppError('VALIDATION_ERROR', e instanceof Error ? e.message : '配置无效');
+    }
+
+    const doc = await StoreReportSegmentConfig.findOneAndUpdate(
+      { storeId },
+      {
+        $set: {
+          enabled: normalized.enabled,
+          groups: normalized.groups,
+        },
+        $setOnInsert: { storeId },
+      },
+      { upsert: true, new: true },
+    ).lean() as { enabled?: boolean; groups?: unknown[] } | null;
+
+    res.json({
+      enabled: !!doc?.enabled,
+      groups: mapSegmentGroupsFromDoc(doc as Parameters<typeof mapSegmentGroupsFromDoc>[0]),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/reports/segment-breakdown
+router.get('/segment-breakdown', authMiddleware, requirePermission('report:view'), segmentFeature, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const storeId = requireStoreId(req);
+    const config = await loadEnabledSegmentConfig(storeId);
+    if (!config) {
+      throw createAppError('FORBIDDEN', '品类结构报表未开通');
+    }
+
+    const from = parseYmd(req.query.from, 'from');
+    const to = parseYmd(req.query.to, 'to');
+    if (from > to) {
+      throw createAppError('VALIDATION_ERROR', 'from 不能晚于 to');
+    }
+
+    const granularity = req.query.granularity === 'hour' ? 'hour' : 'day';
+
+    const primary = await buildSegmentBreakdownForRange(storeId, config.groups, from, to, granularity);
+
+    let compare: SegmentBreakdownResult | null = null;
+    const compareFrom = typeof req.query.compareFrom === 'string' ? req.query.compareFrom : '';
+    const compareTo = typeof req.query.compareTo === 'string' ? req.query.compareTo : '';
+    if (compareFrom && compareTo) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(compareFrom) || !/^\d{4}-\d{2}-\d{2}$/.test(compareTo)) {
+        throw createAppError('VALIDATION_ERROR', 'compareFrom/compareTo 须为 YYYY-MM-DD');
+      }
+      if (compareFrom > compareTo) {
+        throw createAppError('VALIDATION_ERROR', 'compareFrom 不能晚于 compareTo');
+      }
+      compare = await buildSegmentBreakdownForRange(storeId, config.groups, compareFrom, compareTo, granularity);
+    }
+
+    res.json({ primary, compare, groups: config.groups });
+  } catch (err) {
+    next(err);
+  }
 });
 
 export default router;
