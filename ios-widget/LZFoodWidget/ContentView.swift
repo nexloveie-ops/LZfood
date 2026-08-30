@@ -19,27 +19,46 @@ struct ContentView: View {
     }
 
     var body: some View {
-        ZStack {
-            AppTheme.background.ignoresSafeArea()
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 0) {
+                header
+                    .padding(.horizontal, 20)
+                    .padding(.top, 12)
+                    .padding(.bottom, 16)
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    header
-                    if !statusMessage.isEmpty { statusBanner }
-                    connectionCard
-                    dateCard
-                    actionButtons
-                    if let preview { previewCard(preview) }
-                    helpCard
+                if !statusMessage.isEmpty {
+                    statusBanner
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 12)
                 }
-                .padding(.horizontal, 20)
-                .padding(.bottom, 16)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
+
+                connectionCard
+                dateCard
+                actionButtons
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 16)
+
+                if let preview {
+                    previewCard(preview)
+                }
+
+                helpCard
+                    .padding(.horizontal, 20)
+                    .padding(.top, 8)
+                    .padding(.bottom, 24)
             }
-            .defaultScrollAnchor(.top)
-            .contentMargins(.top, 0, for: .scrollContent)
-            .padding(.top, -10)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
         }
+        .scrollContentBackground(.hidden)
+        .contentMargins(.zero, for: .scrollContent)
+        .contentMargins(.zero, for: .scrollIndicators)
+        .safeAreaPadding(.horizontal, 0)
+        .background {
+            AppTheme.background
+                .ignoresSafeArea()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(AppTheme.bgTop.ignoresSafeArea())
         .preferredColorScheme(.dark)
         .onAppear {
             baseURL = WidgetSettingsStore.baseURL
@@ -93,7 +112,8 @@ struct ContentView: View {
     private var connectionCard: some View {
         CardSection(
             "连接",
-            subtitle: "在 LZFOOD 管理端 → 餐馆信息 生成 Key。本地默认 http://127.0.0.1:8080"
+            subtitle: "在 LZFOOD 管理端 → 餐馆信息 生成 Key。本地默认 http://127.0.0.1:8080",
+            fullBleed: true
         ) {
             VStack(spacing: 14) {
                 ThemedField(title: "API Base URL", placeholder: "https://food.lztechserve.com", text: $baseURL)
@@ -105,7 +125,8 @@ struct ContentView: View {
     private var dateCard: some View {
         CardSection(
             "统计日期",
-            subtitle: "选「当天」每次刷新用今日；选「自定义」固定该日。修改后自动保存并刷新 Widget。"
+            subtitle: "选「当天」每次刷新用今日；选「自定义」固定该日。修改后自动保存并刷新 Widget。",
+            fullBleed: true
         ) {
             VStack(alignment: .leading, spacing: 14) {
                 Picker("统计日期", selection: $dateMode) {
@@ -119,6 +140,7 @@ struct ContentView: View {
                         customDate = WidgetReportDate.date(fromYmd: WidgetReportDate.dublinYesterdayYmd()) ?? Date()
                     }
                     persistAndReloadWidget()
+                    Task { await refreshPreviewSilently() }
                 }
 
                 if dateMode == .custom {
@@ -128,6 +150,7 @@ struct ContentView: View {
                         .foregroundStyle(AppTheme.primary)
                         .onChange(of: customDate) { _, _ in
                             persistAndReloadWidget()
+                            Task { await refreshPreviewSilently() }
                         }
                 }
 
@@ -141,6 +164,24 @@ struct ContentView: View {
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
                 .background(AppTheme.field, in: Capsule())
+
+                if !WidgetSettingsStore.appGroupAvailable {
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(AppTheme.error)
+                        Group {
+                            #if targetEnvironment(simulator)
+                            Text("App Group 未生效：Widget 读不到你在 App 里改的日期/API。请运行 ./ios-widget/run.sh 重新安装。")
+                            #else
+                            Text("真机 App Group 未共享：配置 App 里的日期不会同步到 Widget。请在主屏幕长按 Widget → 编辑 → 改「统计日期」。")
+                            #endif
+                        }
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.top, 4)
+                }
             }
         }
     }
@@ -152,7 +193,11 @@ struct ContentView: View {
                 disabled: apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ) {
                 persistAndReloadWidget()
-                statusMessage = "已保存，Widget 正在刷新（\(WidgetSettingsStore.reportDateYmd)）"
+                if WidgetSettingsStore.appGroupAvailable {
+                    statusMessage = "已保存，Widget 正在刷新（\(WidgetSettingsStore.reportDateYmd)）"
+                } else {
+                    statusMessage = "已保存。真机请在主屏幕长按 Widget → 编辑 修改统计日期"
+                }
                 statusIsError = false
             }
 
@@ -166,7 +211,7 @@ struct ContentView: View {
     }
 
     private func previewCard(_ snap: WidgetSnapshot) -> some View {
-        CardSection("数据预览", subtitle: "与 Widget 同源快照") {
+        CardSection("数据预览", subtitle: "与 Widget 同源快照", fullBleed: true) {
             VStack(alignment: .leading, spacing: 12) {
                 widgetMiniPreview(snap)
 
@@ -251,10 +296,16 @@ struct ContentView: View {
             Image(systemName: "square.grid.2x2")
                 .foregroundStyle(AppTheme.accent)
                 .font(.body)
-            Text("保存后回到主屏幕 → 长按 → 添加小组件 → LZFood Widget。")
-                .font(.footnote)
-                .foregroundStyle(AppTheme.dim)
-                .fixedSize(horizontal: false, vertical: true)
+            Group {
+                #if targetEnvironment(simulator)
+                Text("保存后回到主屏幕 → 长按 → 添加小组件 → LZFood Widget。")
+                #else
+                Text("真机：保存 API Key 后添加 Widget。改统计日期请长按 Widget → 编辑（配置 App 与 Widget 未共享时）。")
+                #endif
+            }
+            .font(.footnote)
+            .foregroundStyle(AppTheme.dim)
+            .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.horizontal, 4)
         .padding(.bottom, 12)
@@ -263,20 +314,30 @@ struct ContentView: View {
     private func persistAndReloadWidget() {
         let ymd = dateMode == .custom
             ? WidgetReportDate.ymdString(from: customDate)
-            : WidgetSettingsStore.reportDateYmd
+            : WidgetReportDate.dublinTodayYmd()
         WidgetSettingsStore.persistAll(
             baseURL: baseURL,
             apiKey: apiKey,
             dateMode: dateMode,
             customDateYmd: ymd,
         )
-        customDate = WidgetReportDate.date(fromYmd: ymd) ?? customDate
+        if dateMode == .custom {
+            customDate = WidgetReportDate.date(fromYmd: ymd) ?? customDate
+        }
         WidgetCenter.shared.reloadTimelines(ofKind: "LZFoodWidget")
+    }
+
+    private func fetchSnapshot() async throws -> WidgetSnapshot {
+        try await SnapshotClient.fetch(
+            baseURL: baseURL,
+            apiKey: apiKey,
+            reportDateYmd: pendingReportDateYmd,
+        )
     }
 
     private func refreshPreviewSilently() async {
         do {
-            let snap = try await SnapshotClient.fetch()
+            let snap = try await fetchSnapshot()
             preview = snap
             logoData = await StoreLogoLoader.fetchData(from: snap.store.logoUrl)
         } catch {
@@ -289,7 +350,7 @@ struct ContentView: View {
         defer { isTesting = false }
         persistAndReloadWidget()
         do {
-            let snap = try await SnapshotClient.fetch()
+            let snap = try await fetchSnapshot()
             preview = snap
             logoData = await StoreLogoLoader.fetchData(from: snap.store.logoUrl)
             statusMessage = "连接成功 · \(snap.date) · \(WidgetFormatters.euroString(snap.revenue.netTotal)) / \(snap.revenue.orderCount) 单"

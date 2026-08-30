@@ -1,10 +1,6 @@
 import { PDFDocument, StandardFonts, rgb, PageSizes, type Color, type PDFFont } from 'pdf-lib';
 import {
-  DRINK_VAT_RATE,
-  DRINK_VAT_RATE_LABEL,
-  FOOD_VAT_RATE,
-  FOOD_VAT_RATE_LABEL,
-  type MonthSalesBuckets,
+  type MonthTaxCategoryBuckets,
   type StoreInfoForVat,
 } from './vatReportAggregation';
 
@@ -13,7 +9,6 @@ function fmtEuroPdf(n: number): string {
   return `EUR ${n.toFixed(2)}`;
 }
 
-/** Strip/replace characters StandardFonts cannot encode (avoids pdf-lib WinAnsi errors). */
 function pdfSafeText(s: string): string {
   let out = '';
   for (const ch of s) {
@@ -24,7 +19,6 @@ function pdfSafeText(s: string): string {
   return out;
 }
 
-/** VAT PDF store block: English/Latin only — drop CJK and other non–Latin-1 symbols (no Chinese in PDF). */
 function storeFieldLatinPdf(s: string): string {
   let out = '';
   for (const ch of s) {
@@ -35,7 +29,6 @@ function storeFieldLatinPdf(s: string): string {
   return out.replace(/\s+/g, ' ').trim() || '-';
 }
 
-/** Column widths (ratios) scaled to exactly `total` points so the grid fills the content area. */
 function distributeWidths(total: number, ratios: number[]): number[] {
   const s = ratios.reduce((a, b) => a + b, 0);
   const floors = ratios.map((r) => Math.floor((total * r) / s));
@@ -65,7 +58,6 @@ function baselineFromTop(pageHeight: number, yTop: number, fontSize: number, pad
   return pageHeight - yTop - padTop - fontSize * 0.72;
 }
 
-/** Shrink font until string fits in width (avoids amounts overflowing narrow columns). */
 function fitTextWidth(text: string, maxW: number, font: PDFFont, fontBold: PDFFont, bold: boolean): { line: string; size: number } {
   const f = bold ? fontBold : font;
   let size = 9;
@@ -81,10 +73,9 @@ function fitTextWidth(text: string, maxW: number, font: PDFFont, fontBold: PDFFo
   return { line: ell, size: 7 };
 }
 
-/** Build PDF matching cashier VAT worksheet layout (A4). Uses pdf-lib (no on-disk font metrics). */
 export async function buildVatReportPdfBuffer(
   store: StoreInfoForVat,
-  byMonth: Map<string, MonthSalesBuckets>,
+  byMonth: Map<string, MonthTaxCategoryBuckets>,
   periodLabel: string,
 ): Promise<Buffer> {
   const sortedMonths = [...byMonth.keys()].sort();
@@ -100,7 +91,6 @@ export async function buildVatReportPdfBuffer(
   let pageHeight = page.getHeight();
   const margin = 36;
   const contentW = page.getWidth() - margin * 2;
-  /** Six columns; wider Sale/Tax/Net so long EUR amounts stay inside cells (fixes row overflow). */
   const colW = distributeWidths(Math.floor(contentW), [13, 22, 8, 19, 19, 19]);
   const x0 = margin;
   let yTop = margin;
@@ -185,6 +175,20 @@ export async function buildVatReportPdfBuffer(
     });
   }
 
+  function drawDataRow(cols: string[], fill?: Color) {
+    needVertical(rowH);
+    let cx = x0;
+    for (let i = 0; i < 6; i++) {
+      cellRect(cx, yTop, colW[i], rowH, fill);
+      cellText(cx, yTop, colW[i], rowH, cols[i] ?? '', {
+        align: i >= 3 ? 'right' : 'left',
+        shrink: i >= 3,
+      });
+      cx += colW[i];
+    }
+    yTop += rowH;
+  }
+
   needVertical(28);
   page.drawText('Store Information', {
     x: x0,
@@ -252,45 +256,44 @@ export async function buildVatReportPdfBuffer(
 
   for (const mk of sortedMonths) {
     const b = byMonth.get(mk)!;
-    const food = splitVat(b.foodGross, FOOD_VAT_RATE);
-    const drink = splitVat(b.drinkGross, DRINK_VAT_RATE);
-    const monthSale = b.foodGross + b.drinkGross;
-    const monthTax = food.vat + drink.vat;
-    const monthNet = food.net + drink.net;
+    let monthSale = 0;
+    let monthTax = 0;
+    let monthNet = 0;
+
+    for (const line of b.lines) {
+      const split = splitVat(line.grossIncl, line.rate);
+      monthSale += line.grossIncl;
+      monthTax += split.vat;
+      monthNet += split.net;
+    }
     reportSale += monthSale;
     reportTax += monthTax;
     reportNet += monthNet;
 
-    needVertical(rowH * 4 + 8);
+    const activeLines = b.lines.filter((l) => l.grossIncl > 0);
+    const monthBlockH = rowH * (2 + Math.max(activeLines.length, 1));
+    needVertical(monthBlockH);
 
     cx = x0;
     cellRect(cx, yTop, contentW, rowH, monthFill);
     cellText(cx, yTop, contentW, rowH, mk, { bold: true, align: 'left' });
     yTop += rowH;
 
-    cx = x0;
-    const foodRow = ['', 'Food VAT', FOOD_VAT_RATE_LABEL, fmtEuroPdf(b.foodGross), fmtEuroPdf(food.vat), fmtEuroPdf(food.net)];
-    for (let i = 0; i < 6; i++) {
-      cellRect(cx, yTop, colW[i], rowH);
-      cellText(cx, yTop, colW[i], rowH, foodRow[i], {
-        align: i >= 3 ? 'right' : 'left',
-        shrink: i >= 3,
-      });
-      cx += colW[i];
+    if (activeLines.length === 0) {
+      drawDataRow(['', '(no sales)', '', fmtEuroPdf(0), fmtEuroPdf(0), fmtEuroPdf(0)]);
+    } else {
+      for (const line of activeLines) {
+        const split = splitVat(line.grossIncl, line.rate);
+        drawDataRow([
+          '',
+          storeFieldLatinPdf(line.nameEn || 'Unnamed'),
+          line.rateLabel,
+          fmtEuroPdf(line.grossIncl),
+          fmtEuroPdf(split.vat),
+          fmtEuroPdf(split.net),
+        ]);
+      }
     }
-    yTop += rowH;
-
-    cx = x0;
-    const drinkRow = ['', 'Drink VAT', DRINK_VAT_RATE_LABEL, fmtEuroPdf(b.drinkGross), fmtEuroPdf(drink.vat), fmtEuroPdf(drink.net)];
-    for (let i = 0; i < 6; i++) {
-      cellRect(cx, yTop, colW[i], rowH);
-      cellText(cx, yTop, colW[i], rowH, drinkRow[i], {
-        align: i >= 3 ? 'right' : 'left',
-        shrink: i >= 3,
-      });
-      cx += colW[i];
-    }
-    yTop += rowH;
 
     cx = x0;
     cellRect(cx, yTop, colW[0], rowH, totalMonthFill);
@@ -324,7 +327,8 @@ export async function buildVatReportPdfBuffer(
   cellText(cx + colW[0] + colW[1] + colW[2] + colW[3] + colW[4], yTop, colW[5], rowH, fmtEuroPdf(reportNet), { align: 'right', bold: true, shrink: true });
   yTop += rowH;
 
-  const footerText = `Period: ${periodSafe} | VAT-inclusive sales (shop): Food ${FOOD_VAT_RATE_LABEL}, Drink ${DRINK_VAT_RATE_LABEL}. Delivery fees excluded (driver-collected). Drink = category name contains drink/beverage.`;
+  const footerText =
+    `Period: ${periodSafe} | VAT-inclusive shop sales by configured tax categories. Delivery fees excluded. Computed at export time from current category assignments.`;
   page.drawText(pdfSafeText(footerText), {
     x: x0,
     y: margin,

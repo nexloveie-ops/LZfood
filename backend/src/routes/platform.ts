@@ -118,6 +118,7 @@ const DEFAULT_PLAN_PRESETS: Array<{ name: string; code: string; description: str
       FeatureKeys.AdminCouponsPage,
       FeatureKeys.AdminOrderHistoryPage,
       FeatureKeys.AdminReportsVatExportAction,
+      FeatureKeys.AdminTaxManagementPage,
       FeatureKeys.AdminInventoryRestoreTimeAction,
     ],
   },
@@ -133,6 +134,7 @@ const DEFAULT_PLAN_PRESETS: Array<{ name: string; code: string; description: str
       FeatureKeys.AdminCouponsPage,
       FeatureKeys.AdminOrderHistoryPage,
       FeatureKeys.AdminReportsVatExportAction,
+      FeatureKeys.AdminTaxManagementPage,
       FeatureKeys.AdminInventoryRestoreTimeAction,
     ],
   },
@@ -142,8 +144,8 @@ const DEFAULT_ADDON_PRESETS: Array<{ name: string; code: string; description: st
   {
     name: 'VAT Export',
     code: 'vat-export',
-    description: '开启 VAT 报表导出',
-    features: [FeatureKeys.AdminReportsVatExportAction],
+    description: 'VAT 报表导出与税务管理（税务分类、目录分配）',
+    features: [FeatureKeys.AdminReportsVatExportAction, FeatureKeys.AdminTaxManagementPage],
   },
   {
     name: 'Post-order Ads',

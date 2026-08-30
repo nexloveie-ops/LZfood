@@ -39,6 +39,21 @@ enum WidgetReportDate {
         comps.hour = 12
         return dublinCalendar.date(from: comps)
     }
+
+    /** 下一次 Europe/Dublin 日界（00:00） */
+    static func nextDublinMidnight(after refDate: Date = Date()) -> Date? {
+        let todayYmd = ymdString(from: refDate)
+        guard let noon = date(fromYmd: todayYmd) else { return nil }
+        guard var comps = dublinCalendar.dateComponents([.year, .month, .day], from: noon) as DateComponents? else {
+            return nil
+        }
+        comps.day = (comps.day ?? 0) + 1
+        comps.hour = 0
+        comps.minute = 0
+        comps.second = 0
+        comps.timeZone = dublinTimeZone
+        return dublinCalendar.date(from: comps)
+    }
 }
 
 enum WidgetDateMode: String, CaseIterable, Identifiable, Codable {

@@ -24,6 +24,7 @@ const sidebarItems = [
   { path: 'members', icon: '👤', key: 'admin.membersNav', featureKey: 'cashier.member.wallet' },
   { path: 'orders', icon: '📋', key: 'admin.orderHistory', featureKey: 'admin.orderHistory.page' },
   { path: 'reports', icon: '📊', key: 'admin.reports' },
+  { path: 'tax-management', icon: '🧾', key: 'admin.taxManagement', featureKeys: ['admin.taxManagement.page', 'admin.reports.vatExport.action'] },
   { path: 'report-segments', icon: '📈', key: 'admin.reportSegments', featureKey: 'admin.reportSegments.page' },
   { path: 'sales-forecast', icon: '📈', key: 'admin.salesForecast.nav', featureKey: 'admin.salesForecast.page' },
   { path: 'business-hours', icon: '🕒', key: 'admin.businessHours' },
@@ -69,7 +70,9 @@ export default function AdminLayout() {
         <nav className="admin-saas-nav" aria-label={t('admin.title')}>
           {sidebarItems
             .filter((item) => {
-              if ('featureKey' in item && item.featureKey && !hasFeature(item.featureKey)) return false;
+              if ('featureKeys' in item && Array.isArray(item.featureKeys)) {
+                if (!item.featureKeys.some((k) => hasFeature(k))) return false;
+              } else if ('featureKey' in item && item.featureKey && !hasFeature(item.featureKey)) return false;
               return true;
             })
             .map((item) => (

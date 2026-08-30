@@ -19,3 +19,4 @@ ios-widget/*.xcodeproj
 ios-widget/*.xcworkspace
 ios-widget/xcuserdata/
 ios-widget/Shared/WidgetLocalDefaults.swift
+ios-widget/.signing.env

@@ -1,3 +1,4 @@
+import AppIntents
 import WidgetKit
 import SwiftUI
 
@@ -17,7 +18,10 @@ struct SnapshotEntry: TimelineEntry {
     }
 }
 
-struct SnapshotProvider: TimelineProvider {
+struct SnapshotProvider: AppIntentTimelineProvider {
+    typealias Entry = SnapshotEntry
+    typealias Intent = WidgetSnapshotIntent
+
     func placeholder(in context: Context) -> SnapshotEntry {
         SnapshotEntry(
             date: .now,
@@ -27,31 +31,37 @@ struct SnapshotProvider: TimelineProvider {
         )
     }
 
-    func getSnapshot(in context: Context, completion: @escaping (SnapshotEntry) -> Void) {
+    func snapshot(for configuration: WidgetSnapshotIntent, in context: Context) async -> SnapshotEntry {
         if context.isPreview {
-            completion(placeholder(in: context))
-            return
+            return placeholder(in: context)
         }
-        Task {
-            let entry = await loadEntry()
-            completion(entry)
-        }
+        return await loadEntry(for: configuration)
     }
 
-    func getTimeline(in context: Context, completion: @escaping (Timeline<SnapshotEntry>) -> Void) {
-        Task {
-            let entry = await loadEntry()
-            let next = Calendar.current.date(byAdding: .minute, value: 5, to: .now) ?? .now.addingTimeInterval(300)
-            completion(Timeline(entries: [entry], policy: .after(next)))
-        }
+    func timeline(for configuration: WidgetSnapshotIntent, in context: Context) async -> Timeline<SnapshotEntry> {
+        let entry = await loadEntry(for: configuration)
+        let next = nextReloadDate(for: configuration)
+        return Timeline(entries: [entry], policy: .after(next))
     }
 
-    private func loadEntry() async -> SnapshotEntry {
+    /** 每 5 分钟刷新；「当天」模式额外在 Dublin 0 点切换日期 */
+    private func nextReloadDate(for configuration: WidgetSnapshotIntent) -> Date {
+        let fiveMinutes = Calendar.current.date(byAdding: .minute, value: 5, to: .now)
+            ?? .now.addingTimeInterval(300)
+        guard WidgetReportDateResolver.usesTodayMode(intent: configuration),
+              let midnight = WidgetReportDate.nextDublinMidnight() else {
+            return fiveMinutes
+        }
+        return min(fiveMinutes, midnight)
+    }
+
+    private func loadEntry(for configuration: WidgetSnapshotIntent) async -> SnapshotEntry {
         guard WidgetSettingsStore.isConfigured else {
             return SnapshotEntry(date: .now, snapshot: nil, logoData: nil, errorMessage: "打开 App 配置 API Key")
         }
+        let ymd = WidgetReportDateResolver.reportDateYmd(intent: configuration)
         do {
-            let snap = try await SnapshotClient.fetch()
+            let snap = try await SnapshotClient.fetch(reportDateYmd: ymd)
             let logoData = await StoreLogoLoader.fetchData(from: snap.store.logoUrl)
             return SnapshotEntry(date: .now, snapshot: snap, logoData: logoData, errorMessage: nil)
         } catch {

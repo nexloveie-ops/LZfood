@@ -15,6 +15,7 @@ import { RawMaterialSchema } from '../models/RawMaterial';
 import mongoose from 'mongoose';
 import { StoreSchema } from './Store';
 import { StoreReportSegmentConfigSchema } from './StoreReportSegmentConfig';
+import { TaxCategorySchema } from './TaxCategory';
 import { StoreWidgetApiKeySchema } from './StoreWidgetApiKey';
 import { AdminAuditLogSchema } from './AdminAuditLog';
 import { LZFoodAdminSchema } from './LZFoodAdmin';
@@ -104,6 +105,7 @@ export type LZFoodModels = {
   NotificationLog: Model<unknown>;
   StoreWhatsAppConfig: Model<unknown>;
   StoreReportSegmentConfig: Model<unknown>;
+  TaxCategory: Model<unknown>;
   StoreWidgetApiKey: Model<unknown>;
 };
 
@@ -189,6 +191,7 @@ export function registerLZFoodModels(conn: Connection): LZFoodModels {
     StoreReportSegmentConfigSchema,
     'store_report_segment_configs',
   );
+  const TaxCategory = m('TaxCategory', TaxCategorySchema, 'tax_categories');
   const StoreWidgetApiKey = m(
     'StoreWidgetApiKey',
     StoreWidgetApiKeySchema,
@@ -230,6 +233,7 @@ export function registerLZFoodModels(conn: Connection): LZFoodModels {
     NotificationLog,
     StoreWhatsAppConfig,
     StoreReportSegmentConfig,
+    TaxCategory,
     StoreWidgetApiKey,
   };
   return cached;

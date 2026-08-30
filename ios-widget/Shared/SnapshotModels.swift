@@ -115,14 +115,19 @@ enum SnapshotClient {
         return d
     }()
 
-    static func fetch(baseURL: String? = nil, apiKey: String? = nil) async throws -> WidgetSnapshot {
+    static func fetch(
+        baseURL: String? = nil,
+        apiKey: String? = nil,
+        reportDateYmd: String? = nil,
+    ) async throws -> WidgetSnapshot {
         let key = apiKey ?? WidgetSettingsStore.apiKey
         guard !key.isEmpty else { throw SnapshotClientError.notConfigured }
 
         let base = (baseURL ?? WidgetSettingsStore.baseURL).trimmingSuffix("/")
+        let ymd = reportDateYmd ?? WidgetSettingsStore.reportDateYmd
         var components = URLComponents(string: "\(base)/api/public/widget-snapshot")
         components?.queryItems = [
-            URLQueryItem(name: "date", value: WidgetSettingsStore.reportDateYmd),
+            URLQueryItem(name: "date", value: ymd),
         ]
         guard let url = components?.url else {
             throw SnapshotClientError.badURL

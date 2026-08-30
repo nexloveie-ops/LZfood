@@ -14,6 +14,8 @@ export const FeatureKeys = {
   /** 管理端「客人通知」页 + 订单短信/WhatsApp 提醒（电话单/送餐） */
   AdminCustomerNotificationsPage: 'admin.customerNotifications.page',
   AdminReportsVatExportAction: 'admin.reports.vatExport.action',
+  /** 管理端「税务管理」：税务分类 + 目录分配（与 VAT 导出同一 addon） */
+  AdminTaxManagementPage: 'admin.taxManagement.page',
   /** 管理端「备货预测」页（独立 addon；菜品份数，非总单数） */
   AdminSalesForecastPage: 'admin.salesForecast.page',
   /** 管理端「品类结构」报表：按餐品目录分组统计营业额占比 */
@@ -88,6 +90,12 @@ export async function resolveStoreEffectiveFeatures(storeId: mongoose.Types.Obje
   if (out.has('inventory.tracking') || LEGACY_INV.some((k) => out.has(k))) {
     out.add('inventory.tracking');
     for (const k of LEGACY_INV) out.add(k);
+  }
+
+  /** VAT 导出与税务管理同一 addon；旧 plan/addon 可能只有其一，自动补齐 */
+  const VAT_BUNDLE = [FeatureKeys.AdminReportsVatExportAction, FeatureKeys.AdminTaxManagementPage];
+  if (VAT_BUNDLE.some((k) => out.has(k))) {
+    for (const k of VAT_BUNDLE) out.add(k);
   }
 
   return out;

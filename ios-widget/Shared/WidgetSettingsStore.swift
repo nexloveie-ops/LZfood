@@ -1,7 +1,7 @@
 import Foundation
 
 enum WidgetSettingsKeys {
-    static let appGroup = "group.com.lztechserve.lzfood.widget"
+    static let appGroup = "group.com.nexloveie.lzfood.widget"
     static let baseURL = "lzfood.widget.baseURL"
     static let apiKey = "lzfood.widget.apiKey"
     static let dateMode = "lzfood.widget.dateMode"
@@ -19,6 +19,11 @@ private struct WidgetSharedConfig: Codable {
 enum WidgetSettingsStore {
     private static var defaults: UserDefaults? {
         UserDefaults(suiteName: WidgetSettingsKeys.appGroup)
+    }
+
+    /** App 与 Widget 扩展能否通过 App Group 共享配置 */
+    static var appGroupAvailable: Bool {
+        FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: WidgetSettingsKeys.appGroup) != nil
     }
 
     private static var configFileURL: URL? {
@@ -39,6 +44,8 @@ enum WidgetSettingsStore {
     private static func saveFileConfig(_ cfg: WidgetSharedConfig) {
         guard let url = configFileURL else { return }
         guard let data = try? JSONEncoder().encode(cfg) else { return }
+        let dir = url.deletingLastPathComponent()
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         try? data.write(to: url, options: .atomic)
     }
 

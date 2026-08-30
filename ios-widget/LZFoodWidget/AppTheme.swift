@@ -25,11 +25,13 @@ enum AppTheme {
 struct CardSection<Content: View>: View {
     let title: String
     let subtitle: String?
+    var fullBleed = false
     @ViewBuilder var content: Content
 
-    init(_ title: String, subtitle: String? = nil, @ViewBuilder content: () -> Content) {
+    init(_ title: String, subtitle: String? = nil, fullBleed: Bool = false, @ViewBuilder content: () -> Content) {
         self.title = title
         self.subtitle = subtitle
+        self.fullBleed = fullBleed
         self.content = content()
     }
 
@@ -48,12 +50,23 @@ struct CardSection<Content: View>: View {
             }
             content
         }
-        .padding(16)
+        .padding(.horizontal, fullBleed ? 20 : 16)
+        .padding(.vertical, 16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(AppTheme.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .background(AppTheme.card)
+        .overlay(alignment: .bottom) {
+            if fullBleed {
+                Rectangle()
+                    .fill(AppTheme.cardBorder)
+                    .frame(height: 1)
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: fullBleed ? 0 : 16, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .strokeBorder(AppTheme.cardBorder, lineWidth: 1)
+            if !fullBleed {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .strokeBorder(AppTheme.cardBorder, lineWidth: 1)
+            }
         }
     }
 }

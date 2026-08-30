@@ -8,6 +8,7 @@ const CategoryTranslationSchema = new mongoose.Schema({
 const MenuCategorySchema = new mongoose.Schema({
   sortOrder: { type: Number, required: true },
   translations: [CategoryTranslationSchema],
+  taxCategoryId: { type: mongoose.Schema.Types.ObjectId, ref: 'TaxCategory', default: null },
 }, { timestamps: true });
 
 export { MenuCategorySchema, CategoryTranslationSchema };

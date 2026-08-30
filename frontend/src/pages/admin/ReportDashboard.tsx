@@ -1,6 +1,8 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Link, useParams } from 'react-router-dom';
 import { apiFetch } from '../../api/client';
+import { useAuth } from '../../context/AuthContext';
 
 interface TopItem {
   itemName: string;
@@ -128,12 +130,17 @@ function getWeekRange(): { start: string; end: string } {
 
 export default function ReportDashboard() {
   const { t } = useTranslation();
+  const { hasFeature } = useAuth();
+  const { storeSlug } = useParams<{ storeSlug: string }>();
+  const canExportVat = hasFeature('admin.reports.vatExport.action');
+  const canManageTax = hasFeature('admin.taxManagement.page') || canExportVat;
 
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [stats, setStats] = useState<DetailedStats | null>(null);
   const [loading, setLoading] = useState(false);
   const [pdfExporting, setPdfExporting] = useState(false);
+  const [vatReadiness, setVatReadiness] = useState<{ ready: boolean; unassignedCategories: { name: string }[] } | null>(null);
 
   // Modal state
   const [modalConfig, setModalConfig] = useState<ModalConfig | null>(null);
@@ -150,6 +157,14 @@ export default function ReportDashboard() {
     setStartDate(start);
     setEndDate(end);
   }, []);
+
+  useEffect(() => {
+    if (!canExportVat) return;
+    void (async () => {
+      const res = await apiFetch('/api/admin/tax-categories/export-readiness');
+      if (res.ok) setVatReadiness(await res.json());
+    })();
+  }, [canExportVat]);
 
   const fetchStats = useCallback(async () => {
     if (!startDate || !endDate) return;
@@ -330,15 +345,39 @@ export default function ReportDashboard() {
         <button className="btn btn-primary" onClick={fetchStats} disabled={loading || !startDate || !endDate}>
           {loading ? t('common.loading') : t('common.search')}
         </button>
-        <button
-          type="button"
-          className="btn btn-outline"
-          onClick={exportVatPdf}
-          disabled={pdfExporting || !startDate || !endDate}
-        >
-          {pdfExporting ? t('common.loading') : t('admin.exportVatPdf')}
-        </button>
+        {canExportVat && (
+          <>
+            <button
+              type="button"
+              className="btn btn-outline"
+              onClick={exportVatPdf}
+              disabled={pdfExporting || !startDate || !endDate || vatReadiness?.ready === false}
+              title={vatReadiness?.ready === false ? t('admin.taxMgmtNotReady') : undefined}
+            >
+              {pdfExporting ? t('common.loading') : t('admin.exportVatPdf')}
+            </button>
+            {canManageTax && (
+              <Link className="btn btn-outline" to={`/${storeSlug}/admin/tax-management`}>
+                {t('admin.taxManagement')}
+              </Link>
+            )}
+          </>
+        )}
       </div>
+
+      {canExportVat && vatReadiness && !vatReadiness.ready && (
+        <div className="card" style={{ padding: 14, marginBottom: 16, borderLeft: '4px solid #ef6c00' }}>
+          <strong>{t('admin.taxMgmtNotReady')}</strong>
+          {vatReadiness.unassignedCategories?.length > 0 && (
+            <p style={{ margin: '8px 0 0', fontSize: 14 }}>
+              {t('admin.taxMgmtUnassigned')}: {vatReadiness.unassignedCategories.map((c) => c.name).join('、')}
+            </p>
+          )}
+          <p style={{ margin: '8px 0 0', fontSize: 14 }}>
+            <Link to={`/${storeSlug}/admin/tax-management`}>{t('admin.taxManagement')}</Link>
+          </p>
+        </div>
+      )}
 
       {/* Stats display */}
       {stats && (

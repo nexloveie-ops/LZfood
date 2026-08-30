@@ -35,6 +35,8 @@ ensure_xcodegen() {
 generate_project() {
   log "Generating Xcode project..."
   "$XCODEGEN" generate --spec project.yml
+  log "Simulator build: enabling App Groups..."
+  bash "$ROOT/scripts/entitlements-app-group.sh" enable
 }
 
 resolve_sim_udid() {
@@ -68,7 +70,7 @@ install_and_launch() {
   local udid="$1"
   local app="$2"
   log "Uninstalling previous app (clean reinstall)..."
-  xcrun simctl uninstall "$udid" com.lztechserve.lzfood.widget 2>/dev/null || true
+  xcrun simctl uninstall "$udid" com.nexloveie.lzfood.widget 2>/dev/null || true
   log "Installing app..."
   xcrun simctl install "$udid" "$app"
 
@@ -79,7 +81,7 @@ install_and_launch() {
   fi
 
   log "Launching LZFoodWidget..."
-  xcrun simctl launch "$udid" com.lztechserve.lzfood.widget || true
+  xcrun simctl launch "$udid" com.nexloveie.lzfood.widget || true
 
   cat <<EOF
 

@@ -5,7 +5,7 @@ import { authMiddleware, requirePermission } from '../middleware/auth';
 import { requireFeature } from '../middleware/featureAccess';
 import { createAppError } from '../middleware/errorHandler';
 import { FeatureKeys } from '../utils/featureCatalog';
-import { aggregateVatSalesByMonth } from '../utils/vatReportAggregation';
+import { aggregateVatSalesByMonth, assertVatExportReady, checkVatExportReadiness } from '../utils/vatReportAggregation';
 import { buildVatReportPdfBuffer } from '../utils/vatReportPdf';
 import { checkoutCheckedOutFilterUtc, orderCreatedAtFilterUtc } from '../utils/reportDateRange';
 import { deliveryFeePortionEuro } from '../utils/orderPayableTotal';
@@ -559,14 +559,22 @@ router.get('/detailed', authMiddleware, requirePermission('report:view'), async 
   }
 });
 
-// GET /api/reports/vat-pdf?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD — VAT worksheet PDF (IE Food 9% / Drink 23%)
-router.get('/vat-pdf', authMiddleware, requirePermission('report:view'), async (req: Request, res: Response, next: NextFunction) => {
+// GET /api/reports/vat-pdf?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD — VAT worksheet PDF (by tax categories)
+router.get(
+  '/vat-pdf',
+  authMiddleware,
+  requirePermission('report:view'),
+  requireFeature(FeatureKeys.AdminReportsVatExportAction),
+  async (req: Request, res: Response, next: NextFunction) => {
   try {
     const storeId = requireStoreId(req);
     const { startDate, endDate } = req.query;
     if (!startDate || !endDate || typeof startDate !== 'string' || typeof endDate !== 'string') {
       throw createAppError('VALIDATION_ERROR', 'startDate and endDate are required (YYYY-MM-DD)');
     }
+
+    const readiness = await checkVatExportReadiness(storeId);
+    assertVatExportReady(readiness);
 
     const { byMonth, storeInfo } = await aggregateVatSalesByMonth(storeId, startDate, endDate);
     const buf = await buildVatReportPdfBuffer(storeInfo, byMonth, `${startDate} - ${endDate}`);
@@ -576,7 +584,8 @@ router.get('/vat-pdf', authMiddleware, requirePermission('report:view'), async (
   } catch (err) {
     next(err);
   }
-});
+  },
+);
 
 // GET /api/reports/item-options?itemName=xxx&startDate=xxx&endDate=xxx
 // Returns paid option stats for a specific menu item

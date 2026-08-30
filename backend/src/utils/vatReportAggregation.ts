@@ -2,23 +2,32 @@ import mongoose from 'mongoose';
 import { getModels } from '../getModels';
 import { orderCreatedAtFilterUtc } from './reportDateRange';
 import { bundleAdjustedLineTotals, lineGrossEuro, type LineLikeForBundle } from './bundleLineAllocation';
+import { categoryDisplayName, taxCategoryEnglishName, vatRateLabel } from './taxCategoryHelpers';
+import { createAppError } from '../middleware/errorHandler';
 
-/** Ireland reduced food rate (VAT-inclusive split). Was 13.5%; hospitality food now 9%. */
-export const FOOD_VAT_RATE = 0.09;
-export const DRINK_VAT_RATE = 0.23;
-/** Display label for Food VAT column / footer (derived from FOOD_VAT_RATE). */
-export const FOOD_VAT_RATE_LABEL = `${(FOOD_VAT_RATE * 100).toFixed(FOOD_VAT_RATE * 100 % 1 === 0 ? 0 : 1)}%`;
-export const DRINK_VAT_RATE_LABEL = `${(DRINK_VAT_RATE * 100).toFixed(DRINK_VAT_RATE * 100 % 1 === 0 ? 0 : 1)}%`;
-/** Delivery charges treated same as food rate for VAT worksheet (adjust if your accountant specifies otherwise). */
-export const DELIVERY_VAT_RATE = FOOD_VAT_RATE;
+export type TaxCategorySalesLine = {
+  taxCategoryId: string;
+  nameEn: string;
+  rate: number;
+  rateLabel: string;
+  grossIncl: number;
+};
 
-export type MonthSalesBuckets = { foodGross: number; drinkGross: number; deliveryGross: number };
+export type MonthTaxCategoryBuckets = {
+  lines: TaxCategorySalesLine[];
+};
+
+export type VatExportReadiness = {
+  ready: boolean;
+  taxCategoryCount: number;
+  unassignedCategories: { id: string; name: string }[];
+};
 
 /** Sum of VAT worksheet buckets (= PDF Report Total Sale, same date filter). */
-export function sumVatBucketTotals(byMonth: Map<string, MonthSalesBuckets>): number {
+export function sumVatBucketTotals(byMonth: Map<string, MonthTaxCategoryBuckets>): number {
   let v = 0;
   for (const b of byMonth.values()) {
-    v += b.foodGross + b.drinkGross + (b.deliveryGross ?? 0);
+    for (const line of b.lines) v += line.grossIncl;
   }
   return Math.round(v * 100) / 100;
 }
@@ -28,49 +37,6 @@ export function irelandMonthKey(d: Date): string {
   const y = parts.find((p) => p.type === 'year')?.value ?? '1970';
   const m = parts.find((p) => p.type === 'month')?.value ?? '01';
   return `${y}-${m}`;
-}
-
-export function isDrinkCategory(cat: { translations?: { name?: string }[] } | null | undefined): boolean {
-  if (!cat?.translations) return false;
-  for (const t of cat.translations) {
-    const n = (t.name || '').toLowerCase();
-    if (n.includes('drink') || n.includes('饮料')) return true;
-  }
-  return false;
-}
-
-/**
- * 当订单行无法关联到本店 MenuItem（例如历史导入、跨库 menuItemId）时，用语义关键词粗分饮料，
- * 避免整单全额落入 Food 桶导致 VAT PDF 与真实比例严重偏离。（仅为辅助，仍以分类为准。）
- */
-export function isDrinkItemName(itemName: string): boolean {
-  const s = itemName.trim();
-  if (!s) return false;
-  const lower = s.toLowerCase();
-  const keywordsEn = [
-    'drink',
-    'juice',
-    'tea',
-    'coffee',
-    'coke',
-    'cola',
-    'sprite',
-    'beer',
-    'wine',
-    'smoothie',
-    'latte',
-    'cappuccino',
-    'espresso',
-    'milkshake',
-    'soda',
-    'water',
-    'bob',
-    'bubble',
-    'soft drink',
-  ];
-  if (keywordsEn.some((k) => lower.includes(k))) return true;
-  const keywordsZh = ['饮料', '奶茶', '果汁', '可乐', '矿泉水', '啤酒', '红酒', '汽水', '咖啡', '英式奶茶', '柠檬茶', '豆浆'];
-  return keywordsZh.some((k) => s.includes(k));
 }
 
 export interface StoreInfoForVat {
@@ -104,12 +70,46 @@ export async function loadStoreInfoForVat(storeId: mongoose.Types.ObjectId): Pro
   };
 }
 
+/** 校验：至少一个税务分类；所有菜品目录均已分配。 */
+export async function checkVatExportReadiness(storeId: mongoose.Types.ObjectId): Promise<VatExportReadiness> {
+  const { TaxCategory, MenuCategory } = getModels() as {
+    TaxCategory: mongoose.Model<any>;
+    MenuCategory: mongoose.Model<any>;
+  };
+  const taxCategoryCount = await TaxCategory.countDocuments({ storeId });
+  const categories = (await MenuCategory.find({ storeId }).sort({ sortOrder: 1 }).lean()) as {
+    _id: mongoose.Types.ObjectId;
+    translations?: { locale: string; name: string }[];
+    taxCategoryId?: mongoose.Types.ObjectId | null;
+  }[];
+  const unassignedCategories = categories
+    .filter((c) => !c.taxCategoryId)
+    .map((c) => ({
+      id: String(c._id),
+      name: categoryDisplayName(c.translations, true) || String(c._id),
+    }));
+  return {
+    ready: taxCategoryCount > 0 && unassignedCategories.length === 0,
+    taxCategoryCount,
+    unassignedCategories,
+  };
+}
+
+export function assertVatExportReady(readiness: VatExportReadiness): void {
+  if (readiness.taxCategoryCount === 0) {
+    throw createAppError('VALIDATION_ERROR', '请先在税务管理中创建至少一个税务分类');
+  }
+  if (readiness.unassignedCategories.length > 0) {
+    const names = readiness.unassignedCategories.map((c) => c.name).join(', ');
+    throw createAppError('VALIDATION_ERROR', `以下菜品目录未分配税务分类，无法导出 VAT 报表：${names}`);
+  }
+}
+
 /** 订单/行/菜品文档 status 字段含 hide（不区分大小写）则不计入 VAT 销售额 */
 function statusContainsHide(status: unknown): boolean {
   return String(status ?? '').toLowerCase().includes('hide');
 }
 
-/** 嵌入式订单行往往没有 _id；若全部用 String(undefined) 会在 bundle Map 中冲突，导致 grandSum 极小、scale 爆表。 */
 function stableOrderLineKey(item: { _id?: unknown }, lineIndex: number): string {
   const raw = item._id != null ? String(item._id) : '';
   if (raw && raw !== 'undefined') return raw;
@@ -135,30 +135,49 @@ function itemToLineLike(
   };
 }
 
+type TaxCategoryDoc = {
+  _id: mongoose.Types.ObjectId;
+  sortOrder: number;
+  rate: number;
+  translations?: { locale: string; name: string }[];
+};
+
 /**
- * VAT worksheet（GET /api/reports/vat-pdf）：订单范围与 GET /api/reports/detailed 一致——按订单 createdAt（UTC 区间）且
- * status ∈ checked_out | completed | refunded，并排除 status 含 hide 的订单。按月键使用订单 createdAt 的爱尔兰日历月。
- * 注意：营业概览「净营业额」用结账账本 − 退款，不再用本函数桶合计，避免与支付方式净额重复体现退款。
- * 同一结账含多笔订单时，用「整单」做 bundle 分摊比例（与结账 totalAmount 一致），只把所选日期范围内订单的行计入 VAT 桶。
- * 送餐费行（delivery_fee）不计入 PDF / 桶合计——司机代收，非店铺 VAT 销售额。
- * 退款行（items.refunded）不计入桶——不进负数行，与营业报表「退单仅展示」口径一致。
- * status 含 hide 的订单整单跳过；行或关联 MenuItem 上若有 status 且含 hide，该行跳过。
+ * VAT worksheet：按订单 createdAt、税务分类（目录当前分配）汇总含税销售额。
+ * 未分配目录的行跳过；导出前须通过 checkVatExportReadiness。
  */
 export async function aggregateVatSalesByMonth(
   storeId: mongoose.Types.ObjectId,
   startDate: string,
   endDate: string,
-): Promise<{ byMonth: Map<string, MonthSalesBuckets>; storeInfo: StoreInfoForVat }> {
-  const { Checkout, Order, MenuItem, MenuCategory } = getModels() as {
+): Promise<{ byMonth: Map<string, MonthTaxCategoryBuckets>; storeInfo: StoreInfoForVat; taxCategories: TaxCategoryDoc[] }> {
+  const { Checkout, Order, MenuItem, MenuCategory, TaxCategory } = getModels() as {
     Checkout: mongoose.Model<any>;
     Order: mongoose.Model<any>;
     MenuItem: mongoose.Model<any>;
     MenuCategory: mongoose.Model<any>;
+    TaxCategory: mongoose.Model<any>;
   };
+
+  const storeInfo = await loadStoreInfoForVat(storeId);
+  const taxCategories = (await TaxCategory.find({ storeId }).sort({ sortOrder: 1 }).lean()) as unknown as TaxCategoryDoc[];
+  const taxMap = new Map(taxCategories.map((t) => [String(t._id), t]));
+
   const createdAt = orderCreatedAtFilterUtc(startDate, endDate);
-  if (!createdAt) {
-    return { byMonth: new Map<string, MonthSalesBuckets>(), storeInfo: await loadStoreInfoForVat(storeId) };
+  const byMonth = new Map<string, MonthTaxCategoryBuckets>();
+  if (!createdAt || taxCategories.length === 0) {
+    return { byMonth, storeInfo, taxCategories };
   }
+
+  const categories = (await MenuCategory.find({ storeId }).lean()) as {
+    _id: mongoose.Types.ObjectId;
+    taxCategoryId?: mongoose.Types.ObjectId | null;
+  }[];
+  const menuCatTaxMap = new Map(
+    categories
+      .filter((c) => c.taxCategoryId)
+      .map((c) => [String(c._id), String(c.taxCategoryId)]),
+  );
 
   const ordersInRangeRaw = (await Order.find({
     storeId,
@@ -169,11 +188,8 @@ export async function aggregateVatSalesByMonth(
     (o) => !statusContainsHide((o as { status?: unknown }).status),
   );
 
-  const storeInfo = await loadStoreInfoForVat(storeId);
-  const byMonth = new Map<string, MonthSalesBuckets>();
-
   if (ordersInRange.length === 0) {
-    return { byMonth, storeInfo };
+    return { byMonth, storeInfo, taxCategories };
   }
 
   const inRangeIdSet = new Set(ordersInRange.map((o) => String((o as { _id: unknown })._id)));
@@ -187,7 +203,7 @@ export async function aggregateVatSalesByMonth(
   }).lean();
 
   if (checkouts.length === 0) {
-    return { byMonth, storeInfo };
+    return { byMonth, storeInfo, taxCategories };
   }
 
   const allRefOrderIds = [
@@ -219,29 +235,27 @@ export async function aggregateVatSalesByMonth(
       : [];
   const menuMap = new Map((menuItems as any[]).map((m) => [String(m._id), m]));
 
-  const catIds = [
-    ...new Set(
-      menuItems
-        .map((m) => (m.categoryId ? m.categoryId.toString() : null))
-        .filter((id): id is string => Boolean(id && mongoose.isValidObjectId(id))),
-    ),
-  ];
-  const categories =
-    catIds.length > 0
-      ? await MenuCategory.find({
-          storeId,
-          _id: { $in: catIds.map((id) => new mongoose.Types.ObjectId(id)) },
-        }).lean()
-      : [];
-  const catMap = new Map((categories as any[]).map((c) => [String(c._id), c]));
-
   const orderById = new Map((allOrdersForCheckouts as any[]).map((o) => [String(o._id), o]));
 
-  function bump(monthKey: string, bucket: 'food' | 'drink', delta: number) {
-    if (!byMonth.has(monthKey)) byMonth.set(monthKey, { foodGross: 0, drinkGross: 0, deliveryGross: 0 });
-    const b = byMonth.get(monthKey)!;
-    if (bucket === 'drink') b.drinkGross += delta;
-    else b.foodGross += delta;
+  function ensureMonth(monthKey: string): MonthTaxCategoryBuckets {
+    if (!byMonth.has(monthKey)) {
+      byMonth.set(monthKey, {
+        lines: taxCategories.map((tc) => ({
+          taxCategoryId: String(tc._id),
+          nameEn: taxCategoryEnglishName(tc.translations),
+          rate: tc.rate,
+          rateLabel: vatRateLabel(tc.rate),
+          grossIncl: 0,
+        })),
+      });
+    }
+    return byMonth.get(monthKey)!;
+  }
+
+  function bump(monthKey: string, taxCategoryId: string, delta: number) {
+    const bucket = ensureMonth(monthKey);
+    const line = bucket.lines.find((l) => l.taxCategoryId === taxCategoryId);
+    if (line) line.grossIncl += delta;
   }
 
   for (const c of checkouts) {
@@ -278,26 +292,27 @@ export async function aggregateVatSalesByMonth(
         const raw = map.get(lineLike._id) ?? lineGrossEuro(lineLike);
         const amt = Math.round(raw * scale * 100) / 100;
         if (Math.abs(amt) < 1e-9) continue;
-        if ((item as { lineKind?: string }).lineKind === 'delivery_fee') {
-          // 送餐费：司机代收，不计入店铺 VAT  worksheet（仍参与上方 grandSum/scale，不改分摊）
-          continue;
-        }
+        if ((item as { lineKind?: string }).lineKind === 'delivery_fee') continue;
+
         const mid = (item as { menuItemId?: unknown }).menuItemId?.toString();
         const mi = mid ? menuMap.get(mid) : undefined;
         if (mi && statusContainsHide((mi as { status?: unknown }).status)) continue;
-        const itemNameStr = String((item as { itemName?: string }).itemName || '');
-        let drink: boolean;
-        if (mi && (mi as { categoryId?: { toString(): string } }).categoryId) {
-          const cat = catMap.get((mi as { categoryId: { toString(): string } }).categoryId.toString());
-          drink = isDrinkCategory(cat);
-        } else {
-          // 无本店菜品关联（导入旧数据等）：用语义回退，避免全额计入 Food
-          drink = isDrinkItemName(itemNameStr);
-        }
-        bump(monthKey, drink ? 'drink' : 'food', amt);
+        if (!mi || !(mi as { categoryId?: { toString(): string } }).categoryId) continue;
+
+        const catId = (mi as { categoryId: { toString(): string } }).categoryId.toString();
+        const taxCategoryId = menuCatTaxMap.get(catId);
+        if (!taxCategoryId || !taxMap.has(taxCategoryId)) continue;
+
+        bump(monthKey, taxCategoryId, amt);
       }
     }
   }
 
-  return { byMonth, storeInfo };
+  for (const bucket of byMonth.values()) {
+    for (const line of bucket.lines) {
+      line.grossIncl = Math.round(line.grossIncl * 100) / 100;
+    }
+  }
+
+  return { byMonth, storeInfo, taxCategories };
 }

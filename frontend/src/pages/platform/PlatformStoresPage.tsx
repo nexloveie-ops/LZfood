@@ -66,6 +66,7 @@ const FEATURE_GROUPS: {
       { key: 'admin.orderHistory.page', label: '管理员-订单历史' },
       { key: 'admin.customerNotifications.page', label: '管理员-客人通知（短信/WhatsApp）' },
       { key: 'admin.reports.vatExport.action', label: '报表-VAT 导出' },
+      { key: 'admin.taxManagement.page', label: '管理员-税务管理' },
       { key: 'admin.inventory.restoreTime.action', label: '库存-恢复供应时间' },
       { key: 'admin.salesForecast.page', label: '管理员-备货预测（菜品份数预测 / 回测与校准）' },
       { key: 'admin.reportSegments.page', label: '管理员-品类结构报表（按餐品目录分组统计营业额）' },

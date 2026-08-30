@@ -40,6 +40,7 @@ import I18nEditor from './pages/admin/I18nEditor';
 import QRCodeManager from './pages/admin/QRCodeManager';
 import OrderHistory from './pages/admin/OrderHistory';
 import ReportDashboard from './pages/admin/ReportDashboard';
+import TaxManagementPage from './pages/admin/TaxManagementPage';
 import ReportSegmentDashboard from './pages/admin/ReportSegmentDashboard';
 import SalesForecastPage from './pages/admin/SalesForecastPage';
 import UserManager from './pages/admin/UserManager';
@@ -125,13 +126,22 @@ function RequirePlatformAuth({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-function RequireFeature({ featureKey, children }: { featureKey: string; children: React.ReactNode }) {
+function RequireFeature({
+  featureKey,
+  alternateKeys = [],
+  children,
+}: {
+  featureKey: string;
+  alternateKeys?: string[];
+  children: React.ReactNode;
+}) {
   const { hasFeature, isAuthenticated, user, isStoreStaffSessionReady } = useAuth();
   const { storeSlug = '' } = useParams<{ storeSlug: string }>();
+  const allowed = hasFeature(featureKey) || alternateKeys.some((k) => hasFeature(k));
   if (!isAuthenticated) return <Navigate to={`/${storeSlug}/login`} replace />;
   if (user?.role !== 'platform_owner' && !isStoreStaffSessionReady) return null;
-  if (user?.role !== 'platform_owner' && !hasFeature(featureKey)) {
-    return <LogoutThenStoreLogin storeSlug={storeSlug} />;
+  if (user?.role !== 'platform_owner' && !allowed) {
+    return <Navigate to={`/${storeSlug}/admin/reports`} replace />;
   }
   return <>{children}</>;
 }
@@ -196,6 +206,7 @@ export default function App() {
               <Route path="qr-codes" element={<QRCodeManager />} />
               <Route path="orders" element={<RequireFeature featureKey="admin.orderHistory.page"><OrderHistory /></RequireFeature>} />
               <Route path="reports" element={<ReportDashboard />} />
+              <Route path="tax-management" element={<RequireFeature featureKey="admin.taxManagement.page" alternateKeys={['admin.reports.vatExport.action']}><TaxManagementPage /></RequireFeature>} />
               <Route path="report-segments" element={<RequireFeature featureKey="admin.reportSegments.page"><ReportSegmentDashboard /></RequireFeature>} />
               <Route path="sales-forecast" element={<RequireFeature featureKey="admin.salesForecast.page"><SalesForecastPage /></RequireFeature>} />
               <Route path="business-hours" element={<BusinessHours />} />
