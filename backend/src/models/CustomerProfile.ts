@@ -9,6 +9,7 @@ const CustomerProfileSchema = new mongoose.Schema(
     customerName: { type: String, default: '' },
     deliveryAddress: { type: String, default: '' },
     postalCode: { type: String, default: '' },
+    email: { type: String, default: '' },
     deliverySourceLast: { type: String, enum: ['phone', 'qr'], required: true },
     memberId: { type: mongoose.Schema.Types.ObjectId, ref: 'Member', default: null },
   },

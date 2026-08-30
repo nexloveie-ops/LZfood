@@ -37,6 +37,15 @@ import {
   TOPUP_CARD_CODE_LEN,
 } from '../utils/memberTopUpCard';
 import { isGtsConfigured, translateWithGts } from '../utils/googleTranslate';
+import {
+  aggregateDeliveryCustomers,
+  DELIVERY_CUSTOMER_ORDER_STATUSES,
+  mapDeliveryCustomerOrders,
+  type DeliveryCustomerRow,
+} from '../utils/deliveryCustomerStats';
+import { normalizeDeliveryAddressKey } from '../utils/customerProfileDelivery';
+import { normalizeMemberPhone, customerPhoneMatchCandidates, expandOrderPhoneQueryVariants } from '../utils/memberWalletOps';
+import { generateWidgetApiKey } from '../utils/widgetApiKey';
 
 function adminModels() {
   return getModels() as {
@@ -1145,6 +1154,285 @@ router.delete('/users/:id', ...requireAuthSameStore, requirePermission('admin:us
     next(err);
   }
 });
+
+function adminOrderModels() {
+  return getModels() as {
+    Order: mongoose.Model<any>;
+    Checkout: mongoose.Model<any>;
+    CustomerProfile: mongoose.Model<any>;
+  };
+}
+
+async function deliveryCustomerCheckoutMap(storeId: mongoose.Types.ObjectId, orderIds: mongoose.Types.ObjectId[]) {
+  const { Checkout } = adminOrderModels();
+  const checkouts =
+    orderIds.length > 0
+      ? await Checkout.find({ storeId, orderIds: { $in: orderIds } }).lean()
+      : [];
+  const checkoutByOrderId = new Map<string, { totalAmount?: number; paymentMethod?: string }>();
+  for (const c of checkouts) {
+    const row = c as { totalAmount?: number; paymentMethod?: string; orderIds?: mongoose.Types.ObjectId[] };
+    for (const oid of row.orderIds || []) {
+      checkoutByOrderId.set(oid.toString(), {
+        totalAmount: row.totalAmount,
+        paymentMethod: row.paymentMethod,
+      });
+    }
+  }
+  return checkoutByOrderId;
+}
+
+function mergeProfileEmailsIntoCustomers(
+  customers: DeliveryCustomerRow[],
+  profiles: { phoneNorm?: string; email?: string; updatedAt?: Date }[],
+): DeliveryCustomerRow[] {
+  const emailByPhone = new Map<string, string>();
+  for (const p of profiles) {
+    const ph = String(p.phoneNorm || '').trim();
+    const em = String(p.email || '').trim();
+    if (ph && em) emailByPhone.set(ph, em);
+  }
+  return customers.map((c) => ({
+    ...c,
+    email: emailByPhone.get(c.phoneNorm) || c.email || '',
+  }));
+}
+
+// GET /api/admin/delivery-customers — 送餐客户汇总（按手机号）
+router.get(
+  '/delivery-customers',
+  ...requireAuthSameStore,
+  requireFeature(FeatureKeys.CashierDeliveryPage),
+  requirePermission('config:read'),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const storeId = req.storeId!;
+      const { Order, CustomerProfile } = adminOrderModels();
+      const orders = await Order.find({
+        storeId,
+        type: 'delivery',
+        status: { $in: [...DELIVERY_CUSTOMER_ORDER_STATUSES] },
+      })
+        .sort({ createdAt: -1 })
+        .lean();
+      const orderIds = orders.map((o) => (o as { _id: mongoose.Types.ObjectId })._id);
+      const checkoutByOrderId = await deliveryCustomerCheckoutMap(storeId, orderIds);
+      const customers = aggregateDeliveryCustomers(orders as any[], checkoutByOrderId);
+      const phoneNorms = customers.map((c) => c.phoneNorm);
+      const profiles = phoneNorms.length
+        ? await CustomerProfile.find({ storeId, phoneNorm: { $in: phoneNorms } })
+            .select('phoneNorm email updatedAt')
+            .sort({ updatedAt: -1 })
+            .lean()
+        : [];
+      res.json({ customers: mergeProfileEmailsIntoCustomers(customers, profiles as any[]) });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// GET /api/admin/delivery-customers/orders?phone= — 某送餐客户订单明细
+router.get(
+  '/delivery-customers/orders',
+  ...requireAuthSameStore,
+  requireFeature(FeatureKeys.CashierDeliveryPage),
+  requirePermission('config:read'),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const storeId = req.storeId!;
+      const phoneRaw = typeof req.query.phone === 'string' ? req.query.phone : '';
+      const phoneNorm = normalizeMemberPhone(phoneRaw);
+      if (!phoneNorm) {
+        throw createAppError('VALIDATION_ERROR', 'phone is required');
+      }
+      const phoneVariants = expandOrderPhoneQueryVariants(customerPhoneMatchCandidates(phoneRaw));
+      const { Order } = adminOrderModels();
+      const orders = await Order.find({
+        storeId,
+        type: 'delivery',
+        status: { $in: [...DELIVERY_CUSTOMER_ORDER_STATUSES] },
+        customerPhone: { $in: phoneVariants },
+      })
+        .sort({ createdAt: -1 })
+        .lean();
+      const orderIds = orders.map((o) => (o as { _id: mongoose.Types.ObjectId })._id);
+      const checkoutByOrderId = await deliveryCustomerCheckoutMap(storeId, orderIds);
+      res.json({
+        phoneNorm,
+        orders: mapDeliveryCustomerOrders(orders as any[], checkoutByOrderId, phoneNorm),
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// PUT /api/admin/delivery-customers — 更新送餐客户信息（同步订单 + 客户档案）
+router.put(
+  '/delivery-customers',
+  ...requireAuthSameStore,
+  requireFeature(FeatureKeys.CashierDeliveryPage),
+  requirePermission('config:update'),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const storeId = req.storeId!;
+      const phoneRaw = typeof req.body?.phone === 'string' ? req.body.phone : '';
+      const phoneNorm = normalizeMemberPhone(phoneRaw);
+      if (!phoneNorm) {
+        throw createAppError('VALIDATION_ERROR', 'phone is required');
+      }
+      const customerName = typeof req.body?.customerName === 'string' ? req.body.customerName.trim() : '';
+      const deliveryAddress = typeof req.body?.deliveryAddress === 'string' ? req.body.deliveryAddress.trim() : '';
+      const postalCode = typeof req.body?.postalCode === 'string' ? req.body.postalCode.trim() : '';
+      const email = typeof req.body?.email === 'string' ? req.body.email.trim() : '';
+      if (!customerName) {
+        throw createAppError('VALIDATION_ERROR', 'customerName is required');
+      }
+      if (!deliveryAddress || !postalCode) {
+        throw createAppError('VALIDATION_ERROR', 'deliveryAddress and postalCode are required');
+      }
+      if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        throw createAppError('VALIDATION_ERROR', 'invalid email');
+      }
+
+      const phoneVariants = expandOrderPhoneQueryVariants(customerPhoneMatchCandidates(phoneRaw));
+      const { Order, CustomerProfile } = adminOrderModels();
+
+      await Order.updateMany(
+        {
+          storeId,
+          type: 'delivery',
+          customerPhone: { $in: phoneVariants },
+        },
+        { $set: { customerName, deliveryAddress, postalCode } },
+      );
+
+      await CustomerProfile.updateMany(
+        { storeId, phoneNorm },
+        { $set: { customerName, email } },
+      );
+
+      const addressKey = normalizeDeliveryAddressKey(deliveryAddress, postalCode);
+      await CustomerProfile.findOneAndUpdate(
+        { storeId, phoneNorm, addressKey },
+        {
+          $set: {
+            customerName,
+            deliveryAddress,
+            postalCode,
+            email,
+            deliverySourceLast: 'phone',
+          },
+          $setOnInsert: { storeId, phoneNorm, addressKey },
+        },
+        { upsert: true },
+      );
+
+      res.json({
+        customer: {
+          phoneNorm,
+          customerName,
+          customerPhone: phoneNorm,
+          email,
+          deliveryAddress,
+          postalCode,
+        },
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+function requireStoreOwner(req: Request): void {
+  if (req.user?.role !== 'owner') {
+    throw createAppError('FORBIDDEN', '仅店铺 owner 可操作');
+  }
+}
+
+const widgetApiFeature = requireFeature(FeatureKeys.AdminWidgetApi);
+
+// GET /api/admin/widget-api-key — 当前 Key 状态（不含明文）
+router.get(
+  '/widget-api-key',
+  ...requireAuthSameStore,
+  widgetApiFeature,
+  requirePermission('config:update'),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      requireStoreOwner(req);
+      const { StoreWidgetApiKey } = getModels() as { StoreWidgetApiKey: mongoose.Model<any> };
+      const doc = (await StoreWidgetApiKey.findOne({ storeId: req.storeId, revokedAt: null }).lean()) as {
+        keyPrefix?: string;
+        createdAt?: Date;
+        lastUsedAt?: Date | null;
+      } | null;
+      if (!doc) {
+        res.json({ configured: false });
+        return;
+      }
+      res.json({
+        configured: true,
+        keyPrefix: doc.keyPrefix,
+        createdAt: doc.createdAt?.toISOString() ?? null,
+        lastUsedAt: doc.lastUsedAt?.toISOString() ?? null,
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// POST /api/admin/widget-api-key — 生成新 Key（覆盖旧 Key；明文仅返回一次）
+router.post(
+  '/widget-api-key',
+  ...requireAuthSameStore,
+  widgetApiFeature,
+  requirePermission('config:update'),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      requireStoreOwner(req);
+      const storeId = req.storeId!;
+      const { StoreWidgetApiKey } = getModels() as { StoreWidgetApiKey: mongoose.Model<any> };
+      const { plaintext, keyHash, keyPrefix } = generateWidgetApiKey();
+
+      await StoreWidgetApiKey.updateMany(
+        { storeId, revokedAt: null },
+        { $set: { revokedAt: new Date() } },
+      );
+      await StoreWidgetApiKey.create({ storeId, keyHash, keyPrefix });
+
+      res.status(201).json({
+        apiKey: plaintext,
+        keyPrefix,
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// DELETE /api/admin/widget-api-key — 撤销当前 Key
+router.delete(
+  '/widget-api-key',
+  ...requireAuthSameStore,
+  widgetApiFeature,
+  requirePermission('config:update'),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      requireStoreOwner(req);
+      const { StoreWidgetApiKey } = getModels() as { StoreWidgetApiKey: mongoose.Model<any> };
+      const result = await StoreWidgetApiKey.updateMany(
+        { storeId: req.storeId, revokedAt: null },
+        { $set: { revokedAt: new Date() } },
+      );
+      res.json({ revoked: result.modifiedCount > 0 });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 // POST /api/admin/translate-text — Cashier ad-hoc option: zh ↔ en via GTS (staff session)
 router.post('/translate-text', requireAuthSameStore, async (req: Request, res: Response, next: NextFunction) => {

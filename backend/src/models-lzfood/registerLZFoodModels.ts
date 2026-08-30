@@ -15,6 +15,7 @@ import { RawMaterialSchema } from '../models/RawMaterial';
 import mongoose from 'mongoose';
 import { StoreSchema } from './Store';
 import { StoreReportSegmentConfigSchema } from './StoreReportSegmentConfig';
+import { StoreWidgetApiKeySchema } from './StoreWidgetApiKey';
 import { AdminAuditLogSchema } from './AdminAuditLog';
 import { LZFoodAdminSchema } from './LZFoodAdmin';
 import { PostOrderAdSchema } from './PostOrderAd';
@@ -103,6 +104,7 @@ export type LZFoodModels = {
   NotificationLog: Model<unknown>;
   StoreWhatsAppConfig: Model<unknown>;
   StoreReportSegmentConfig: Model<unknown>;
+  StoreWidgetApiKey: Model<unknown>;
 };
 
 let cached: LZFoodModels | null = null;
@@ -187,6 +189,11 @@ export function registerLZFoodModels(conn: Connection): LZFoodModels {
     StoreReportSegmentConfigSchema,
     'store_report_segment_configs',
   );
+  const StoreWidgetApiKey = m(
+    'StoreWidgetApiKey',
+    StoreWidgetApiKeySchema,
+    'store_widget_api_keys',
+  );
 
   cached = {
     Store,
@@ -223,6 +230,7 @@ export function registerLZFoodModels(conn: Connection): LZFoodModels {
     NotificationLog,
     StoreWhatsAppConfig,
     StoreReportSegmentConfig,
+    StoreWidgetApiKey,
   };
   return cached;
 }

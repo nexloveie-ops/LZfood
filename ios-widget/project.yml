@@ -1,0 +1,54 @@
+name: LZFoodWidget
+options:
+  bundleIdPrefix: com.lztechserve
+  deploymentTarget:
+    iOS: "17.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+
+targets:
+  LZFoodWidget:
+    type: application
+    platform: iOS
+    sources:
+      - path: LZFoodWidget
+      - path: Shared
+        excludes:
+          - WidgetLocalDefaults.example.swift
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.lztechserve.lzfood.widget
+      GENERATE_INFOPLIST_FILE: YES
+      INFOPLIST_KEY_CFBundleDisplayName: LZFood Widget
+      INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsLocalNetworking: YES
+      ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    entitlements:
+      path: LZFoodWidget/LZFoodWidget.entitlements
+    dependencies:
+      - target: LZFoodWidgetExtension
+        embed: true
+
+  LZFoodWidgetExtension:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: LZFoodWidgetExtension
+        excludes:
+          - Info.plist
+      - path: Shared
+        excludes:
+          - WidgetLocalDefaults.example.swift
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.lztechserve.lzfood.widget.extension
+      GENERATE_INFOPLIST_FILE: NO
+      INFOPLIST_FILE: LZFoodWidgetExtension/Info.plist
+    entitlements:
+      path: LZFoodWidgetExtension/LZFoodWidgetExtension.entitlements
+
+schemes:
+  LZFoodWidget:
+    build:
+      targets:
+        LZFoodWidget: all

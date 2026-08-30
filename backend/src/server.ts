@@ -30,6 +30,7 @@ import voucherCampaignsRouter from './routes/voucherCampaigns';
 import platformRouter from './routes/platform';
 import publicAdsRouter from './routes/publicAds';
 import publicPortalRouter from './routes/publicPortal';
+import publicWidgetRouter from './routes/publicWidget';
 import geoRouter, { guestEircodeMiddleware } from './routes/geo';
 import membersRouter, { membersScanOrderLookup } from './routes/members';
 import customerNotificationsRouter from './routes/customerNotifications';
@@ -101,6 +102,7 @@ app.use('/api/platform', platformRouter);
 
 // 公开接口（不要求 X-Store-Slug）
 app.use('/api/public', publicAdsRouter);
+app.use('/api/public', publicWidgetRouter);
 app.use('/api/public/portal', publicPortalRouter);
 
 // Menu categories routes

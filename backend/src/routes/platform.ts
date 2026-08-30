@@ -163,6 +163,12 @@ const DEFAULT_ADDON_PRESETS: Array<{ name: string; code: string; description: st
     description: '管理端品类结构：按餐品目录分组统计营业额占比与趋势',
     features: [FeatureKeys.AdminReportSegmentsPage],
   },
+  {
+    name: 'Owner Widget API',
+    code: 'owner-widget',
+    description: '店主 iOS Widget 只读 API：当天净营业额、支付方式、品类结构',
+    features: [FeatureKeys.AdminWidgetApi],
+  },
 ];
 
 async function ensureDefaultFeatureProducts(): Promise<void> {
@@ -217,6 +223,18 @@ async function ensureDefaultFeatureProducts(): Promise<void> {
         name: '品类结构报表',
         description: '管理端品类结构：按餐品目录分组统计营业额占比与趋势',
         features: [FeatureKeys.AdminReportSegmentsPage],
+        isActive: true,
+      },
+    },
+  );
+  /** Keep Owner Widget API addon in sync */
+  await FeatureAddon.updateOne(
+    { code: 'owner-widget' },
+    {
+      $set: {
+        name: 'Owner Widget API',
+        description: '店主 iOS Widget 只读 API：当天净营业额、支付方式、品类结构',
+        features: [FeatureKeys.AdminWidgetApi],
         isActive: true,
       },
     },

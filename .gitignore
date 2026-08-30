@@ -12,5 +12,10 @@ backend/seed-admin.ts
 # Local snapshots (git bundle / tar); do not commit
 backups/
 
-# Exported third-party customer data (PII)
-customers/
+# iOS Widget (XcodeGen local artifacts)
+ios-widget/.tools/
+ios-widget/.build/
+ios-widget/*.xcodeproj
+ios-widget/*.xcworkspace
+ios-widget/xcuserdata/
+ios-widget/Shared/WidgetLocalDefaults.swift

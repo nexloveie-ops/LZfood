@@ -33,8 +33,9 @@ const FIELD_I18N: Record<ConfigKey, string> = {
 
 export default function RestaurantInfo() {
   const { t } = useTranslation();
-  const { token } = useAuth();
+  const { token, user, hasFeature } = useAuth();
   const storeSlug = useStoreSlug();
+  const showWidgetApi = user?.role === 'owner' && hasFeature('admin.widget.api');
   const [values, setValues] = useState<Record<ConfigKey, string>>(() => {
     const init: Record<string, string> = {};
     CONFIG_KEYS.forEach(k => { init[k] = ''; });
@@ -46,6 +47,78 @@ export default function RestaurantInfo() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
+
+  type WidgetKeyStatus =
+    | { configured: false }
+    | { configured: true; keyPrefix: string; createdAt: string | null; lastUsedAt: string | null };
+  const [widgetKeyStatus, setWidgetKeyStatus] = useState<WidgetKeyStatus | null>(null);
+  const [widgetKeyLoading, setWidgetKeyLoading] = useState(false);
+  const [widgetNewKey, setWidgetNewKey] = useState<string | null>(null);
+  const [widgetKeyCopied, setWidgetKeyCopied] = useState(false);
+
+  const fetchWidgetKeyStatus = useCallback(async () => {
+    if (!showWidgetApi || !token) return;
+    setWidgetKeyLoading(true);
+    try {
+      const res = await apiFetch('/api/admin/widget-api-key', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        setWidgetKeyStatus(await res.json());
+      }
+    } catch { /* ignore */ }
+    finally { setWidgetKeyLoading(false); }
+  }, [showWidgetApi, token]);
+
+  useEffect(() => { void fetchWidgetKeyStatus(); }, [fetchWidgetKeyStatus]);
+
+  const handleGenerateWidgetKey = async () => {
+    if (!token) return;
+    const confirmMsg = widgetKeyStatus?.configured
+      ? t('admin.widgetApiRegenerate')
+      : t('admin.widgetApiGenerate');
+    if (!window.confirm(`${confirmMsg}?`)) return;
+    setWidgetKeyLoading(true);
+    try {
+      const res = await apiFetch('/api/admin/widget-api-key', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setWidgetNewKey(data.apiKey ?? null);
+        setWidgetKeyCopied(false);
+        await fetchWidgetKeyStatus();
+      }
+    } catch { /* ignore */ }
+    finally { setWidgetKeyLoading(false); }
+  };
+
+  const handleRevokeWidgetKey = async () => {
+    if (!token || !window.confirm(`${t('admin.widgetApiRevoke')}?`)) return;
+    setWidgetKeyLoading(true);
+    try {
+      const res = await apiFetch('/api/admin/widget-api-key', {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        setWidgetNewKey(null);
+        await fetchWidgetKeyStatus();
+      }
+    } catch { /* ignore */ }
+    finally { setWidgetKeyLoading(false); }
+  };
+
+  const handleCopyWidgetKey = async () => {
+    if (!widgetNewKey) return;
+    try {
+      await navigator.clipboard.writeText(widgetNewKey);
+      setWidgetKeyCopied(true);
+    } catch { /* ignore */ }
+  };
+
+  const widgetEndpoint = `${window.location.origin}/api/public/widget-snapshot`;
 
   const fetchConfig = useCallback(async () => {
     try {
@@ -223,6 +296,52 @@ export default function RestaurantInfo() {
           {t('admin.receiptPrintByCatalogHint')}
         </div>
       </div>
+
+      {showWidgetApi && (
+        <div className="card" style={{ padding: 20, marginBottom: 16 }}>
+          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>{t('admin.widgetApiTitle')}</div>
+          <div style={{ fontSize: 12, color: 'var(--text-light)', marginBottom: 14, lineHeight: 1.5 }}>
+            {t('admin.widgetApiHint')}
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 12 }}>
+            <span style={{ fontWeight: 500 }}>{t('admin.widgetApiEndpoint')}:</span>{' '}
+            <code style={{ fontSize: 11 }}>{widgetEndpoint}</code>
+          </div>
+
+          {widgetKeyLoading && widgetKeyStatus === null ? (
+            <div style={{ fontSize: 13, color: 'var(--text-light)' }}>{t('common.loading')}</div>
+          ) : widgetKeyStatus?.configured ? (
+            <div style={{ fontSize: 13, display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 14 }}>
+              <div><span style={{ color: 'var(--text-secondary)' }}>{t('admin.widgetApiPrefix')}:</span> <code>{widgetKeyStatus.keyPrefix}…</code></div>
+              <div><span style={{ color: 'var(--text-secondary)' }}>{t('admin.widgetApiCreatedAt')}:</span> {widgetKeyStatus.createdAt ? new Date(widgetKeyStatus.createdAt).toLocaleString() : '—'}</div>
+              <div><span style={{ color: 'var(--text-secondary)' }}>{t('admin.widgetApiLastUsedAt')}:</span> {widgetKeyStatus.lastUsedAt ? new Date(widgetKeyStatus.lastUsedAt).toLocaleString() : t('admin.widgetApiNeverUsed')}</div>
+            </div>
+          ) : (
+            <div style={{ fontSize: 13, color: 'var(--text-light)', marginBottom: 14 }}>{t('admin.widgetApiNotConfigured')}</div>
+          )}
+
+          {widgetNewKey && (
+            <div style={{ padding: 12, background: 'var(--bg)', borderRadius: 8, marginBottom: 14, border: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>{t('admin.widgetApiNewKeyTitle')}</div>
+              <code style={{ display: 'block', wordBreak: 'break-all', fontSize: 12, marginBottom: 10 }}>{widgetNewKey}</code>
+              <button type="button" className="btn btn-outline" style={{ fontSize: 12 }} onClick={() => void handleCopyWidgetKey()}>
+                {widgetKeyCopied ? t('admin.widgetApiCopied') : t('admin.widgetApiCopy')}
+              </button>
+            </div>
+          )}
+
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            <button type="button" className="btn btn-primary" style={{ fontSize: 13 }} disabled={widgetKeyLoading} onClick={() => void handleGenerateWidgetKey()}>
+              {widgetKeyStatus?.configured ? t('admin.widgetApiRegenerate') : t('admin.widgetApiGenerate')}
+            </button>
+            {widgetKeyStatus?.configured && (
+              <button type="button" className="btn btn-outline" style={{ fontSize: 13 }} disabled={widgetKeyLoading} onClick={() => void handleRevokeWidgetKey()}>
+                {t('admin.widgetApiRevoke')}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="card" style={{ padding: 20 }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>

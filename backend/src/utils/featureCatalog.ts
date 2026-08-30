@@ -18,6 +18,8 @@ export const FeatureKeys = {
   AdminSalesForecastPage: 'admin.salesForecast.page',
   /** 管理端「品类结构」报表：按餐品目录分组统计营业额占比 */
   AdminReportSegmentsPage: 'admin.reportSegments.page',
+  /** 店主 iOS Widget 只读 API（餐馆信息页生成 Key；GET /api/public/widget-snapshot） */
+  AdminWidgetApi: 'admin.widget.api',
   AdminInventoryRestoreTimeAction: 'admin.inventory.restoreTime.action',
   /**
    * 统一的「库存追踪」总开关。覆盖：

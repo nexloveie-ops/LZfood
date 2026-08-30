@@ -4,11 +4,15 @@ import { useAuth } from '../../context/AuthContext';
 import { useStoreSlug } from '../../context/StoreContext';
 import { refreshRestaurantConfig } from '../../hooks/useRestaurantConfig';
 import { apiFetch } from '../../api/client';
+import DeliveryCustomerPanel from '../../components/DeliveryCustomerPanel';
 import {
   DELIVERY_FEE_RULES_CONFIG_KEY,
   type DeliveryFeeTier,
   parseDeliveryFeeRulesJson,
 } from '../../utils/deliveryFeeRules';
+import './delivery-management.css';
+
+type DeliveryTab = 'fees' | 'customers';
 
 type Row = { localId: string; uptoKm: string; feeEuro: string; isUnlimited: boolean };
 
@@ -47,6 +51,7 @@ export default function DeliveryFeeSettings() {
   const { t } = useTranslation();
   const { token } = useAuth();
   const storeSlug = useStoreSlug();
+  const [tab, setTab] = useState<DeliveryTab>('fees');
   const [rows, setRows] = useState<Row[]>([]);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -121,12 +126,39 @@ export default function DeliveryFeeSettings() {
   };
 
   return (
-    <div>
-      <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>{t('admin.deliveryFeeTitle')}</h2>
-      <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 16, maxWidth: 720, lineHeight: 1.5 }}>
-        {t('admin.deliveryFeeIntro')}
-      </p>
-      {loadError ? <div style={{ color: 'var(--red-primary)', marginBottom: 12 }}>{loadError}</div> : null}
+    <div className="dm-page">
+      <div>
+        <h2 className="dm-page-title">{t('admin.deliveryManagementTitle')}</h2>
+        <p className="dm-page-sub">{t('admin.deliveryManagementIntro')}</p>
+      </div>
+
+      <div className="dm-tabs" role="tablist" aria-label={t('admin.deliveryManagementTitle')}>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'fees'}
+          className={`dm-tab${tab === 'fees' ? ' is-active' : ''}`}
+          onClick={() => setTab('fees')}
+        >
+          {t('admin.deliveryFeesTab')}
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'customers'}
+          className={`dm-tab${tab === 'customers' ? ' is-active' : ''}`}
+          onClick={() => setTab('customers')}
+        >
+          {t('admin.deliveryCustomersTab')}
+        </button>
+      </div>
+
+      {tab === 'customers' ? (
+        <DeliveryCustomerPanel />
+      ) : (
+        <>
+      <p className="dm-section-sub">{t('admin.deliveryFeeIntro')}</p>
+      {loadError ? <div className="dm-error">{loadError}</div> : null}
 
       <div className="card" style={{ padding: 16, marginBottom: 16 }}>
         <div style={{ fontSize: 12, color: 'var(--text-light)', marginBottom: 10 }}>
@@ -202,6 +234,8 @@ export default function DeliveryFeeSettings() {
           {saved ? <span style={{ fontSize: 13, color: '#2E7D32' }}>{t('admin.savedSuccess')}</span> : null}
         </div>
       </div>
+        </>
+      )}
     </div>
   );
 }
