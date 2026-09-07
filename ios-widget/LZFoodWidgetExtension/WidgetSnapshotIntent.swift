@@ -24,6 +24,10 @@ struct WidgetSnapshotIntent: WidgetConfigurationIntent {
     @Parameter(title: "自定义 YYYY-MM-DD", default: "")
     var customDateYmd: String
 
+    /** 无 App Group 时作为默认店铺序号（0 起） */
+    @Parameter(title: "店铺序号", default: 0)
+    var storeIndex: Int
+
     func reportDateYmd() -> String {
         switch dateMode {
         case .today:

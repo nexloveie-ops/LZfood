@@ -4,4 +4,6 @@ import Foundation
 enum WidgetLocalDefaults {
     static let baseURL = "http://127.0.0.1:8080"
     static let apiKey = ""
+    static let dateMode = WidgetDateMode.today
+    static let customDateYmd = ""
 }

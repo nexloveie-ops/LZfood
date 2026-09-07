@@ -6,12 +6,15 @@ enum WidgetSettingsKeys {
     static let apiKey = "lzfood.widget.apiKey"
     static let dateMode = "lzfood.widget.dateMode"
     static let customDateYmd = "lzfood.widget.customDateYmd"
+    static let activeStoreIndex = "lzfood.widget.activeStoreIndex"
     static let defaultBaseURL = WidgetLocalDefaults.baseURL
 }
 
 private struct WidgetSharedConfig: Codable {
     var baseURL: String?
     var apiKey: String?
+    var storeProfiles: [WidgetStoreProfile]?
+    var activeStoreIndex: Int?
     var dateMode: String?
     var customDateYmd: String?
 }
@@ -32,6 +35,10 @@ enum WidgetSettingsStore {
             .appendingPathComponent("widget-config.json")
     }
 
+    private static var extensionDefaults: UserDefaults {
+        defaults ?? .standard
+    }
+
     private static func loadFileConfig() -> WidgetSharedConfig {
         guard let url = configFileURL,
               let data = try? Data(contentsOf: url),
@@ -49,28 +56,33 @@ enum WidgetSettingsStore {
         try? data.write(to: url, options: .atomic)
     }
 
-    /** App 保存时：UserDefaults + App Group 文件双写，确保 Widget 扩展能读到 */
-    static func persistAll(
-        baseURL: String,
-        apiKey: String,
-        dateMode: WidgetDateMode,
-        customDateYmd: String,
-    ) {
-        let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedBase = baseURL.trimmingSuffix("/")
+    private static func normalizedProfiles(from cfg: WidgetSharedConfig) -> [WidgetStoreProfile] {
+        if let profiles = cfg.storeProfiles?.filter({ !$0.trimmedApiKey.isEmpty }), !profiles.isEmpty {
+            return Array(profiles.prefix(WidgetStoreProfiles.maxCount))
+        }
+        let legacy = cfg.apiKey?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !legacy.isEmpty {
+            return [WidgetStoreProfile(label: "店铺 1", apiKey: legacy)]
+        }
+        let udKey = defaults?.string(forKey: WidgetSettingsKeys.apiKey)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !udKey.isEmpty {
+            return [WidgetStoreProfile(label: "店铺 1", apiKey: udKey)]
+        }
+        let local = WidgetLocalDefaults.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !local.isEmpty {
+            return [WidgetStoreProfile(label: "店铺 1", apiKey: local)]
+        }
+        return []
+    }
 
-        defaults?.set(trimmedBase, forKey: WidgetSettingsKeys.baseURL)
-        defaults?.set(trimmedKey, forKey: WidgetSettingsKeys.apiKey)
-        defaults?.set(dateMode.rawValue, forKey: WidgetSettingsKeys.dateMode)
-        defaults?.set(customDateYmd, forKey: WidgetSettingsKeys.customDateYmd)
-        defaults?.synchronize()
+    static var storeProfiles: [WidgetStoreProfile] {
+        normalizedProfiles(from: loadFileConfig())
+    }
 
-        saveFileConfig(WidgetSharedConfig(
-            baseURL: trimmedBase,
-            apiKey: trimmedKey.isEmpty ? nil : trimmedKey,
-            dateMode: dateMode.rawValue,
-            customDateYmd: customDateYmd,
-        ))
+    /** 向后兼容：当前选中店铺的 Key */
+    static var apiKey: String {
+        activeProfile()?.trimmedApiKey ?? ""
     }
 
     static var baseURL: String {
@@ -87,20 +99,105 @@ enum WidgetSettingsStore {
         }
     }
 
-    static var apiKey: String {
-        get {
-            let file = loadFileConfig().apiKey?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            if !file.isEmpty { return file }
-            let raw = defaults?.string(forKey: WidgetSettingsKeys.apiKey)?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            if !raw.isEmpty { return raw }
-            return WidgetLocalDefaults.apiKey
-        }
-        set { defaults?.set(newValue.trimmingCharacters(in: .whitespacesAndNewlines), forKey: WidgetSettingsKeys.apiKey) }
+    static var isConfigured: Bool {
+        storeProfiles.contains(where: \.isValidKey)
     }
 
-    static var isConfigured: Bool {
-        !apiKey.isEmpty && apiKey.hasPrefix("lzf_live_")
+    static var canCycleStores: Bool {
+        storeProfiles.filter(\.isValidKey).count > 1
+    }
+
+    static func activeStoreIndex(fallbackFromIntent intentIndex: Int = 0) -> Int {
+        let profiles = storeProfiles.filter(\.isValidKey)
+        guard !profiles.isEmpty else { return 0 }
+
+        let stored: Int?
+        if appGroupAvailable {
+            stored = loadFileConfig().activeStoreIndex ?? defaults?.integer(forKey: WidgetSettingsKeys.activeStoreIndex)
+        } else {
+            stored = extensionDefaults.object(forKey: WidgetSettingsKeys.activeStoreIndex) != nil
+                ? extensionDefaults.integer(forKey: WidgetSettingsKeys.activeStoreIndex)
+                : intentIndex
+        }
+
+        let idx = stored ?? 0
+        return ((idx % profiles.count) + profiles.count) % profiles.count
+    }
+
+    static func activeProfile(fallbackFromIntent intentIndex: Int = 0) -> WidgetStoreProfile? {
+        let profiles = storeProfiles.filter(\.isValidKey)
+        guard !profiles.isEmpty else { return nil }
+        let idx = activeStoreIndex(fallbackFromIntent: intentIndex)
+        return profiles[idx]
+    }
+
+    static func setActiveStoreIndex(_ index: Int) {
+        let profiles = storeProfiles.filter(\.isValidKey)
+        guard !profiles.isEmpty else { return }
+        let clamped = ((index % profiles.count) + profiles.count) % profiles.count
+
+        extensionDefaults.set(clamped, forKey: WidgetSettingsKeys.activeStoreIndex)
+        defaults?.set(clamped, forKey: WidgetSettingsKeys.activeStoreIndex)
+
+        var cfg = loadFileConfig()
+        cfg.activeStoreIndex = clamped
+        saveFileConfig(cfg)
+    }
+
+    static func cycleActiveStore(delta: Int, fallbackFromIntent intentIndex: Int = 0) {
+        let current = activeStoreIndex(fallbackFromIntent: intentIndex)
+        setActiveStoreIndex(current + delta)
+    }
+
+    /** App 保存时：UserDefaults + App Group 文件双写，确保 Widget 扩展能读到 */
+    static func persistAll(
+        baseURL: String,
+        storeProfiles: [WidgetStoreProfile],
+        dateMode: WidgetDateMode,
+        customDateYmd: String,
+        activeStoreIndex: Int? = nil,
+    ) {
+        let trimmedBase = baseURL.trimmingSuffix("/")
+        let profiles = Array(
+            storeProfiles
+                .map {
+                    WidgetStoreProfile(
+                        id: $0.id,
+                        label: $0.trimmedLabel,
+                        apiKey: $0.trimmedApiKey
+                    )
+                }
+                .filter { !$0.trimmedApiKey.isEmpty }
+                .prefix(WidgetStoreProfiles.maxCount)
+        )
+
+        defaults?.set(trimmedBase, forKey: WidgetSettingsKeys.baseURL)
+        defaults?.set(dateMode.rawValue, forKey: WidgetSettingsKeys.dateMode)
+        defaults?.set(customDateYmd, forKey: WidgetSettingsKeys.customDateYmd)
+
+        let firstKey = profiles.first?.trimmedApiKey ?? ""
+        defaults?.set(firstKey, forKey: WidgetSettingsKeys.apiKey)
+
+        var cfg = WidgetSharedConfig(
+            baseURL: trimmedBase,
+            apiKey: firstKey.isEmpty ? nil : firstKey,
+            storeProfiles: profiles.isEmpty ? nil : profiles,
+            activeStoreIndex: activeStoreIndex,
+            dateMode: dateMode.rawValue,
+            customDateYmd: customDateYmd,
+        )
+
+        if let activeStoreIndex {
+            let valid = profiles.filter(\.isValidKey)
+            if !valid.isEmpty {
+                let clamped = ((activeStoreIndex % valid.count) + valid.count) % valid.count
+                cfg.activeStoreIndex = clamped
+                defaults?.set(clamped, forKey: WidgetSettingsKeys.activeStoreIndex)
+                extensionDefaults.set(clamped, forKey: WidgetSettingsKeys.activeStoreIndex)
+            }
+        }
+
+        saveFileConfig(cfg)
     }
 
     static var dateMode: WidgetDateMode {

@@ -7,6 +7,14 @@ private enum WidgetColors {
     static let dim = Color.white.opacity(0.68)
 }
 
+private enum WidgetLayout {
+    static let contentTop: CGFloat = 10
+    static let headerTopInset: CGFloat = 8
+    static let contentBottom: CGFloat = 6
+    static let headerToBody: CGFloat = 8
+    static let bodyRowSpacing: CGFloat = 7
+}
+
 private enum WidgetBackground {
     static var gradient: LinearGradient {
         LinearGradient(
@@ -24,11 +32,11 @@ struct LZFoodWidgetEntryView: View {
     var body: some View {
         Group {
             if let msg = entry.errorMessage {
-                ErrorWidgetView(message: msg, family: family)
+                ErrorWidgetView(message: msg, family: family, switcher: entry.switcher)
             } else if let snap = entry.snapshot {
                 switch family {
                 case .systemMedium:
-                    MediumWidgetView(snapshot: snap, logoData: entry.logoData)
+                    MediumWidgetView(snapshot: snap, logoData: entry.logoData, switcher: entry.switcher)
                 case .accessoryRectangular:
                     LockRectangularWidgetView(snapshot: snap, logoData: entry.logoData)
                 case .accessoryCircular:
@@ -36,15 +44,55 @@ struct LZFoodWidgetEntryView: View {
                 case .accessoryInline:
                     LockInlineWidgetView(snapshot: snap)
                 default:
-                    SmallWidgetView(snapshot: snap, logoData: entry.logoData)
+                    SmallWidgetView(snapshot: snap, logoData: entry.logoData, switcher: entry.switcher)
                 }
             } else {
-                ErrorWidgetView(message: "打开 App 配置 API Key", family: family)
+                ErrorWidgetView(message: "打开 App 配置 API Key", family: family, switcher: entry.switcher)
             }
         }
         .containerBackground(for: .widget) {
             WidgetBackground.gradient
         }
+    }
+}
+
+struct StoreSwitcherBar: View {
+    let switcher: StoreSwitcherInfo
+    var compact = false
+
+    var body: some View {
+        HStack(spacing: compact ? 4 : 6) {
+            if switcher.canSwitch {
+                Button(intent: CycleStoreIntent(direction: .previous)) {
+                    Image(systemName: "chevron.left.circle.fill")
+                        .font(compact ? .caption2 : .caption)
+                        .foregroundStyle(WidgetColors.muted)
+                }
+                .buttonStyle(.plain)
+            }
+
+            Text(switcherLabel)
+                .font(compact ? .caption2.weight(.medium) : .caption.weight(.medium))
+                .foregroundStyle(WidgetColors.dim)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity)
+
+            if switcher.canSwitch {
+                Button(intent: CycleStoreIntent(direction: .next)) {
+                    Image(systemName: "chevron.right.circle.fill")
+                        .font(compact ? .caption2 : .caption)
+                        .foregroundStyle(WidgetColors.muted)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private var switcherLabel: String {
+        if switcher.total <= 1 {
+            return switcher.profileLabel
+        }
+        return "\(switcher.profileLabel) · \(switcher.currentIndex)/\(switcher.total)"
     }
 }
 
@@ -57,95 +105,151 @@ struct StoreHeaderRow: View {
     var nameFont: Font = .headline.weight(.semibold)
     var amountFont: Font = .title.bold()
     var orderFont: Font = .subheadline.weight(.medium)
+    var nameLineLimit: Int = 2
+    var rowSpacing: CGFloat = 2
+    var showsOrderCount: Bool = true
 
-    var body: some View {
-        HStack(alignment: .center, spacing: 8) {
+    private var titleRow: some View {
+        HStack(alignment: .top, spacing: 8) {
             StoreLogoView(data: logoData, size: logoSize)
 
             Text(displayName)
                 .font(nameFont)
                 .foregroundStyle(WidgetColors.muted)
+                .lineLimit(nameLineLimit)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text(WidgetFormatters.euroString(netTotal))
+                .font(amountFont)
+                .foregroundStyle(WidgetColors.primary)
                 .lineLimit(1)
-                .truncationMode(.tail)
-                .layoutPriority(0)
+                .minimumScaleFactor(0.65)
+                .fixedSize(horizontal: true, vertical: false)
+        }
+    }
 
-            Spacer(minLength: 4)
+    var body: some View {
+        VStack(alignment: .leading, spacing: rowSpacing) {
+            titleRow
 
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(WidgetFormatters.euroString(netTotal))
-                    .font(amountFont)
-                    .foregroundStyle(WidgetColors.primary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.65)
-                    .layoutPriority(1)
-
-                Text("\(orderCount)单")
-                    .font(orderFont)
-                    .foregroundStyle(WidgetColors.muted)
-                    .fixedSize()
+            if showsOrderCount {
+                HStack(spacing: 0) {
+                    Color.clear.frame(width: logoSize + 8, height: 0)
+                    Text("\(orderCount)单")
+                        .font(orderFont)
+                        .foregroundStyle(WidgetColors.dim)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                }
             }
         }
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/** 仅店名 + 营业额一行（Medium Widget 头部） */
+struct StoreTitleRow: View {
+    let displayName: String
+    let netTotal: Double
+    var logoData: Data? = nil
+    var logoSize: CGFloat = 24
+    var nameFont: Font = .headline.weight(.semibold)
+    var amountFont: Font = .title.bold()
+    var nameLineLimit: Int = 2
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            StoreLogoView(data: logoData, size: logoSize)
+
+            Text(displayName)
+                .font(nameFont)
+                .foregroundStyle(WidgetColors.muted)
+                .lineLimit(nameLineLimit)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text(WidgetFormatters.euroString(netTotal))
+                .font(amountFont)
+                .foregroundStyle(WidgetColors.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.65)
+                .fixedSize(horizontal: true, vertical: false)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
 struct SmallWidgetView: View {
     let snapshot: WidgetSnapshot
     var logoData: Data? = nil
+    var switcher: StoreSwitcherInfo? = nil
 
     var body: some View {
-        StoreHeaderRow(
-            displayName: snapshot.store.displayName,
-            netTotal: snapshot.revenue.netTotal,
-            orderCount: snapshot.revenue.orderCount,
-            logoData: logoData,
-            logoSize: 20,
-            nameFont: .subheadline.weight(.semibold),
-            amountFont: .title2.bold(),
-            orderFont: .caption.weight(.medium)
-        )
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        VStack(alignment: .leading, spacing: 4) {
+            StoreHeaderRow(
+                displayName: snapshot.store.displayName,
+                netTotal: snapshot.revenue.netTotal,
+                orderCount: snapshot.revenue.orderCount,
+                logoData: logoData,
+                logoSize: 20,
+                nameFont: .subheadline.weight(.semibold),
+                amountFont: .title2.bold(),
+                orderFont: .caption.weight(.medium),
+                nameLineLimit: 2,
+                showsOrderCount: false
+            )
+            if let switcher, switcher.total > 1 {
+                Text("\(switcher.profileLabel) · \(switcher.currentIndex)/\(switcher.total)")
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(WidgetColors.dim)
+                    .lineLimit(1)
+            }
+        }
+        .padding(.top, WidgetLayout.contentTop)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 }
 
 struct MediumWidgetView: View {
     let snapshot: WidgetSnapshot
     var logoData: Data? = nil
+    var switcher: StoreSwitcherInfo? = nil
     var compact = false
 
     private var headerLogoSize: CGFloat { compact ? 16 : 24 }
     private var headerNameFont: Font { compact ? .caption2.weight(.semibold) : .headline.weight(.semibold) }
     private var headerAmountFont: Font { compact ? .caption.weight(.bold) : .title.bold() }
-    private var headerOrderFont: Font { compact ? .caption2.weight(.medium) : .subheadline.weight(.medium) }
-    private var sectionSpacing: CGFloat { compact ? 3 : 6 }
     private var columnSpacing: CGFloat { compact ? 8 : 12 }
     private var maxSegments: Int { compact ? 2 : 4 }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: sectionSpacing) {
-            StoreHeaderRow(
+        VStack(alignment: .leading, spacing: 0) {
+            StoreTitleRow(
                 displayName: snapshot.store.displayName,
                 netTotal: snapshot.revenue.netTotal,
-                orderCount: snapshot.revenue.orderCount,
                 logoData: logoData,
                 logoSize: headerLogoSize,
                 nameFont: headerNameFont,
                 amountFont: headerAmountFont,
-                orderFont: headerOrderFont
+                nameLineLimit: compact ? 1 : 2
             )
+            .padding(.top, WidgetLayout.headerTopInset)
+
+            Spacer(minLength: 0)
 
             HStack(alignment: .bottom, spacing: columnSpacing) {
-                VStack(alignment: .leading, spacing: compact ? 2 : 6) {
+                VStack(alignment: .leading, spacing: compact ? 2 : WidgetLayout.bodyRowSpacing) {
                     PaymentRow(label: "现金", line: snapshot.payments.cash, compact: compact)
                     PaymentRow(label: "刷卡", line: snapshot.payments.card, compact: compact)
                     PaymentRow(label: "Online", line: snapshot.payments.online, compact: compact)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
 
                 if case let .enabled(_, groups) = snapshot.segments, !groups.isEmpty {
-                    VStack(alignment: .leading, spacing: compact ? 2 : 4) {
-                        Text("品类")
-                            .font(compact ? .caption2.weight(.semibold) : .caption.weight(.semibold))
-                            .foregroundStyle(WidgetColors.muted)
+                    VStack(alignment: .leading, spacing: compact ? 2 : 5) {
                         ForEach(groups.prefix(maxSegments)) { g in
                             SegmentGroupRow(group: g, compact: compact)
                         }
@@ -153,8 +257,14 @@ struct MediumWidgetView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
+
+            if let switcher {
+                StoreSwitcherBar(switcher: switcher, compact: compact)
+                    .padding(.top, 6)
+            }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .padding(.bottom, WidgetLayout.contentBottom)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 }
 
@@ -172,7 +282,9 @@ struct LockRectangularWidgetView: View {
                 logoSize: 15,
                 nameFont: .caption2.weight(.semibold),
                 amountFont: .caption.weight(.bold),
-                orderFont: .caption2.weight(.medium)
+                orderFont: .caption2.weight(.medium),
+                nameLineLimit: 1,
+                showsOrderCount: false
             )
 
             HStack(spacing: 4) {
@@ -250,9 +362,6 @@ struct LockCircularWidgetView: View {
                 .foregroundStyle(WidgetColors.primary)
                 .minimumScaleFactor(0.7)
                 .lineLimit(1)
-            Text("\(snapshot.revenue.orderCount)单")
-                .font(.caption2.weight(.medium))
-                .foregroundStyle(WidgetColors.muted)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -262,7 +371,7 @@ struct LockInlineWidgetView: View {
     let snapshot: WidgetSnapshot
 
     var body: some View {
-        Text("\(snapshot.store.displayName) \(WidgetFormatters.euroString(snapshot.revenue.netTotal)) · \(snapshot.revenue.orderCount)单")
+        Text("\(snapshot.store.displayName) \(WidgetFormatters.euroString(snapshot.revenue.netTotal))")
             .font(.caption.weight(.semibold))
             .foregroundStyle(WidgetColors.primary)
             .lineLimit(1)
@@ -320,6 +429,7 @@ struct PaymentRow: View {
 struct ErrorWidgetView: View {
     let message: String
     var family: WidgetFamily = .systemSmall
+    var switcher: StoreSwitcherInfo? = nil
 
     var body: some View {
         Group {
@@ -358,6 +468,9 @@ struct ErrorWidgetView: View {
                         .font(.caption.weight(.medium))
                         .foregroundStyle(WidgetColors.primary)
                         .fixedSize(horizontal: false, vertical: true)
+                    if family == .systemMedium, let switcher, switcher.canSwitch {
+                        StoreSwitcherBar(switcher: switcher, compact: true)
+                    }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
             }

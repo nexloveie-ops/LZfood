@@ -2,18 +2,27 @@ import AppIntents
 import WidgetKit
 import SwiftUI
 
+struct StoreSwitcherInfo: Sendable {
+    let canSwitch: Bool
+    let currentIndex: Int
+    let total: Int
+    let profileLabel: String
+}
+
 struct SnapshotEntry: TimelineEntry {
     let date: Date
     let snapshot: WidgetSnapshot?
     let logoData: Data?
     let errorMessage: String?
+    let switcher: StoreSwitcherInfo?
 
     static func placeholder() -> SnapshotEntry {
         SnapshotEntry(
             date: .now,
             snapshot: nil,
             logoData: nil,
-            errorMessage: nil
+            errorMessage: nil,
+            switcher: nil
         )
     }
 }
@@ -27,7 +36,8 @@ struct SnapshotProvider: AppIntentTimelineProvider {
             date: .now,
             snapshot: demoSnapshot,
             logoData: nil,
-            errorMessage: nil
+            errorMessage: nil,
+            switcher: StoreSwitcherInfo(canSwitch: true, currentIndex: 1, total: 2, profileLabel: "Demo Restaurant")
         )
     }
 
@@ -57,16 +67,39 @@ struct SnapshotProvider: AppIntentTimelineProvider {
 
     private func loadEntry(for configuration: WidgetSnapshotIntent) async -> SnapshotEntry {
         guard WidgetSettingsStore.isConfigured else {
-            return SnapshotEntry(date: .now, snapshot: nil, logoData: nil, errorMessage: "打开 App 配置 API Key")
+            return SnapshotEntry(date: .now, snapshot: nil, logoData: nil, errorMessage: "打开 App 配置 API Key", switcher: nil)
         }
+
+        let intentIndex = max(0, configuration.storeIndex)
+        guard let profile = WidgetSettingsStore.activeProfile(fallbackFromIntent: intentIndex) else {
+            return SnapshotEntry(date: .now, snapshot: nil, logoData: nil, errorMessage: "打开 App 配置 API Key", switcher: nil)
+        }
+
+        let switcher = makeSwitcherInfo(profile: profile, intentIndex: intentIndex)
         let ymd = WidgetReportDateResolver.reportDateYmd(intent: configuration)
+
         do {
-            let snap = try await SnapshotClient.fetch(reportDateYmd: ymd)
+            let snap = try await SnapshotClient.fetch(
+                baseURL: WidgetSettingsStore.baseURL,
+                apiKey: profile.trimmedApiKey,
+                reportDateYmd: ymd,
+            )
             let logoData = await StoreLogoLoader.fetchData(from: snap.store.logoUrl)
-            return SnapshotEntry(date: .now, snapshot: snap, logoData: logoData, errorMessage: nil)
+            return SnapshotEntry(date: .now, snapshot: snap, logoData: logoData, errorMessage: nil, switcher: switcher)
         } catch {
-            return SnapshotEntry(date: .now, snapshot: nil, logoData: nil, errorMessage: error.localizedDescription)
+            return SnapshotEntry(date: .now, snapshot: nil, logoData: nil, errorMessage: error.localizedDescription, switcher: switcher)
         }
+    }
+
+    private func makeSwitcherInfo(profile: WidgetStoreProfile, intentIndex: Int) -> StoreSwitcherInfo {
+        let valid = WidgetSettingsStore.storeProfiles.filter(\.isValidKey)
+        let idx = WidgetSettingsStore.activeStoreIndex(fallbackFromIntent: intentIndex)
+        return StoreSwitcherInfo(
+            canSwitch: valid.count > 1,
+            currentIndex: idx + 1,
+            total: valid.count,
+            profileLabel: profile.displayLabel
+        )
     }
 
     private var demoSnapshot: WidgetSnapshot {

@@ -32,6 +32,14 @@ ensure_xcodegen() {
   chmod +x "$XCODEGEN"
 }
 
+ensure_local_defaults() {
+  local dst="$ROOT/Shared/WidgetLocalDefaults.swift"
+  if [[ ! -f "$dst" ]]; then
+    log "Creating WidgetLocalDefaults.swift from example..."
+    cp "$ROOT/Shared/WidgetLocalDefaults.example.swift" "$dst"
+  fi
+}
+
 generate_project() {
   log "Generating Xcode project..."
   "$XCODEGEN" generate --spec project.yml
@@ -103,6 +111,7 @@ main() {
   command -v xcodebuild >/dev/null || { echo "Xcode CLI not found. Install Xcode from App Store."; exit 1; }
 
   ensure_xcodegen
+  ensure_local_defaults
   generate_project
 
   UDID="$(resolve_sim_udid)"

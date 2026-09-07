@@ -17,7 +17,7 @@ struct LZFoodWidget: Widget {
             LZFoodWidgetEntryView(entry: entry)
         }
         .configurationDisplayName("LZFood 营业")
-        .description("当天净营业额、订单数与支付方式。真机可在编辑 Widget 时改统计日期。")
+        .description("当天净营业额、订单数与支付方式。Medium 尺寸可点 ◀ ▶ 切换店铺（最多 4 家）。")
         .supportedFamilies([
             .systemSmall,
             .systemMedium,
