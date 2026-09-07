@@ -25,6 +25,14 @@ import {
   CASHIER_MENU_CACHE_MAX_AGE_MS,
 } from '../../utils/cashierMenuSessionCache';
 import {
+  cashierCartDraftKey,
+  getCashierCartDraft,
+  setCashierCartDraft,
+  clearCashierCartDraft,
+  emptyCashierCartDraft,
+  type CashierCartDraft,
+} from '../../utils/cashierCartDraftSession';
+import {
   DELIVERY_FEE_RULES_CONFIG_KEY,
   deliveryFeeForDistance,
   parseDeliveryFeeEuroInput,
@@ -155,6 +163,15 @@ function buildLinesFromActiveDineInOrders(orders: ActiveDineInOrderRow[], lang: 
 let lineIdCounter = 0;
 function nextLineId() { return `line-${++lineIdCounter}-${Date.now()}`; }
 
+function bumpLineIdCounterFromLines(lines: Array<{ id: string }>) {
+  for (const l of lines) {
+    const m = /^line-(\d+)-/.exec(l.id);
+    if (!m) continue;
+    const n = parseInt(m[1], 10);
+    if (Number.isFinite(n)) lineIdCounter = Math.max(lineIdCounter, n);
+  }
+}
+
 function lineGroupKey(line: OrderLine): string {
   const optsKey =
     line.options && line.options.length > 0
@@ -256,7 +273,7 @@ interface FrequentItemRow {
 
 export default function CashierOrder() {
   const { t, i18n } = useTranslation();
-  const { token, hasFeature } = useAuth();
+  const { token, hasFeature, user } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const editOrderIdParam = searchParams.get('editOrderId')?.trim() || '';
   const [waiterMode, setWaiterMode] = useState(() =>
@@ -269,6 +286,11 @@ export default function CashierOrder() {
   const canMemberWallet = hasFeature('cashier.member.wallet');
   const canInventoryTracking = hasFeature('inventory.tracking');
   const lang = i18n.language;
+
+  const draftKey = cashierCartDraftKey(getConfiguredStoreSlug(), user?.username || 'anon');
+  /** URL 带改单时先空车再拉单；否则从会话草稿恢复（切订单中心不丢） */
+  const draftSeed = !editOrderIdParam ? getCashierCartDraft(draftKey) : undefined;
+  if (draftSeed?.order?.length) bumpLineIdCounterFromLines(draftSeed.order);
 
   const menuSessionCacheKey = cashierMenuSessionCacheKey(getConfiguredStoreSlug(), lang);
   const initialMenuCache = getCashierMenuSessionCache(menuSessionCacheKey);
@@ -337,30 +359,40 @@ export default function CashierOrder() {
   }, [lang, fetchBomSnapshot]);
   const [activeCat, setActiveCat] = useState(() => initialMenuCache?.categories[0]?._id ?? '');
   const [search, setSearch] = useState('');
-  const [order, setOrder] = useState<OrderLine[]>([]);
-  const [orderType, setOrderType] = useState<'dine_in' | 'takeout' | 'phone' | 'delivery'>('dine_in');
+  const [order, setOrder] = useState<OrderLine[]>(() => (draftSeed?.order as OrderLine[] | undefined) ?? []);
+  const [orderType, setOrderType] = useState<'dine_in' | 'takeout' | 'phone' | 'delivery'>(
+    () => draftSeed?.orderType ?? 'dine_in',
+  );
   /** 电话单：后端要求 `customerPhone`（见 POST /api/orders type=phone） */
-  const [phoneGuestPhone, setPhoneGuestPhone] = useState('');
-  const [phoneGuestName, setPhoneGuestName] = useState('');
+  const [phoneGuestPhone, setPhoneGuestPhone] = useState(() => draftSeed?.phoneGuestPhone ?? '');
+  const [phoneGuestName, setPhoneGuestName] = useState(() => draftSeed?.phoneGuestName ?? '');
   /** 电话单 / 电话来源送餐：下单时已通过电话收取刷卡款（Checkout 记为 card） */
-  const [phoneCardPaidAtPlacement, setPhoneCardPaidAtPlacement] = useState(false);
+  const [phoneCardPaidAtPlacement, setPhoneCardPaidAtPlacement] = useState(
+    () => draftSeed?.phoneCardPaidAtPlacement ?? false,
+  );
   /** 收银送餐（phone 来源）：与历史版本一致，下单后为 pending，顾客可再线上支付 */
-  const [deliveryCustomerName, setDeliveryCustomerName] = useState('');
-  const [deliveryCustomerPhone, setDeliveryCustomerPhone] = useState('');
-  const [deliveryAddress, setDeliveryAddress] = useState('');
-  const [deliveryPostalCode, setDeliveryPostalCode] = useState('');
+  const [deliveryCustomerName, setDeliveryCustomerName] = useState(() => draftSeed?.deliveryCustomerName ?? '');
+  const [deliveryCustomerPhone, setDeliveryCustomerPhone] = useState(() => draftSeed?.deliveryCustomerPhone ?? '');
+  const [deliveryAddress, setDeliveryAddress] = useState(() => draftSeed?.deliveryAddress ?? '');
+  const [deliveryPostalCode, setDeliveryPostalCode] = useState(() => draftSeed?.deliveryPostalCode ?? '');
   const [deliveryFeeRules, setDeliveryFeeRules] = useState<DeliveryFeeTier[]>([]);
   const [deliveryGeoLoading, setDeliveryGeoLoading] = useState(false);
-  const [deliveryDistanceKm, setDeliveryDistanceKm] = useState<number | null>(null);
-  const [deliveryFeeInput, setDeliveryFeeInput] = useState('0.00');
-  const [deliveryFeeTouched, setDeliveryFeeTouched] = useState(false);
+  const [deliveryDistanceKm, setDeliveryDistanceKm] = useState<number | null>(
+    () => draftSeed?.deliveryDistanceKm ?? null,
+  );
+  const [deliveryFeeInput, setDeliveryFeeInput] = useState(() => draftSeed?.deliveryFeeInput ?? '0.00');
+  const [deliveryFeeTouched, setDeliveryFeeTouched] = useState(() => draftSeed?.deliveryFeeTouched ?? false);
   const [deliveryGeoError, setDeliveryGeoError] = useState('');
-  const [deliveryCustomerProfileId, setDeliveryCustomerProfileId] = useState('');
+  const [deliveryCustomerProfileId, setDeliveryCustomerProfileId] = useState(
+    () => draftSeed?.deliveryCustomerProfileId ?? '',
+  );
   const [deliveryProfiles, setDeliveryProfiles] = useState<DeliveryProfileRow[]>([]);
   const geoReqRef = useRef(0);
   const memberDeliveryLookupReqRef = useRef(0);
   const deliveryPhoneRef = useRef('');
-  const [deliveryCustomerCollapsed, setDeliveryCustomerCollapsed] = useState(false);
+  const [deliveryCustomerCollapsed, setDeliveryCustomerCollapsed] = useState(
+    () => draftSeed?.deliveryCustomerCollapsed ?? false,
+  );
   const menuScrollRef = useRef<HTMLDivElement>(null);
   const categorySectionRefs = useRef<Record<string, HTMLElement | null>>({});
   const categoryBtnRefs = useRef<Record<string, HTMLButtonElement | null>>({});
@@ -403,8 +435,8 @@ export default function CashierOrder() {
 
   /** 与后台 / 管理端「堂食流程」一致：切换 pay_first / pay_after 时分流 */
   const [dineInWorkflowMode, setDineInWorkflowMode] = useState<'pay_first' | 'pay_after'>('pay_first');
-  const [counterTableInput, setCounterTableInput] = useState('');
-  const [counterGuestLabel, setCounterGuestLabel] = useState('');
+  const [counterTableInput, setCounterTableInput] = useState(() => draftSeed?.counterTableInput ?? '');
+  const [counterGuestLabel, setCounterGuestLabel] = useState(() => draftSeed?.counterGuestLabel ?? '');
   const [activeTableOrders, setActiveTableOrders] = useState<ActiveDineInOrderRow[]>([]);
   const [activeTableOrdersLoading, setActiveTableOrdersLoading] = useState(false);
   const dineInActiveFetchGen = useRef(0);
@@ -415,11 +447,16 @@ export default function CashierOrder() {
     tableNumber: number;
   } | null>(null);
   /** 从订单中心载入的扫码待改单 */
-  const [editingOrderId, setEditingOrderId] = useState<string | null>(null);
-  const [editOrderLabel, setEditOrderLabel] = useState('');
+  const [editingOrderId, setEditingOrderId] = useState<string | null>(
+    () => (!editOrderIdParam ? draftSeed?.editingOrderId ?? null : null),
+  );
+  const [editOrderLabel, setEditOrderLabel] = useState(
+    () => (!editOrderIdParam ? draftSeed?.editOrderLabel ?? '' : ''),
+  );
   const [editOrderLoading, setEditOrderLoading] = useState(false);
   const [editOrderLoadError, setEditOrderLoadError] = useState('');
   const editLoadGenRef = useRef(0);
+  const draftPersistReadyRef = useRef(false);
 
   const refreshDineInWorkflowMode = useCallback(async (): Promise<'pay_first' | 'pay_after'> => {
     try {
@@ -536,12 +573,95 @@ export default function CashierOrder() {
     setEditOrderLoadError('');
     setOrder([]);
     setSearchParams({}, { replace: true });
-  }, [setSearchParams]);
+    clearCashierCartDraft(draftKey);
+    setCashierCartDraft(draftKey, emptyCashierCartDraft());
+  }, [setSearchParams, draftKey]);
+
+  const applyDraftSnapshot = useCallback((d: CashierCartDraft) => {
+    bumpLineIdCounterFromLines(d.order);
+    setOrder(d.order as OrderLine[]);
+    setOrderType(d.orderType);
+    setPhoneGuestPhone(d.phoneGuestPhone);
+    setPhoneGuestName(d.phoneGuestName);
+    setPhoneCardPaidAtPlacement(d.phoneCardPaidAtPlacement);
+    setDeliveryCustomerName(d.deliveryCustomerName);
+    setDeliveryCustomerPhone(d.deliveryCustomerPhone);
+    setDeliveryAddress(d.deliveryAddress);
+    setDeliveryPostalCode(d.deliveryPostalCode);
+    setDeliveryDistanceKm(d.deliveryDistanceKm);
+    setDeliveryFeeInput(d.deliveryFeeInput);
+    setDeliveryFeeTouched(d.deliveryFeeTouched);
+    setDeliveryCustomerProfileId(d.deliveryCustomerProfileId);
+    setDeliveryCustomerCollapsed(d.deliveryCustomerCollapsed);
+    setCounterTableInput(d.counterTableInput);
+    setCounterGuestLabel(d.counterGuestLabel);
+    setEditingOrderId(d.editingOrderId);
+    setEditOrderLabel(d.editOrderLabel);
+  }, []);
+
+  /** 下单/结账成功后立刻清草稿（成功页期间 persist 会跳过，避免旧车残留） */
+  const purgeCartDraft = useCallback(() => {
+    clearCashierCartDraft(draftKey);
+    setCashierCartDraft(draftKey, emptyCashierCartDraft());
+  }, [draftKey]);
+
+  /** 点单草稿：切到订单中心再回来不丢；改单加载中 / 成功页不写，避免空车覆盖 */
+  useEffect(() => {
+    if (!draftPersistReadyRef.current) {
+      draftPersistReadyRef.current = true;
+      return;
+    }
+    if (editOrderLoading) return;
+    if (checkoutId || phoneOrderId || dineInSubmittedInfo) return;
+    setCashierCartDraft(draftKey, {
+      order,
+      orderType,
+      phoneGuestPhone,
+      phoneGuestName,
+      phoneCardPaidAtPlacement,
+      deliveryCustomerName,
+      deliveryCustomerPhone,
+      deliveryAddress,
+      deliveryPostalCode,
+      deliveryFeeInput,
+      deliveryFeeTouched,
+      deliveryDistanceKm,
+      deliveryCustomerProfileId,
+      deliveryCustomerCollapsed,
+      counterTableInput,
+      counterGuestLabel,
+      editingOrderId,
+      editOrderLabel,
+    });
+  }, [
+    draftKey,
+    order,
+    orderType,
+    phoneGuestPhone,
+    phoneGuestName,
+    phoneCardPaidAtPlacement,
+    deliveryCustomerName,
+    deliveryCustomerPhone,
+    deliveryAddress,
+    deliveryPostalCode,
+    deliveryFeeInput,
+    deliveryFeeTouched,
+    deliveryDistanceKm,
+    deliveryCustomerProfileId,
+    deliveryCustomerCollapsed,
+    counterTableInput,
+    counterGuestLabel,
+    editingOrderId,
+    editOrderLabel,
+    editOrderLoading,
+    checkoutId,
+    phoneOrderId,
+    dineInSubmittedInfo,
+  ]);
 
   useEffect(() => {
     if (!editOrderIdParam) {
-      setEditingOrderId(null);
-      setEditOrderLabel('');
+      // 无 URL 改单参数时保留会话草稿里的 editing（切订单中心再回点单）
       return;
     }
     if (!token) return;
@@ -559,6 +679,8 @@ export default function CashierOrder() {
         if (gen !== editLoadGenRef.current) return;
         if (!orderRes.ok) {
           setEditOrderLoadError(t('cashier.editOrderLoadFailed', '无法载入订单'));
+          const prev = getCashierCartDraft(draftKey);
+          if (prev?.order?.length) applyDraftSnapshot(prev);
           return;
         }
         const orderData = (await orderRes.json()) as ActiveDineInOrderRow & {
@@ -575,6 +697,8 @@ export default function CashierOrder() {
         };
         if (!cashierMayEditQrOrder(orderData, wf)) {
           setEditOrderLoadError(t('cashier.editOrderNotEligible', '该订单不可修改（须 pending、未付款、未送厨房）'));
+          const prev = getCashierCartDraft(draftKey);
+          if (prev?.order?.length) applyDraftSnapshot(prev);
           return;
         }
         const ot = orderData.type === 'takeout' ? 'takeout' : 'dine_in';
@@ -583,8 +707,11 @@ export default function CashierOrder() {
         const lines = buildLinesFromActiveDineInOrders([{ ...orderData, _id: editOrderIdParam }], lang);
         if (lines.length === 0) {
           setEditOrderLoadError(t('cashier.editOrderEmpty', '订单无菜品可载入'));
+          const prev = getCashierCartDraft(draftKey);
+          if (prev?.order?.length) applyDraftSnapshot(prev);
           return;
         }
+        // 改单覆盖当前购物车草稿（明确进入编辑）
         setOrderType(ot);
         setOrder(lines);
         setEditingOrderId(editOrderIdParam);
@@ -597,12 +724,14 @@ export default function CashierOrder() {
       } catch {
         if (gen === editLoadGenRef.current) {
           setEditOrderLoadError(t('cashier.editOrderLoadFailed', '无法载入订单'));
+          const prev = getCashierCartDraft(draftKey);
+          if (prev?.order?.length) applyDraftSnapshot(prev);
         }
       } finally {
         if (gen === editLoadGenRef.current) setEditOrderLoading(false);
       }
     })();
-  }, [editOrderIdParam, token, lang, fetchMenu, refreshDineInWorkflowMode, t]);
+  }, [editOrderIdParam, token, lang, fetchMenu, refreshDineInWorkflowMode, t, draftKey, applyDraftSnapshot]);
 
   useEffect(() => {
     if (orderType !== 'delivery' || !token) {
@@ -1695,6 +1824,7 @@ export default function CashierOrder() {
       setPhoneGuestPhone('');
       setPhoneGuestName('');
       setPhoneCardPaidAtPlacement(false);
+      purgeCartDraft();
     } catch (e) {
       setError(e instanceof Error ? e.message : t('common.error'));
     } finally {
@@ -1892,6 +2022,7 @@ export default function CashierOrder() {
       setDeliveryCustomerCollapsed(false);
       setFrequentItems([]);
       setPhoneCardPaidAtPlacement(false);
+      purgeCartDraft();
     } catch (e) {
       setError(e instanceof Error ? e.message : t('common.error'));
     } finally {
@@ -1976,11 +2107,23 @@ export default function CashierOrder() {
     return [...grouped.values()];
   };
 
+  /** 收银堂食桌号：选填；空→0；有值须为 ≥1 整数。返回 null 表示格式错误。 */
+  const resolveOptionalDineInTableNumber = (): number | null => {
+    const raw = counterTableInput.trim();
+    if (raw === '') return 0;
+    const tableNum = parseInt(raw, 10);
+    if (!Number.isFinite(tableNum) || tableNum < 1) return null;
+    return tableNum;
+  };
+
   const buildOrderCreateBody = (): Record<string, unknown> => {
     const orderBody: Record<string, unknown> = { type: orderType, items: buildGroupedItems() };
     if (orderType === 'dine_in') {
-      orderBody.tableNumber = 0;
+      const tableNum = resolveOptionalDineInTableNumber();
+      orderBody.tableNumber = tableNum == null ? 0 : tableNum;
       orderBody.seatNumber = 0;
+      const gl = counterGuestLabel.trim();
+      if (gl) orderBody.dineInGuestLabel = gl.slice(0, 40);
     }
     if (orderType === 'takeout') orderBody.staffTakeoutPlacement = true;
     if (matchedBundles.length > 0) {
@@ -2078,14 +2221,25 @@ export default function CashierOrder() {
       }
     }
     const rawTable = counterTableInput.trim();
-    if (rawTable === '') {
-      setError(t('cashier.counterTableRequired'));
-      return;
-    }
-    const tableNum = parseInt(rawTable, 10);
-    if (!Number.isFinite(tableNum) || tableNum < 1) {
-      setError(t('cashier.counterTableInvalidFormat'));
-      return;
+    // 服务员仍须填桌号；收银台堂食桌号选填
+    let tableNum = 0;
+    if (waiterMode) {
+      if (rawTable === '') {
+        setError(t('cashier.counterTableRequired'));
+        return;
+      }
+      tableNum = parseInt(rawTable, 10);
+      if (!Number.isFinite(tableNum) || tableNum < 1) {
+        setError(t('cashier.counterTableInvalidFormat'));
+        return;
+      }
+    } else {
+      const resolved = resolveOptionalDineInTableNumber();
+      if (resolved == null) {
+        setError(t('cashier.counterTableInvalidFormat'));
+        return;
+      }
+      tableNum = resolved;
     }
     setPaying(true);
     setError('');
@@ -2195,6 +2349,7 @@ export default function CashierOrder() {
       setOrder([]);
       setCounterTableInput('');
       setCounterGuestLabel('');
+      purgeCartDraft();
     } catch (e) {
       setError(e instanceof Error ? e.message : t('common.error'));
     } finally {
@@ -2205,6 +2360,12 @@ export default function CashierOrder() {
   const handleOpenPayment = async () => {
     if (order.length === 0) return;
     if (orderType === 'delivery') return;
+    if (orderType === 'dine_in' && !waiterMode) {
+      if (resolveOptionalDineInTableNumber() == null) {
+        setError(t('cashier.counterTableInvalidFormat'));
+        return;
+      }
+    }
     setPaymentModalPreparing(true);
     setError('');
     try {
@@ -2266,6 +2427,7 @@ export default function CashierOrder() {
       applyInventoryUpdates(orderData?.inventoryUpdates || []);
       setPhoneOrderId(orderData._id);
       setOrder([]);
+      purgeCartDraft();
     } catch (e) {
       setError(e instanceof Error ? e.message : t('common.error'));
     } finally {
@@ -2426,6 +2588,7 @@ export default function CashierOrder() {
         setEditOrderLabel('');
         setSearchParams({}, { replace: true });
       }
+      purgeCartDraft();
     } catch (e) {
       setError(e instanceof Error ? e.message : t('common.error'));
     } finally {
@@ -2448,7 +2611,7 @@ export default function CashierOrder() {
           <h2 style={{ color: 'var(--green)', marginBottom: 12 }}>{t('cashier.dineInOrderCreatedTitle')}</h2>
           <p style={{ fontSize: 14, color: 'var(--text-secondary)', marginBottom: 16 }}>
             {t('cashier.dineInOrderCreatedBody', {
-              table: dineInSubmittedInfo.tableNumber,
+              table: dineInSubmittedInfo.tableNumber > 0 ? dineInSubmittedInfo.tableNumber : '—',
               orderNo: no,
             })}
           </p>
@@ -2822,11 +2985,13 @@ export default function CashierOrder() {
           </div>
         ) : null}
 
-        {!waiterMode && orderType === 'dine_in' && dineInWorkflowMode === 'pay_after' && (
+        {!waiterMode && orderType === 'dine_in' && (
           <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 8 }}>
             <div style={{ display: 'flex', gap: 8, alignItems: 'stretch' }}>
               <label style={{ flex: '0 0 96px', display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
-                <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)' }}>{t('cashier.table')} *</span>
+                <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)' }}>
+                  {t('cashier.table')}（{t('cashier.dineInGuestInputPh')}）
+                </span>
                 <input
                   className="input"
                   type="number"
@@ -2851,7 +3016,7 @@ export default function CashierOrder() {
                 />
               </label>
             </div>
-            {(() => {
+            {dineInWorkflowMode === 'pay_after' ? (() => {
               const rawT = counterTableInput.trim();
               const tn = parseInt(rawT, 10);
               const tableOk = rawT !== '' && Number.isFinite(tn) && tn >= 1;
@@ -2908,37 +3073,23 @@ export default function CashierOrder() {
                           style={{
                             marginBottom: idx < activeTableOrders.length - 1 ? 6 : 0,
                             paddingBottom: idx < activeTableOrders.length - 1 ? 6 : 0,
-                            borderBottom: idx < activeTableOrders.length - 1 ? '1px dashed #e8e8e8' : 'none',
+                            borderBottom: idx < activeTableOrders.length - 1 ? '1px dashed #e0e0e0' : undefined,
                             cursor: busy ? 'wait' : 'pointer',
-                            opacity: busy ? 0.65 : 1,
-                            borderRadius: 6,
-                            padding: '6px 6px',
-                            marginLeft: -6,
-                            marginRight: -6,
-                            outline: 'none',
-                          }}
-                          onMouseEnter={(e) => {
-                            if (!busy) (e.currentTarget as HTMLDivElement).style.background = '#f0f0f0';
-                          }}
-                          onMouseLeave={(e) => {
-                            (e.currentTarget as HTMLDivElement).style.background = 'transparent';
+                            opacity: busy ? 0.6 : 1,
                           }}
                         >
-                          <div style={{ fontWeight: 600, color: '#333' }}>
+                          <div style={{ fontWeight: 600 }}>
                             {ord.dineInOrderNumber?.trim() || ord._id.slice(-6)}
-                            {ord.dineInGuestLabel?.trim() ? (
-                              <span style={{ fontWeight: 500, color: '#6d4c41', marginLeft: 6 }}>· {ord.dineInGuestLabel.trim()}</span>
-                            ) : null}
-                            {busy ? <span style={{ marginLeft: 6, fontWeight: 500, color: 'var(--text-light)' }}>…</span> : null}
+                            {ord.dineInGuestLabel?.trim() ? ` · ${ord.dineInGuestLabel.trim()}` : ''}
                           </div>
-                          <div style={{ color: '#616161', marginTop: 3 }}>{summary || '—'}</div>
+                          <div style={{ color: '#757575', marginTop: 2 }}>{summary || '—'}</div>
                         </div>
                       );
                     })
                   )}
                 </div>
               );
-            })()}
+            })() : null}
           </div>
         )}
 

@@ -253,6 +253,42 @@ function countReceiptItemQty(receipt: ReceiptData): number {
   return total;
 }
 
+type ReceiptOrderChannel = 'dine_in' | 'takeout' | 'phone' | 'delivery';
+
+/** Primary channel for a checkout receipt (first matching order type). */
+function receiptPrimaryOrderType(receipt: ReceiptData): ReceiptOrderChannel {
+  if (receipt.orders.some((o) => o.type === 'dine_in')) return 'dine_in';
+  if (receipt.orders.some((o) => o.type === 'phone')) return 'phone';
+  if (receipt.orders.some((o) => o.type === 'delivery')) return 'delivery';
+  return 'takeout';
+}
+
+/** Large icon under Total — kitchen/counter can spot order type at a glance. */
+function receiptOrderTypeIcon(type: ReceiptOrderChannel): { icon: string; labelZh: string; labelEn: string } {
+  switch (type) {
+    case 'dine_in':
+      // 餐盘 + 刀叉（堂食）
+      return { icon: '🍽️', labelZh: '堂食', labelEn: 'Dine-in' };
+    case 'phone':
+      return { icon: '📞', labelZh: '电话', labelEn: 'Phone' };
+    case 'delivery':
+      return { icon: '🛵', labelZh: '送餐', labelEn: 'Delivery' };
+    default:
+      // 购物袋：店内自取/carry-out，比饭盒更贴「自取」
+      return { icon: '🛍️', labelZh: '外卖自取', labelEn: 'Takeout' };
+  }
+}
+
+function receiptOrderTypeIconHtml(receipt: ReceiptData): string {
+  const meta = receiptOrderTypeIcon(receiptPrimaryOrderType(receipt));
+  return `<div class="center" style="margin:10px 0 6px;font-size:42px;line-height:1;font-weight:normal" aria-label="${escapeReceiptHtml(meta.labelEn)} / ${escapeReceiptHtml(meta.labelZh)}">${meta.icon}</div>`;
+}
+
+function receiptOrderTypeIconPlain(receipt: ReceiptData): string {
+  const meta = receiptOrderTypeIcon(receiptPrimaryOrderType(receipt));
+  return plainCenter(`${meta.icon}  ${meta.labelEn} / ${meta.labelZh}`);
+}
+
 /** Delivery fee as an order line vs legacy order.deliveryFeeEuro only */
 function receiptDeliveryFeeBreakdown(receipt: ReceiptData): { deliveryAmt: number; showLegacyDeliveryRow: boolean } {
   let fromItems = 0;
@@ -557,6 +593,7 @@ function buildReceiptPlainText(
     if (showLegacyDeliveryRow) lines.push(plainRow('Delivery', formatPlainEuro(deliveryAmt)));
     lines.push(plainTotalRow('Total', formatPlainEuro(receipt.totalAmount)));
   }
+  lines.push(receiptOrderTypeIconPlain(receipt));
   lines.push(plainRow('Status / 付款', paymentBlock.status));
   lines.push(plainRow('Payment / 支付', paymentBlock.method));
   if ((receipt.memberCreditUsed ?? 0) > 0.001) {
@@ -790,6 +827,7 @@ function buildReceiptHTML(
     }
     html += `<div class="row" style="font-size:18px"><span>Total</span><span>€${receipt.totalAmount.toFixed(2)}</span></div>`;
   }
+  html += receiptOrderTypeIconHtml(receipt);
   html += `<div class="row" style="margin-top:4px"><span>Status / 付款</span><span>${paymentBlock.status}</span></div>`;
   html += `<div class="row"><span>Payment / 支付</span><span>${paymentBlock.method}</span></div>`;
   if ((receipt.memberCreditUsed ?? 0) > 0.001) {
@@ -1086,6 +1124,14 @@ export default function ReceiptPrint({ checkoutId, cashReceived, changeAmount, b
             ) : null}
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 17 }}><span>Total</span><span>€{receipt.totalAmount.toFixed(2)}</span></div>
           </>
+        );
+      })()}
+      {(() => {
+        const meta = receiptOrderTypeIcon(receiptPrimaryOrderType(receipt));
+        return (
+          <div style={{ textAlign: 'center', margin: '10px 0 6px', fontSize: 42, lineHeight: 1, fontWeight: 'normal' }} title={`${meta.labelEn} / ${meta.labelZh}`}>
+            {meta.icon}
+          </div>
         );
       })()}
       <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}><span>Status / 付款</span><span>{paymentBlock.status}</span></div>

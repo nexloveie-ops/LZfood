@@ -16,6 +16,7 @@ import LanguageSwitcher from '../components/LanguageSwitcher';
 import { useRestaurantConfig } from '../hooks/useRestaurantConfig';
 import { apiFetch } from '../api/client';
 import { bindWaiterKeyboardInset, isWaiterMode, syncWaiterModeFromSearch, waiterQuerySuffix } from '../utils/waiterMode';
+import { clearCashierCartDraftsForStore } from '../utils/cashierCartDraftSession';
 import './cashier-shell.css';
 
 export default function CashierLayout() {
@@ -109,6 +110,7 @@ export default function CashierLayout() {
   }, [user?.storeId]);
 
   const handleLogout = () => {
+    if (storeSlug) clearCashierCartDraftsForStore(storeSlug);
     logout();
     navigate(`/${storeSlug}/login${waiterQuerySuffix()}`);
   };

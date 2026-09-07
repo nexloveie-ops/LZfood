@@ -12,6 +12,11 @@ backend/seed-admin.ts
 # Local snapshots (git bundle / tar); do not commit
 backups/
 
+# Flutter Windows cashier
+windows-cashier/.dart_tool/
+windows-cashier/build/
+windows-cashier/.flutter-plugins-dependencies
+
 # iOS Widget (XcodeGen local artifacts)
 ios-widget/.tools/
 ios-widget/.build/
