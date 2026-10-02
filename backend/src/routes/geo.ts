@@ -10,6 +10,7 @@ import { normalizeIrishEircode } from '../utils/irishEircode';
 import { googleGeocodeAddress } from '../utils/googleGeocode';
 import { haversineKm } from '../utils/haversineKm';
 import { resolveAddressToEircode } from '../utils/resolveAddressEircode';
+import { lookupEircodePlace } from '../utils/resolveEircodeLookup';
 
 type StoreGeoCache = { lat: number; lng: number; at: number };
 const storeLatLngCache = new Map<string, StoreGeoCache>();
@@ -97,7 +98,7 @@ async function handleEircodeGet(req: Request, res: Response, next: NextFunction)
       );
     }
 
-    const dest = await googleGeocodeAddress(`${eircode}, Ireland`, apiKey);
+    const dest = await lookupEircodePlace(eircode, apiKey);
     if (!dest) {
       throw createAppError('VALIDATION_ERROR', '无法识别该邮编，请核对后重试');
     }

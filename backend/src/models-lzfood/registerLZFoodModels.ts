@@ -23,6 +23,8 @@ import { PlatformMemberSchema } from './PlatformMember';
 import { PlatformMemberWalletTxnSchema } from './PlatformMemberWalletTxn';
 import { PlatformTopUpCardSchema } from './PlatformTopUpCard';
 import { PlatformStorePayoutSchema } from './PlatformStorePayout';
+import { PlatformGeoSessionSchema } from './PlatformGeoSession';
+import { PlatformEircodeCacheSchema } from './PlatformEircodeCache';
 import { AdminAuditLogSchema } from './AdminAuditLog';
 import { LZFoodAdminSchema } from './LZFoodAdmin';
 import { PostOrderAdSchema } from './PostOrderAd';
@@ -119,6 +121,8 @@ export type LZFoodModels = {
   PlatformMemberWalletTxn: Model<unknown>;
   PlatformTopUpCard: Model<unknown>;
   PlatformStorePayout: Model<unknown>;
+  PlatformGeoSession: Model<unknown>;
+  PlatformEircodeCache: Model<unknown>;
 };
 
 let cached: LZFoodModels | null = null;
@@ -223,6 +227,16 @@ export function registerLZFoodModels(conn: Connection): LZFoodModels {
     PlatformStorePayoutSchema,
     'platform_store_payouts',
   );
+  const PlatformGeoSession = m(
+    'PlatformGeoSession',
+    PlatformGeoSessionSchema,
+    'platform_geo_sessions',
+  );
+  const PlatformEircodeCache = m(
+    'PlatformEircodeCache',
+    PlatformEircodeCacheSchema,
+    'platform_eircode_cache',
+  );
 
   cached = {
     Store,
@@ -267,6 +281,8 @@ export function registerLZFoodModels(conn: Connection): LZFoodModels {
     PlatformMemberWalletTxn,
     PlatformTopUpCard,
     PlatformStorePayout,
+    PlatformGeoSession,
+    PlatformEircodeCache,
   };
   return cached;
 }

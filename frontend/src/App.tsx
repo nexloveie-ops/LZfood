@@ -13,6 +13,7 @@ import PlatformIntegrationsPage from './pages/platform/PlatformIntegrationsPage'
 import PlatformCloudPrintersPage from './pages/platform/PlatformCloudPrintersPage';
 import PlatformMembershipPage from './pages/platform/PlatformMembershipPage';
 import PlatformGiftCardsPage from './pages/platform/PlatformGiftCardsPage';
+import PlatformGeoLookupPage from './pages/platform/PlatformGeoLookupPage';
 import LoginPage from './pages/LoginPage';
 import CustomerLayout from './layouts/CustomerLayout';
 import CashierLayout from './layouts/CashierLayout';
@@ -166,6 +167,7 @@ export default function App() {
             <Route path="cloud-printers" element={<PlatformCloudPrintersPage />} />
             <Route path="membership" element={<PlatformMembershipPage />} />
             <Route path="gift-cards" element={<PlatformGiftCardsPage />} />
+            <Route path="geo-lookup" element={<PlatformGeoLookupPage />} />
           </Route>
 
           <Route path="/:storeSlug" element={<StoreRouteShell />}>

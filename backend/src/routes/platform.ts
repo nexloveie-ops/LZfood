@@ -35,6 +35,7 @@ import {
 import { allocatePlatformMemberNo } from '../utils/platformMemberIdentity';
 import { creditPlatformMemberWallet, debitPlatformGuestWalletByAdmin } from '../utils/platformMemberWalletOps';
 import platformGiftCardsRouter from './platformGiftCards';
+import platformGeoLookupRouter from './platformGeoLookup';
 import {
   STRIPE_PUBLISHABLE_CONFIG_KEY,
   STRIPE_SECRET_CONFIG_KEY,
@@ -1374,5 +1375,6 @@ router.post('/membership/members/:id/guest-credit', ...platformAuth, async (req:
 });
 
 router.use(platformGiftCardsRouter);
+router.use(platformGeoLookupRouter);
 
 export default router;
