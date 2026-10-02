@@ -59,7 +59,7 @@ export default function PlatformIntegrationsPage() {
   }, [load]);
 
   return (
-    <div style={{ maxWidth: 900 }}>
+    <div style={{ width: '100%' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
         <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: '#1a237e' }}>API usage & balances</h1>
         <button type="button" className="btn btn-outline" onClick={() => void load()} disabled={loading}>

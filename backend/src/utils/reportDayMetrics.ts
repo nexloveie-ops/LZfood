@@ -6,12 +6,9 @@ import {
   type ReportCheckoutLike,
 } from './reportNetRevenue';
 import { queryUtcBoundsForZonedRange } from './reportSegmentBreakdown';
+import { omitOrderFromStoreSales } from './reportOrderExclusions';
 
 const REPORT_STATS_ORDER_STATUSES = ['checked_out', 'completed', 'refunded'] as const;
-
-function statusContainsHide(status: unknown): boolean {
-  return String(status ?? '').toLowerCase().includes('hide');
-}
 
 async function checkoutIdsToSkipWhenLinkedOrderHidden(
   storeId: mongoose.Types.ObjectId,
@@ -28,12 +25,12 @@ async function checkoutIdsToSkipWhenLinkedOrderHidden(
     storeId,
     _id: { $in: oidStrs.map((id) => new mongoose.Types.ObjectId(id)) },
   })
-    .select('_id status')
-    .lean()) as { _id: mongoose.Types.ObjectId; status?: string }[];
-  const stById = new Map(rows.map((r) => [r._id.toString(), r.status]));
+    .select('_id status memberWallet')
+    .lean()) as { _id: mongoose.Types.ObjectId; status?: string; memberWallet?: string }[];
+  const stById = new Map(rows.map((r) => [r._id.toString(), r]));
   for (const c of checkouts) {
-    const anyHide = (c.orderIds || []).some((oid) => statusContainsHide(stById.get(oid.toString())));
-    if (anyHide) skip.add(String(c._id));
+    const anyOmit = (c.orderIds || []).some((oid) => omitOrderFromStoreSales(stById.get(oid.toString())));
+    if (anyOmit) skip.add(String(c._id));
   }
   return skip;
 }
@@ -88,7 +85,7 @@ export async function computeStoreDayReportMetrics(
   };
 
   const allOrdersRaw = (await Order.find(orderFilter).lean()) as any[];
-  let allOrders = allOrdersRaw.filter((o) => !statusContainsHide(o.status));
+  let allOrders = allOrdersRaw.filter((o) => !omitOrderFromStoreSales(o));
 
   const orderIds = allOrders.map((o) => o._id);
   const checkouts =

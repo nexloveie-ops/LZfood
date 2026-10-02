@@ -267,7 +267,7 @@ export default function MemberTopUpPaymentModal(props: Props) {
 
     (async () => {
       try {
-        const res = await apiFetch('/api/payments/config');
+        const res = await memberApiFetch(props.storeSlug, props.memberToken, '/api/members/me/wallet/stripe-config');
         const data = await res.json().catch(() => ({}));
         if (cancelled) return;
         if (!res.ok) {
@@ -316,7 +316,7 @@ export default function MemberTopUpPaymentModal(props: Props) {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [t]);
+  }, [t, props.storeSlug, props.memberToken]);
 
   return (
     <div

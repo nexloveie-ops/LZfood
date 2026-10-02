@@ -77,6 +77,48 @@ export default function PlatformLayout() {
           API 与余额
         </NavLink>
         <NavLink
+          to="/platform/cloud-printers"
+          style={({ isActive }) => ({
+            padding: '12px 18px',
+            color: isActive ? '#fff' : 'rgba(232,234,246,0.85)',
+            textDecoration: 'none',
+            fontSize: 14,
+            fontWeight: isActive ? 600 : 500,
+            borderBottom: isActive ? '3px solid #fff' : '3px solid transparent',
+            marginBottom: -1,
+          })}
+        >
+          云打印
+        </NavLink>
+        <NavLink
+          to="/platform/membership"
+          style={({ isActive }) => ({
+            padding: '12px 18px',
+            color: isActive ? '#fff' : 'rgba(232,234,246,0.85)',
+            textDecoration: 'none',
+            fontSize: 14,
+            fontWeight: isActive ? 600 : 500,
+            borderBottom: isActive ? '3px solid #fff' : '3px solid transparent',
+            marginBottom: -1,
+          })}
+        >
+          平台会员
+        </NavLink>
+        <NavLink
+          to="/platform/gift-cards"
+          style={({ isActive }) => ({
+            padding: '12px 18px',
+            color: isActive ? '#fff' : 'rgba(232,234,246,0.85)',
+            textDecoration: 'none',
+            fontSize: 14,
+            fontWeight: isActive ? 600 : 500,
+            borderBottom: isActive ? '3px solid #fff' : '3px solid transparent',
+            marginBottom: -1,
+          })}
+        >
+          充值卡与结算
+        </NavLink>
+        <NavLink
           to="/platform/ads"
           style={({ isActive }) => ({
             padding: '12px 18px',

@@ -43,7 +43,6 @@ export default function RestaurantInfo() {
   });
   const [logoUrl, setLogoUrl] = useState('');
   const [dineInWorkflowMode, setDineInWorkflowMode] = useState<'pay_first' | 'pay_after'>('pay_first');
-  const [receiptCatalogPrintMode, setReceiptCatalogPrintMode] = useState<'off' | 'headers' | 'split'>('split');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
@@ -138,17 +137,6 @@ export default function RestaurantInfo() {
         if (data.dine_in_workflow_mode === 'pay_after' || data.dine_in_workflow_mode === 'pay_first') {
           setDineInWorkflowMode(data.dine_in_workflow_mode);
         }
-        {
-          const v = String(data.receipt_print_by_catalog ?? 'split').trim().toLowerCase();
-          if (v === '0' || v === 'false' || v === 'off' || v === 'no') {
-            setReceiptCatalogPrintMode('off');
-          } else if (v === 'headers' || v === 'same' || v === '2' || v === 'grouped') {
-            setReceiptCatalogPrintMode('headers');
-          } else {
-            // '1' | 'true' | 'split' | unset → 切割多张（兼容旧开启）
-            setReceiptCatalogPrintMode('split');
-          }
-        }
       }
     } catch { /* ignore */ }
   }, [token]);
@@ -167,8 +155,6 @@ export default function RestaurantInfo() {
       const body: Record<string, string> = {};
       CONFIG_KEYS.forEach(k => { body[k] = values[k]; });
       body.dine_in_workflow_mode = dineInWorkflowMode;
-      body.receipt_print_by_catalog =
-        receiptCatalogPrintMode === 'off' ? '0' : receiptCatalogPrintMode === 'headers' ? 'headers' : 'split';
       const res = await apiFetch('/api/admin/config', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -258,42 +244,6 @@ export default function RestaurantInfo() {
         </div>
         <div style={{ fontSize: 12, color: 'var(--text-light)', marginTop: 10, lineHeight: 1.5 }}>
           {t('admin.dineInWorkflowHint')}
-        </div>
-      </div>
-
-      <div className="card" style={{ padding: 20, marginBottom: 16 }}>
-        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 10 }}>{t('admin.receiptPrintByCatalogTitle')}</div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer' }}>
-            <input
-              type="radio"
-              name="receiptPrintByCatalog"
-              checked={receiptCatalogPrintMode === 'split'}
-              onChange={() => { setReceiptCatalogPrintMode('split'); setSaved(false); }}
-            />
-            <span>{t('admin.receiptPrintByCatalogSplit')}</span>
-          </label>
-          <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer' }}>
-            <input
-              type="radio"
-              name="receiptPrintByCatalog"
-              checked={receiptCatalogPrintMode === 'headers'}
-              onChange={() => { setReceiptCatalogPrintMode('headers'); setSaved(false); }}
-            />
-            <span>{t('admin.receiptPrintByCatalogHeaders')}</span>
-          </label>
-          <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer' }}>
-            <input
-              type="radio"
-              name="receiptPrintByCatalog"
-              checked={receiptCatalogPrintMode === 'off'}
-              onChange={() => { setReceiptCatalogPrintMode('off'); setSaved(false); }}
-            />
-            <span>{t('admin.receiptPrintByCatalogOff')}</span>
-          </label>
-        </div>
-        <div style={{ fontSize: 12, color: 'var(--text-light)', marginTop: 10, lineHeight: 1.5 }}>
-          {t('admin.receiptPrintByCatalogHint')}
         </div>
       </div>
 

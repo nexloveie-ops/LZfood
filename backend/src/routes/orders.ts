@@ -18,8 +18,9 @@ import { computeOrderPayableTotalEuro } from '../utils/orderPayableTotal';
 import { optionalAuthMiddleware, requirePermission } from '../middleware/auth';
 import { Role } from '../middleware/permissions';
 import { requireAuthSameStore } from '../middleware/authForStore';
-import { customerPhoneMatchCandidates, normalizeMemberPhone, debitMemberWallet } from '../utils/memberWalletOps';
+import { customerPhoneMatchCandidates, normalizeMemberPhone } from '../utils/memberWalletOps';
 import { resolveMemberPaymentForCheckout } from '../utils/checkoutMemberResolve';
+import { debitResolvedMemberWallet, staffHideStatus } from '../utils/platformMemberWalletOps';
 import { attachCustomerProfileToDeliveryOrder } from '../utils/customerProfileDelivery';
 import { aggregateFrequentMenuItemsForCustomer } from '../utils/customerFrequentOrderItems';
 import { zonedDayBoundsForRef } from '../utils/zonedDayBounds';
@@ -71,6 +72,23 @@ function isStaffCashierOrOwner(req: Request): boolean {
     u.storeId === req.storeId.toString() &&
     (u.role === Role.OWNER || u.role === Role.CASHIER)
   );
+}
+
+function orderMemberWallet(order: { memberWallet?: unknown }): 'guest' | 'staff' | undefined {
+  return order.memberWallet === 'staff' || order.memberWallet === 'guest' ? order.memberWallet : undefined;
+}
+
+function completedStatusForOrder(order: { memberWallet?: unknown }): 'completed' | 'completed-hide' {
+  const next = order.memberWallet === 'staff' ? staffHideStatus('completed') : 'completed';
+  return next === 'completed-hide' ? 'completed-hide' : 'completed';
+}
+
+function attachOrderMemberWalletToCheckout(
+  payload: Record<string, unknown>,
+  order: { memberWallet?: unknown },
+): void {
+  const w = orderMemberWallet(order);
+  if (w) payload.memberWallet = w;
 }
 
 /** pending 且未付：顾客可自助 DELETE；其余状态须收银/店主 */
@@ -676,9 +694,8 @@ export function createOrdersRouter(io: SocketIOServer): Router {
         const placementMember =
           (order as { placementPrepaidMethod?: string }).placementPrepaidMethod === 'member';
         if (placementMember) {
-          const { Member, MemberWalletTxn } = getModels() as {
+          const { Member } = getModels() as {
             Member: mongoose.Model<unknown>;
-            MemberWalletTxn: mongoose.Model<unknown>;
           };
           const totalAmount = computeOrderPayableTotalEuro(order);
           const memberPhone = String((req.body as { memberPhone?: string }).memberPhone || '').trim();
@@ -692,18 +709,18 @@ export function createOrdersRouter(io: SocketIOServer): Router {
           if (mp.paymentMethod !== 'member' || mp.memberCreditUsed + 0.02 < totalAmount) {
             throw createAppError('VALIDATION_ERROR', '会员余额不足以支付本单');
           }
-          await debitMemberWallet({
-            Member,
-            MemberWalletTxn,
+          await debitResolvedMemberWallet({
+            resolution: mp,
             storeId: req.storeId!,
-            memberId: mp.memberId!,
-            amountEuro: mp.memberCreditUsed,
             orderId: order._id as mongoose.Types.ObjectId,
             note: '电话单下单时已付（会员储值）',
           });
           order.memberId = mp.memberId;
           order.memberCreditUsed = mp.memberCreditUsed;
           order.memberPhoneSnapshot = mp.memberPhoneSnapshot;
+          if (mp.identity === 'platform' && mp.wallet) {
+            (order as { memberWallet?: string }).memberWallet = mp.wallet;
+          }
           order.paymentStatus = 'paid';
           syncDualTrackBeforeSave(order);
           await order.save();
@@ -967,7 +984,7 @@ export function createOrdersRouter(io: SocketIOServer): Router {
         });
       }
 
-      order.status = 'completed';
+      order.status = completedStatusForOrder(order);
       order.completedAt = new Date();
       syncDualTrackBeforeSave(order);
       await order.save();
@@ -1028,6 +1045,7 @@ export function createOrdersRouter(io: SocketIOServer): Router {
         checkoutPayload.memberPhoneSnapshot = String(order.memberPhoneSnapshot || '');
         checkoutPayload.memberCreditUsed = memberUsed;
       }
+      attachOrderMemberWalletToCheckout(checkoutPayload, order);
 
       const checkout = await Checkout.create(checkoutPayload);
 
@@ -1041,9 +1059,19 @@ export function createOrdersRouter(io: SocketIOServer): Router {
           },
           { $set: { checkoutId: checkout._id } },
         );
+        const { PlatformMemberWalletTxn } = getModels() as { PlatformMemberWalletTxn: mongoose.Model<any> };
+        await PlatformMemberWalletTxn.updateMany(
+          {
+            memberId: order.memberId,
+            orderId: order._id,
+            type: 'spend',
+            $or: [{ checkoutId: { $exists: false } }, { checkoutId: null }],
+          },
+          { $set: { checkoutId: checkout._id } },
+        );
       }
 
-      order.status = 'completed';
+      order.status = completedStatusForOrder(order);
       order.completedAt = new Date();
       syncDualTrackBeforeSave(order);
       await order.save();
@@ -1127,6 +1155,7 @@ export function createOrdersRouter(io: SocketIOServer): Router {
         checkoutPayload.memberPhoneSnapshot = String(order.memberPhoneSnapshot || '');
         checkoutPayload.memberCreditUsed = memberUsed;
       }
+      attachOrderMemberWalletToCheckout(checkoutPayload, order);
 
       const checkout = await Checkout.create(checkoutPayload);
 
@@ -1140,9 +1169,19 @@ export function createOrdersRouter(io: SocketIOServer): Router {
           },
           { $set: { checkoutId: checkout._id } },
         );
+        const { PlatformMemberWalletTxn } = getModels() as { PlatformMemberWalletTxn: mongoose.Model<any> };
+        await PlatformMemberWalletTxn.updateMany(
+          {
+            memberId: order.memberId,
+            orderId: order._id,
+            type: 'spend',
+            $or: [{ checkoutId: { $exists: false } }, { checkoutId: null }],
+          },
+          { $set: { checkoutId: checkout._id } },
+        );
       }
 
-      order.status = 'completed';
+      order.status = completedStatusForOrder(order);
       order.completedAt = new Date();
       const wfDnComplete = await getDineInWorkflowModeForStore(req.storeId!);
       syncDualTrackBeforeSave(order, { dineInWorkflowMode: wfDnComplete });
@@ -1208,10 +1247,17 @@ export function createOrdersRouter(io: SocketIOServer): Router {
           checkoutPayload.memberPhoneSnapshot = String(order.memberPhoneSnapshot || '');
           checkoutPayload.memberCreditUsed = Number(order.memberCreditUsed) || totalAmount;
         }
+        attachOrderMemberWalletToCheckout(checkoutPayload, order);
         checkout = await Checkout.create(checkoutPayload);
+      } else {
+        const w = orderMemberWallet(order);
+        if (w && (checkout as { memberWallet?: string }).memberWallet !== w) {
+          (checkout as { memberWallet?: string }).memberWallet = w;
+          await checkout.save();
+        }
       }
 
-      order.status = 'completed';
+      order.status = completedStatusForOrder(order);
       order.completedAt = new Date();
       syncDualTrackBeforeSave(order);
       await order.save();
@@ -1268,7 +1314,7 @@ export function createOrdersRouter(io: SocketIOServer): Router {
           isLegacyPaymentSettled(String(order.status))
           || String(order.paymentStatus) === 'paid';
         if (paymentSettled) {
-          order.status = 'completed';
+          order.status = completedStatusForOrder(order);
           order.completedAt = new Date();
         }
       }

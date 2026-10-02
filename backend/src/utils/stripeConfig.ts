@@ -86,10 +86,10 @@ export type StripeHealthResult = {
   stripeApi: StripeHealthApiResult;
 };
 
-export async function runStripeHealthCheck(storeId: mongoose.Types.ObjectId): Promise<StripeHealthResult> {
-  const publishableKey = await getStripePublishableResolved(storeId);
-  const secret = await getStripeSecretResolved(storeId);
-
+export async function runStripeHealthCheckFromKeys(
+  publishableKey: string,
+  secret: string,
+): Promise<StripeHealthResult> {
   const publishableKeyPresent = !!publishableKey;
   const publishableKeyFormatOk = publishableKeyPresent && isValidPublishableKeyFormat(publishableKey);
   const publishableMode = publishableKey ? stripeKeyMode(publishableKey) : 'unknown';
@@ -151,4 +151,10 @@ export async function runStripeHealthCheck(storeId: mongoose.Types.ObjectId): Pr
     },
     stripeApi,
   };
+}
+
+export async function runStripeHealthCheck(storeId: mongoose.Types.ObjectId): Promise<StripeHealthResult> {
+  const publishableKey = await getStripePublishableResolved(storeId);
+  const secret = await getStripeSecretResolved(storeId);
+  return runStripeHealthCheckFromKeys(publishableKey, secret);
 }

@@ -4,6 +4,7 @@ import { orderCreatedAtFilterUtc } from './reportDateRange';
 import { bundleAdjustedLineTotals, lineGrossEuro, type LineLikeForBundle } from './bundleLineAllocation';
 import { categoryDisplayName, taxCategoryEnglishName, vatRateLabel } from './taxCategoryHelpers';
 import { createAppError } from '../middleware/errorHandler';
+import { omitOrderFromStoreSales, statusContainsHide } from './reportOrderExclusions';
 
 export type TaxCategorySalesLine = {
   taxCategoryId: string;
@@ -105,10 +106,7 @@ export function assertVatExportReady(readiness: VatExportReadiness): void {
   }
 }
 
-/** 订单/行/菜品文档 status 字段含 hide（不区分大小写）则不计入 VAT 销售额 */
-function statusContainsHide(status: unknown): boolean {
-  return String(status ?? '').toLowerCase().includes('hide');
-}
+/** 订单/行/菜品文档 status 字段含 hide，或员工钱包订单，则不计入 VAT 销售额 */
 
 function stableOrderLineKey(item: { _id?: unknown }, lineIndex: number): string {
   const raw = item._id != null ? String(item._id) : '';
@@ -185,7 +183,7 @@ export async function aggregateVatSalesByMonth(
     createdAt,
   }).lean()) as unknown as Record<string, unknown>[];
   const ordersInRange = ordersInRangeRaw.filter(
-    (o) => !statusContainsHide((o as { status?: unknown }).status),
+    (o) => !omitOrderFromStoreSales(o as { status?: unknown; memberWallet?: unknown }),
   );
 
   if (ordersInRange.length === 0) {
@@ -282,7 +280,7 @@ export async function aggregateVatSalesByMonth(
 
     for (const { order, map } of perOrderMaps) {
       if (!inRangeIdSet.has(String((order as { _id: { toString(): string } })._id))) continue;
-      if (statusContainsHide((order as { status?: unknown }).status)) continue;
+      if (omitOrderFromStoreSales(order as { status?: unknown; memberWallet?: unknown })) continue;
       const monthKey = irelandMonthKey(new Date((order as { createdAt?: Date }).createdAt || Date.now()));
       for (let lineIdx = 0; lineIdx < order.items.length; lineIdx++) {
         const item = order.items[lineIdx];

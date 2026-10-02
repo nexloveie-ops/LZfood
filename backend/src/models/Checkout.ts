@@ -14,6 +14,8 @@ const CheckoutSchema = new mongoose.Schema({
   numberedVoucherCode: { type: String, default: '' },
   voucherDiscountEuro: { type: Number },
   memberId: { type: mongoose.Schema.Types.ObjectId, ref: 'Member' },
+  /** 平台会员扣款钱包：guest 客人钱包 / staff 本店员工额度 */
+  memberWallet: { type: String, enum: ['guest', 'staff'] },
   memberCreditUsed: { type: Number, default: 0 },
   /** 已累计退回会员钱包的储值部分（欧元），用于部分退款多次分摊 */
   memberCreditRefundedEuro: { type: Number, default: 0 },

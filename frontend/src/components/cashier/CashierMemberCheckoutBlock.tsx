@@ -7,6 +7,8 @@ export type CashierMemberPreview = {
   creditBalance: number;
   memberNo: number;
   phone: string;
+  isStaffHere?: boolean;
+  staffBalance?: number | null;
 };
 
 type Props = {
@@ -44,6 +46,8 @@ export default function CashierMemberCheckoutBlock({
           creditBalance: Number(d.creditBalance) || 0,
           memberNo: Number(d.memberNo) || 0,
           phone: d.phone,
+          isStaffHere: !!d.isStaffHere,
+          staffBalance: d.staffBalance == null ? null : Number(d.staffBalance) || 0,
         });
       } else {
         setPreview(null);
@@ -53,8 +57,17 @@ export default function CashierMemberCheckoutBlock({
     }
   };
 
-  const shortfall = preview ? Math.max(0, payAmount - preview.creditBalance) : 0;
+  const payableBalance = (() => {
+    if (!preview) return 0;
+    if (preview.isStaffHere && (preview.staffBalance ?? 0) + 0.001 >= payAmount) {
+      return Number(preview.staffBalance) || 0;
+    }
+    return preview.creditBalance;
+  })();
+  const shortfall = preview ? Math.max(0, payAmount - payableBalance) : 0;
   const canFullPay = preview != null && shortfall <= 0.001;
+  const payWithStaff =
+    !!preview?.isStaffHere && (preview.staffBalance ?? 0) + 0.001 >= payAmount;
 
   return (
     <div
@@ -96,10 +109,18 @@ export default function CashierMemberCheckoutBlock({
             <span style={{ color: 'var(--text-secondary)' }}>{t('member.balance')}: </span>
             <strong style={{ color: 'var(--red-primary)' }}>€{preview.creditBalance.toFixed(2)}</strong>
           </div>
+          {preview.isStaffHere ? (
+            <div>
+              <span style={{ color: 'var(--text-secondary)' }}>{t('cashier.memberStaffBalance')}: </span>
+              <strong>€{(Number(preview.staffBalance) || 0).toFixed(2)}</strong>
+            </div>
+          ) : null}
           {shortfall > 0.001 ? (
             <div style={{ color: 'var(--red-primary)', marginTop: 6 }}>{t('cashier.memberInsufficient', { short: shortfall.toFixed(2) })}</div>
           ) : (
-            <div style={{ color: 'var(--green, #2e7d32)', marginTop: 6, fontWeight: 600 }}>{t('cashier.memberCanPayFull')}</div>
+            <div style={{ color: 'var(--green, #2e7d32)', marginTop: 6, fontWeight: 600 }}>
+              {payWithStaff ? t('cashier.memberPayingWithStaff') : t('cashier.memberCanPayFull')}
+            </div>
           )}
         </div>
       ) : null}
@@ -118,5 +139,6 @@ export function buildMemberFullWalletCheckoutBody(payAmount: number, phone: stri
 
 export function canMemberFullWalletPay(preview: CashierMemberPreview | null, payAmount: number): boolean {
   if (!preview) return false;
+  if (preview.isStaffHere && (preview.staffBalance ?? 0) + 1e-9 >= payAmount) return true;
   return preview.creditBalance + 1e-9 >= payAmount;
 }

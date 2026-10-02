@@ -7,6 +7,7 @@ import LanguageSwitcher from '../../components/LanguageSwitcher';
 import { translateMemberWalletTxnNote } from '../../utils/memberTxnNoteI18n';
 import { formatMemberApiError, translateMemberApiMessage } from '../../utils/memberApiErrorI18n';
 import { useBusinessStatus } from '../../hooks/useBusinessStatus';
+import './member-portal.css';
 
 const TOKEN_KEY = (slug: string) => `lzfood_member_${slug}`;
 
@@ -26,6 +27,8 @@ type MemberProfile = {
 
 const TXN_PAGE_SIZE = 10;
 
+type TxnStore = { slug: string; displayName: string };
+
 type Txn = {
   _id: string;
   type: string;
@@ -38,6 +41,7 @@ type Txn = {
   checkoutId?: string;
   stripePaymentIntentId?: string;
   operatorAdminId?: string;
+  store?: TxnStore | null;
 };
 
 function idStr(v: unknown): string | undefined {
@@ -78,6 +82,7 @@ function TxnDetailModal({
   const [bundles, setBundles] = useState<TxnDetailBundle[]>([]);
   const [detailLoading, setDetailLoading] = useState(true);
   const [detailErr, setDetailErr] = useState('');
+  const [store, setStore] = useState<TxnStore | null>(txn.store ?? null);
 
   useEffect(() => {
     let cancelled = false;
@@ -86,11 +91,13 @@ function TxnDetailModal({
       setDetailErr('');
       setLines(null);
       setBundles([]);
+      setStore(txn.store ?? null);
       try {
         const r = await memberApiFetch(storeSlug, token, `/api/members/me/transactions/${txn._id}/detail`);
         const d = (await r.json().catch(() => null)) as {
           lines?: TxnDetailLine[];
           bundles?: TxnDetailBundle[];
+          store?: TxnStore | null;
           error?: { message?: string };
         } | null;
         if (cancelled) return;
@@ -101,6 +108,7 @@ function TxnDetailModal({
         }
         setLines(Array.isArray(d?.lines) ? d.lines : []);
         setBundles(Array.isArray(d?.bundles) ? d.bundles : []);
+        if (d?.store?.displayName || d?.store?.slug) setStore(d.store);
       } catch {
         if (!cancelled) {
           setDetailErr(t('member.txnDetailLoadError', '明细加载失败'));
@@ -114,7 +122,7 @@ function TxnDetailModal({
     return () => {
       cancelled = true;
     };
-  }, [storeSlug, token, txn._id, t]);
+  }, [storeSlug, token, txn._id, txn.store, t]);
 
   const headlineKey = `member.txnDetailHeadlines.${txn.type}`;
   let headline = t(headlineKey);
@@ -124,6 +132,7 @@ function TxnDetailModal({
   if (typeLabel === typeLabelKey) typeLabel = txn.type;
   const stripeRef = txn.stripePaymentIntentId?.trim();
   const opId = idStr(txn.operatorAdminId);
+  const storeLabel = (store?.displayName || store?.slug || '').trim();
 
   let linesSectionTitle: string;
   if (txn.type === 'refund_credit') linesSectionTitle = t('member.txnDetailLinesRefund');
@@ -139,53 +148,46 @@ function TxnDetailModal({
 
   const linesBlock: ReactNode = (() => {
     if (detailLoading) {
-      return <div style={{ fontSize: 13, color: 'var(--text-light)', padding: '12px 0' }}>{t('member.txnLoading')}</div>;
+      return <div className="mp-loading">{t('member.txnLoading')}</div>;
     }
     if (detailErr) {
-      return <div style={{ fontSize: 13, color: 'var(--red-primary)', padding: '12px 0' }}>{detailErr}</div>;
+      return <div className="mp-alert mp-alert-error">{detailErr}</div>;
     }
     const hasLines = lines && lines.length > 0;
     const hasBundles = bundles.length > 0;
     if (!hasLines && !hasBundles) {
       if (txn.type === 'spend' || txn.type === 'refund_credit' || txn.type === 'reversal') {
-        return (
-          <div style={{ fontSize: 13, color: 'var(--text-secondary)', padding: '12px 0', lineHeight: 1.45 }}>
-            {t('member.txnDetailLinesEmpty')}
-          </div>
-        );
+        return <div className="mp-acc-preview">{t('member.txnDetailLinesEmpty')}</div>;
       }
       return null;
     }
     return (
-      <div style={{ padding: '10px 0', borderBottom: '1px solid var(--border, #eee)' }}>
-        <div style={{ color: 'var(--text-secondary)', fontSize: 12, marginBottom: 8 }}>{linesSectionTitle}</div>
+      <div className="mp-lines">
+        <div className="mp-kv-block-k">{linesSectionTitle}</div>
         {hasLines ? (
-          <ul style={{ margin: '0 0 12px 0', padding: '0 0 0 18px', fontSize: 13, lineHeight: 1.5 }}>
+          <ul>
             {lines!.map((line, i) => (
-              <li key={i} style={{ marginBottom: 6 }}>
-                <span>{line.itemName}</span>
-                {line.optionsSummary ? <span style={{ color: 'var(--text-secondary)' }}> · {line.optionsSummary}</span> : null}
+              <li key={i}>
                 <span>
-                  {' '}
+                  {line.itemName}
+                  {line.optionsSummary ? <span className="mp-line-opt"> · {line.optionsSummary}</span> : null}
+                  {line.refunded ? <span className="mp-tag">({t('member.txnDetailRefundedTag')})</span> : null}
+                </span>
+                <span>
                   ×{line.quantity} · €{Number(line.lineEuro).toFixed(2)}
                 </span>
-                {line.refunded ? (
-                  <span style={{ marginLeft: 6, fontSize: 11, color: 'var(--text-light)' }}>({t('member.txnDetailRefundedTag')})</span>
-                ) : null}
               </li>
             ))}
           </ul>
         ) : null}
         {hasBundles ? (
-          <div>
-            <div style={{ color: 'var(--text-secondary)', fontSize: 12, marginBottom: 6 }}>{t('member.txnDetailBundlesTitle')}</div>
-            <ul style={{ margin: 0, padding: '0 0 0 18px', fontSize: 13, lineHeight: 1.5 }}>
+          <div style={{ marginTop: hasLines ? 10 : 0 }}>
+            <div className="mp-kv-block-k">{t('member.txnDetailBundlesTitle')}</div>
+            <ul>
               {bundles.map((b, i) => (
-                <li key={i} style={{ marginBottom: 4 }}>
-                  <span style={{ fontWeight: 600 }}>🎁 {bundleLabel(b)}</span>
-                  <span style={{ color: 'var(--green, #2e7d32)', marginLeft: 6 }}>
-                    {t('member.txnDetailBundleOff', { amount: Number(b.discountEuro).toFixed(2) })}
-                  </span>
+                <li key={i}>
+                  <span>{bundleLabel(b)}</span>
+                  <span className="mp-bundle-off">{t('member.txnDetailBundleOff', { amount: Number(b.discountEuro).toFixed(2) })}</span>
                 </li>
               ))}
             </ul>
@@ -197,70 +199,61 @@ function TxnDetailModal({
 
   return (
     <div
+      className="mp-modal-backdrop"
       role="dialog"
       aria-modal="true"
-      style={{
-        position: 'fixed',
-        inset: 0,
-        background: 'rgba(0,0,0,0.45)',
-        zIndex: 2000,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: 16,
-      }}
       onClick={onClose}
       onKeyDown={(e) => e.key === 'Escape' && onClose()}
     >
-      <div
-        className="card"
-        style={{ width: '100%', maxWidth: 400, maxHeight: '85vh', overflowY: 'auto', padding: 16 }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 4 }}>{headline}</div>
-        <div style={{ fontSize: 12, color: 'var(--text-light)', marginBottom: 12 }}>{typeLabel}</div>
+      <div className="mp-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="mp-modal-title">{headline}</div>
+        <div className="mp-modal-sub">{typeLabel}</div>
 
-        <div style={{ borderTop: '1px solid var(--border, #eee)' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: '10px 0', borderBottom: '1px solid var(--border, #eee)' }}>
-            <span style={{ color: 'var(--text-secondary)', fontSize: 13 }}>{t('member.txnFieldAmount')}</span>
-            <span style={{ fontSize: 15, fontWeight: 700, color: txn.amountEuro < 0 ? 'var(--red-primary)' : 'var(--green, #2e7d32)' }}>
-              {txn.amountEuro >= 0 ? '+' : ''}€{Number(txn.amountEuro).toFixed(2)}
-            </span>
+        {storeLabel ? (
+          <div className="mp-kv">
+            <span>{t('member.txnFieldStore')}</span>
+            <span>{storeLabel}</span>
           </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: '10px 0', borderBottom: '1px solid var(--border, #eee)' }}>
-            <span style={{ color: 'var(--text-secondary)', fontSize: 13 }}>{t('member.txnFieldBalanceBefore')}</span>
-            <span style={{ fontSize: 13 }}>€{Number(txn.balanceBefore).toFixed(2)}</span>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: '10px 0', borderBottom: '1px solid var(--border, #eee)' }}>
-            <span style={{ color: 'var(--text-secondary)', fontSize: 13 }}>{t('member.txnFieldBalanceAfter')}</span>
-            <span style={{ fontSize: 13 }}>€{Number(txn.balanceAfter).toFixed(2)}</span>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: '10px 0', borderBottom: '1px solid var(--border, #eee)' }}>
-            <span style={{ color: 'var(--text-secondary)', fontSize: 13 }}>{t('member.txnFieldTime')}</span>
-            <span style={{ fontSize: 13, textAlign: 'right' }}>{new Date(txn.createdAt).toLocaleString()}</span>
-          </div>
-          {txn.note ? (
-            <div style={{ padding: '10px 0', borderBottom: '1px solid var(--border, #eee)' }}>
-              <div style={{ color: 'var(--text-secondary)', fontSize: 12, marginBottom: 4 }}>{t('member.txnFieldNote')}</div>
-              <div style={{ fontSize: 13, lineHeight: 1.45, whiteSpace: 'pre-wrap' }}>{translateMemberWalletTxnNote(txn.note, t)}</div>
-            </div>
-          ) : null}
-          {linesBlock}
-          {txn.type === 'recharge' && stripeRef ? (
-            <div style={{ padding: '10px 0', borderBottom: '1px solid var(--border, #eee)' }}>
-              <div style={{ color: 'var(--text-secondary)', fontSize: 12, marginBottom: 4 }}>{t('member.txnFieldStripeRef')}</div>
-              <div style={{ fontSize: 12, wordBreak: 'break-all', fontFamily: 'monospace' }}>{stripeRef}</div>
-            </div>
-          ) : null}
-          {txn.type === 'adjustment' && opId ? (
-            <div style={{ padding: '10px 0' }}>
-              <div style={{ color: 'var(--text-secondary)', fontSize: 12, marginBottom: 4 }}>{t('member.txnFieldOperator', '操作员 ID')}</div>
-              <div style={{ fontSize: 12, wordBreak: 'break-all', fontFamily: 'monospace' }}>{opId}</div>
-            </div>
-          ) : null}
+        ) : null}
+        <div className="mp-kv">
+          <span>{t('member.txnFieldAmount')}</span>
+          <span className={`mp-kv-amt ${txn.amountEuro < 0 ? 'is-out' : 'is-in'}`}>
+            {txn.amountEuro >= 0 ? '+' : ''}€{Number(txn.amountEuro).toFixed(2)}
+          </span>
         </div>
+        <div className="mp-kv">
+          <span>{t('member.txnFieldBalanceBefore')}</span>
+          <span>€{Number(txn.balanceBefore).toFixed(2)}</span>
+        </div>
+        <div className="mp-kv">
+          <span>{t('member.txnFieldBalanceAfter')}</span>
+          <span>€{Number(txn.balanceAfter).toFixed(2)}</span>
+        </div>
+        <div className="mp-kv">
+          <span>{t('member.txnFieldTime')}</span>
+          <span>{new Date(txn.createdAt).toLocaleString()}</span>
+        </div>
+        {txn.note ? (
+          <div className="mp-kv-block">
+            <div className="mp-kv-block-k">{t('member.txnFieldNote')}</div>
+            <div className="mp-kv-block-v">{translateMemberWalletTxnNote(txn.note, t)}</div>
+          </div>
+        ) : null}
+        {linesBlock}
+        {txn.type === 'recharge' && stripeRef ? (
+          <div className="mp-kv-block">
+            <div className="mp-kv-block-k">{t('member.txnFieldStripeRef')}</div>
+            <div className="mp-mono">{stripeRef}</div>
+          </div>
+        ) : null}
+        {txn.type === 'adjustment' && opId ? (
+          <div className="mp-kv-block">
+            <div className="mp-kv-block-k">{t('member.txnFieldOperator', '操作员 ID')}</div>
+            <div className="mp-mono">{opId}</div>
+          </div>
+        ) : null}
 
-        <button type="button" className="btn btn-primary" style={{ width: '100%', marginTop: 16 }} onClick={onClose}>
+        <button type="button" className="mp-btn mp-btn-primary" style={{ marginTop: 16 }} onClick={onClose}>
           {t('member.txnDetailClose')}
         </button>
       </div>
@@ -663,120 +656,90 @@ export default function MemberPortalPage() {
 
   if (view === 'home' && profile) {
     return (
-      <div className="order-status-page">
+      <div className="order-status-page mp-shell">
         <div className="order-status-scroll">
-      <div style={{ maxWidth: 480, margin: '0 auto', padding: '16px 14px 32px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-          <h1 style={{ fontSize: 20, margin: 0, flex: 1, minWidth: 0 }}>{t('member.title')}</h1>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-            <LanguageSwitcher />
-            <button type="button" className="btn btn-outline" style={{ fontSize: 12 }} onClick={logout}>
+      <div className="mp-page">
+        <div className="mp-top">
+          <Link to={`/${storeSlug}`} className="mp-back">{t('member.backStore', '返回店铺')}</Link>
+          <div className="mp-top-actions">
+            <LanguageSwitcher variant="text" />
+            <button type="button" className="mp-btn mp-btn-ghost" onClick={logout}>
               {t('member.logout')}
             </button>
           </div>
         </div>
-        <div className="card" style={{ padding: 16, marginBottom: 16 }}>
-          <div
-            style={{
-              display: 'flex',
-              flexWrap: 'wrap',
-              alignItems: 'center',
-              gap: '4px 10px',
-              marginBottom: 12,
-              rowGap: 6,
-            }}
-          >
-            <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{t('member.memberNo', '会员号')}</span>
-            <span style={{ fontSize: 20, fontWeight: 700, fontFamily: "'Noto Serif SC', serif" }}>#{profile.memberNo}</span>
-            <span style={{ fontSize: 13, color: 'var(--text-light)' }} aria-hidden>
-              |
-            </span>
-            <span style={{ fontSize: 13 }}>{profile.phone}</span>
+        <div className="mp-wallet">
+          <div className="mp-wallet-meta">
+            <span className="mp-wallet-no">#{profile.memberNo}</span>
+            <span className="mp-wallet-phone">{profile.phone}</span>
           </div>
-          <div style={{ fontSize: 14, color: 'var(--text-secondary)' }}>{t('member.balance', '储值余额')}</div>
-          <div style={{ fontSize: 28, fontWeight: 700, color: 'var(--red-primary)' }}>€{Number(profile.creditBalance).toFixed(2)}</div>
+          <div className="mp-wallet-k">{t('member.balance', '储值余额')}</div>
+          <div className="mp-wallet-bal">€{Number(profile.creditBalance).toFixed(2)}</div>
         </div>
 
-        <div className="card" style={{ padding: 16, marginBottom: 16 }}>
+        {walletHint ? <div className="mp-alert mp-alert-ok">{walletHint}</div> : null}
+        {error ? <div className="mp-alert mp-alert-error">{error}</div> : null}
+
+        <div className="mp-card">
           <button
             type="button"
+            className="mp-acc-hd"
             onClick={() => setProfileExpanded((v) => !v)}
             aria-expanded={profileExpanded}
-            style={{
-              width: '100%',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              background: 'transparent',
-              border: 'none',
-              padding: 0,
-              cursor: 'pointer',
-              font: 'inherit',
-              textAlign: 'left',
-              color: 'inherit',
-            }}
           >
-            <span style={{ fontWeight: 600 }}>{t('member.profileSection', '资料与送餐')}</span>
-            <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{profileExpanded ? '▲' : '▼'}</span>
+            <span className="mp-acc-title">{t('member.profileSection', '资料与送餐')}</span>
+            <span className="mp-chevron" aria-hidden />
           </button>
           {!profileExpanded ? (
-            <div style={{ marginTop: 10, fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.45 }}>
-              <span style={{ fontSize: 11, color: 'var(--text-light)', display: 'block', marginBottom: 4 }}>
-                {t('member.deliveryAddress', '送餐地址')}
-              </span>
+            <div className="mp-acc-preview">
+              <span className="mp-acc-preview-k">{t('member.deliveryAddress', '送餐地址')}</span>
               {editDeliveryAddress.trim()
                 ? editDeliveryAddress.trim()
                 : t('member.deliveryAddressCollapsedEmpty')}
             </div>
           ) : (
-            <>
-              <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 10, marginBottom: 10, lineHeight: 1.45 }}>
-                {t('member.deliveryHint', '填写默认送餐邮编与地址，便于店内识别；扫码下单时仍可在购物车中修改。')}
-              </div>
-              <label style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>{t('member.editName', '称呼')}</label>
-              <input className="input" value={editName} onChange={(e) => setEditName(e.target.value)} style={{ width: '100%', marginBottom: 10 }} />
-              <label style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>{t('member.postalCode', '邮编')}</label>
-              <input
-                className="input"
-                value={editPostalCode}
-                onChange={(e) => {
-                  postalEditedByUserRef.current = true;
-                  setEditPostalCode(e.target.value);
-                }}
-                placeholder={t('member.postalCodePlaceholder', '如爱尔兰 Eircode')}
-                style={{ width: '100%', marginBottom: 6 }}
-                autoCapitalize="characters"
-              />
+            <div className="mp-acc-body">
+              <p className="mp-hint" style={{ marginTop: 0 }}>{t('member.deliveryHint', '填写默认送餐邮编与地址，便于店内识别；扫码下单时仍可在购物车中修改。')}</p>
+              <label className="mp-field">
+                <span className="mp-label">{t('member.editName', '称呼')}</span>
+                <input className="input" value={editName} onChange={(e) => setEditName(e.target.value)} />
+              </label>
+              <label className="mp-field">
+                <span className="mp-label">{t('member.postalCode', '邮编')}</span>
+                <input
+                  className="input"
+                  value={editPostalCode}
+                  onChange={(e) => {
+                    postalEditedByUserRef.current = true;
+                    setEditPostalCode(e.target.value);
+                  }}
+                  placeholder={t('member.postalCodePlaceholder', '如爱尔兰 Eircode')}
+                  autoCapitalize="characters"
+                />
+              </label>
               {addressGeoLoading ? (
-                <div style={{ fontSize: 11, color: 'var(--text-light)', marginBottom: 8 }}>{t('member.addressGeoLoading', '正在根据邮编解析地址…')}</div>
+                <div className="mp-hint">{t('member.addressGeoLoading', '正在根据邮编解析地址…')}</div>
               ) : null}
               {addressGeoError ? (
-                <div style={{ fontSize: 11, color: 'var(--red-primary)', marginBottom: 8 }}>{addressGeoError}</div>
+                <div className="mp-alert mp-alert-error">{addressGeoError}</div>
               ) : null}
-              <label style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>{t('member.deliveryAddress', '送餐地址')}</label>
-              <textarea
-                className="input"
-                value={editDeliveryAddress}
-                onChange={(e) => setEditDeliveryAddress(e.target.value)}
-                placeholder={t('member.deliveryAddressPlaceholder', '门牌号、街道、区域等')}
-                rows={3}
-                style={{ width: '100%', marginBottom: 12, resize: 'vertical', minHeight: 72 }}
-              />
-              <button type="button" className="btn btn-primary" style={{ width: '100%' }} disabled={loading} onClick={saveProfile}>
+              <label className="mp-field">
+                <span className="mp-label">{t('member.deliveryAddress', '送餐地址')}</span>
+                <textarea
+                  className="input"
+                  value={editDeliveryAddress}
+                  onChange={(e) => setEditDeliveryAddress(e.target.value)}
+                  placeholder={t('member.deliveryAddressPlaceholder', '门牌号、街道、区域等')}
+                  rows={3}
+                />
+              </label>
+              <button type="button" className="mp-btn mp-btn-primary" disabled={loading} onClick={saveProfile}>
                 {t('common.save', '保存')}
               </button>
 
-              <div
-                style={{
-                  marginTop: 20,
-                  paddingTop: 16,
-                  borderTop: '1px solid var(--border, #e8e8e8)',
-                }}
-              >
-                <div style={{ fontWeight: 600, marginBottom: 8 }}>{t('member.changePin', '修改 PIN')}</div>
-                <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 10, lineHeight: 1.45 }}>
-                  {t('member.changePinInProfileHint')}
-                </div>
+              <div className="mp-split">
+                <div className="mp-split-title">{t('member.changePin', '修改 PIN')}</div>
+                <p className="mp-hint">{t('member.changePinInProfileHint')}</p>
                 <input
                   className="input"
                   type="password"
@@ -784,7 +747,7 @@ export default function MemberPortalPage() {
                   placeholder={t('member.oldPin', '原 PIN')}
                   value={oldPin}
                   onChange={(e) => setOldPin(e.target.value)}
-                  style={{ width: '100%', marginBottom: 8 }}
+                  style={{ marginBottom: 8 }}
                 />
                 <input
                   className="input"
@@ -793,131 +756,111 @@ export default function MemberPortalPage() {
                   placeholder={t('member.newPin', '新 PIN')}
                   value={newPin}
                   onChange={(e) => setNewPin(e.target.value)}
-                  style={{ width: '100%', marginBottom: 8 }}
+                  style={{ marginBottom: 10 }}
                 />
-                <button type="button" className="btn btn-outline" style={{ width: '100%' }} disabled={loading} onClick={changePin}>
+                <button type="button" className="mp-btn mp-btn-secondary" disabled={loading} onClick={changePin}>
                   {t('member.changePinSubmit', '更新 PIN')}
                 </button>
               </div>
-            </>
+            </div>
           )}
         </div>
 
-        <div className="card" style={{ padding: 16, marginBottom: 16 }}>
+        <div className="mp-card">
           <button
             type="button"
+            className="mp-acc-hd"
             onClick={() => setTopUpExpanded((v) => !v)}
             aria-expanded={topUpExpanded}
-            style={{
-              width: '100%',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              background: 'transparent',
-              border: 'none',
-              padding: 0,
-              cursor: 'pointer',
-              font: 'inherit',
-              textAlign: 'left',
-              color: 'inherit',
-            }}
           >
-            <span style={{ fontWeight: 600 }}>{t('member.topUpSection')}</span>
-            <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{topUpExpanded ? '▲' : '▼'}</span>
+            <span className="mp-acc-title">{t('member.topUpSection')}</span>
+            <span className="mp-chevron" aria-hidden />
           </button>
           {!topUpExpanded ? (
-            <div style={{ marginTop: 10, fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.45 }}>
+            <div className="mp-acc-preview">
               {t('member.topUpCollapsedHint', { min: TOPUP_MIN, max: TOPUP_MAX })}
             </div>
           ) : (
-            <>
-              <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 10, marginBottom: 10, lineHeight: 1.45 }}>
-                {t('member.topUpHint', { min: TOPUP_MIN, max: TOPUP_MAX })}
-              </div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
+            <div className="mp-acc-body">
+              <p className="mp-hint" style={{ marginTop: 0 }}>{t('member.topUpHint', { min: TOPUP_MIN, max: TOPUP_MAX })}</p>
+              <div className="mp-chips">
                 {TOPUP_PRESETS.map((p) => (
                   <button
                     key={p}
                     type="button"
-                    className="btn btn-outline"
-                    style={{ flex: '1 1 40%', minWidth: 72, padding: '8px 12px' }}
+                    className={`mp-chip${topUpDraft === String(p) ? ' is-on' : ''}`}
                     onClick={() => setTopUpDraft(String(p))}
                   >
                     €{p}
                   </button>
                 ))}
               </div>
-              <label style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>{t('member.topUpCustom')}</label>
-              <input
-                className="input"
-                type="number"
-                inputMode="decimal"
-                min={TOPUP_MIN}
-                max={TOPUP_MAX}
-                step="0.01"
-                value={topUpDraft}
-                onChange={(e) => setTopUpDraft(e.target.value)}
-                style={{ width: '100%', marginBottom: 12 }}
-              />
-              <button type="button" className="btn btn-primary" style={{ width: '100%' }} onClick={openTopUpModal}>
+              <label className="mp-field">
+                <span className="mp-label">{t('member.topUpCustom')}</span>
+                <input
+                  className="input"
+                  type="number"
+                  inputMode="decimal"
+                  min={TOPUP_MIN}
+                  max={TOPUP_MAX}
+                  step="0.01"
+                  value={topUpDraft}
+                  onChange={(e) => setTopUpDraft(e.target.value)}
+                />
+              </label>
+              <button type="button" className="mp-btn mp-btn-primary" onClick={openTopUpModal}>
                 {t('member.topUpOpen')}
               </button>
 
-              <div
-                style={{
-                  marginTop: 20,
-                  paddingTop: 16,
-                  borderTop: '1px solid var(--border, #e8e8e8)',
-                }}
-              >
-                <div style={{ fontWeight: 600, marginBottom: 8 }}>{t('member.topUpCardSection')}</div>
-                <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 10, lineHeight: 1.45 }}>
-                  {t('member.topUpCardHint')}
-                </div>
-                <label style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>{t('member.topUpCardCode')}</label>
-                <input
-                  className="input"
-                  value={cardCodeInput}
-                  onChange={(e) => setCardCodeInput(e.target.value.toUpperCase())}
-                  maxLength={12}
-                  autoCapitalize="characters"
-                  style={{ width: '100%', marginBottom: 8, fontFamily: 'monospace', letterSpacing: '0.05em' }}
-                />
-                <label style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>{t('member.topUpCardPin')}</label>
-                <input
-                  className="input"
-                  type="password"
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  value={cardPinInput}
-                  onChange={(e) => setCardPinInput(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                  maxLength={6}
-                  style={{ width: '100%', marginBottom: 12 }}
-                />
+              <div className="mp-split">
+                <div className="mp-split-title">{t('member.topUpCardSection')}</div>
+                <p className="mp-hint">{t('member.topUpCardHint')}</p>
+                <label className="mp-field">
+                  <span className="mp-label">{t('member.topUpCardCode')}</span>
+                  <input
+                    className="input mp-mono"
+                    value={cardCodeInput}
+                    onChange={(e) => setCardCodeInput(e.target.value.toUpperCase())}
+                    maxLength={12}
+                    autoCapitalize="characters"
+                    style={{ letterSpacing: '0.08em' }}
+                  />
+                </label>
+                <label className="mp-field">
+                  <span className="mp-label">{t('member.topUpCardPin')}</span>
+                  <input
+                    className="input"
+                    type="password"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    value={cardPinInput}
+                    onChange={(e) => setCardPinInput(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    maxLength={6}
+                  />
+                </label>
                 <button
                   type="button"
-                  className="btn btn-outline"
-                  style={{ width: '100%' }}
+                  className="mp-btn mp-btn-secondary"
                   disabled={cardRedeemBusy}
                   onClick={() => void redeemTopUpCard()}
                 >
                   {cardRedeemBusy ? t('common.loading') : t('member.topUpCardSubmit')}
                 </button>
               </div>
-            </>
+            </div>
           )}
         </div>
 
-        <div style={{ fontWeight: 600, marginBottom: 4 }}>{t('member.txnHistory', '流水')}</div>
-        <div style={{ fontSize: 12, color: 'var(--text-light)', marginBottom: 10 }}>{t('member.txnTapForDetail')}</div>
-        {txnLoadError ? (
-          <div style={{ color: 'var(--red-primary)', fontSize: 13, marginBottom: 10, whiteSpace: 'pre-wrap' }}>{txnLoadError}</div>
-        ) : null}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div className="mp-section-hd">
+          <h2>{t('member.txnHistory', '流水')}</h2>
+          <span>{t('member.txnTapForDetail')}</span>
+        </div>
+        {txnLoadError ? <div className="mp-alert mp-alert-error">{txnLoadError}</div> : null}
+        <div className="mp-card mp-card--flush">
           {txnLoading && txns.length === 0 ? (
-            <div style={{ color: 'var(--text-light)', fontSize: 13 }}>{t('member.txnLoading')}</div>
+            <div className="mp-loading">{t('member.txnLoading')}</div>
           ) : txns.length === 0 ? (
-            <div style={{ color: 'var(--text-light)', fontSize: 13 }}>{t('member.noTxns', '暂无记录')}</div>
+            <div className="mp-empty">{t('member.noTxns', '暂无记录')}</div>
           ) : (
             txns.map((x) => {
               const tlKey = `member.txnTypeLabels.${x.type}`;
@@ -927,50 +870,40 @@ export default function MemberPortalPage() {
                 <button
                   key={x._id}
                   type="button"
-                  className="card"
+                  className="mp-txn"
                   onClick={() => setDetailTxn(x)}
-                  style={{
-                    padding: 12,
-                    fontSize: 13,
-                    textAlign: 'left',
-                    cursor: 'pointer',
-                    border: '1px solid var(--border, #eee)',
-                    background: 'var(--bg, #fff)',
-                    width: '100%',
-                    borderRadius: 8,
-                  }}
                 >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
-                    <span style={{ fontWeight: 600 }}>{typeShort}</span>
-                    <span style={{ fontWeight: 700, color: x.amountEuro < 0 ? 'var(--red-primary)' : 'var(--green, #2e7d32)' }}>
-                      {x.amountEuro >= 0 ? '+' : ''}€{x.amountEuro.toFixed(2)}
-                    </span>
-                  </div>
-                  <div style={{ color: 'var(--text-light)', fontSize: 11, marginTop: 4 }}>
-                    {new Date(x.createdAt).toLocaleString()} · {t('member.balance')} €{x.balanceAfter.toFixed(2)}
-                  </div>
-                  {x.note ? (
-                    <div style={{ fontSize: 11, marginTop: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {translateMemberWalletTxnNote(x.note, t)}
+                  <div>
+                    <div className="mp-txn-type">{typeShort}</div>
+                    <div className="mp-txn-meta">
+                      {x.store?.displayName || x.store?.slug
+                        ? `${x.store.displayName || x.store.slug} · `
+                        : ''}
+                      {new Date(x.createdAt).toLocaleString()} · {t('member.balance')} €{x.balanceAfter.toFixed(2)}
                     </div>
-                  ) : null}
+                    {x.note ? (
+                      <div className="mp-txn-note">{translateMemberWalletTxnNote(x.note, t)}</div>
+                    ) : null}
+                  </div>
+                  <span className={`mp-txn-amt ${x.amountEuro < 0 ? 'is-out' : 'is-in'}`}>
+                    {x.amountEuro >= 0 ? '+' : ''}€{x.amountEuro.toFixed(2)}
+                  </span>
                 </button>
               );
             })
           )}
         </div>
         {txnTotal > 0 ? (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
+          <div className="mp-pager">
             <button
               type="button"
-              className="btn btn-outline"
+              className="mp-btn mp-btn-secondary"
               disabled={txnPage <= 1 || txnLoading}
               onClick={() => void loadTxns(txnPage - 1)}
-              style={{ flex: '0 0 auto' }}
             >
               {t('member.txnPagePrev')}
             </button>
-            <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+            <span className="mp-pager-info">
               {t('member.txnPageInfo', {
                 page: txnPage,
                 pages: Math.max(1, Math.ceil(txnTotal / TXN_PAGE_SIZE)),
@@ -979,23 +912,15 @@ export default function MemberPortalPage() {
             </span>
             <button
               type="button"
-              className="btn btn-outline"
+              className="mp-btn mp-btn-secondary"
               disabled={txnPage >= Math.ceil(txnTotal / TXN_PAGE_SIZE) || txnLoading}
               onClick={() => void loadTxns(txnPage + 1)}
-              style={{ flex: '0 0 auto' }}
             >
               {t('member.txnPageNext')}
             </button>
           </div>
         ) : null}
 
-        <div style={{ marginTop: 24, textAlign: 'center' }}>
-          <Link to={`/${storeSlug}`} style={{ color: 'var(--red-primary)', fontSize: 14 }}>{t('member.backStore', '返回店铺')}</Link>
-        </div>
-        {walletHint ? (
-          <div style={{ color: 'var(--green, #2e7d32)', marginTop: 12, fontSize: 13, whiteSpace: 'pre-line' }}>{walletHint}</div>
-        ) : null}
-        {error ? <div style={{ color: 'var(--red-primary)', marginTop: 12, fontSize: 13, whiteSpace: 'pre-line' }}>{error}</div> : null}
         {detailTxn && token ? (
           <TxnDetailModal txn={detailTxn} storeSlug={storeSlug} token={token} onClose={() => setDetailTxn(null)} />
         ) : null}
@@ -1015,66 +940,87 @@ export default function MemberPortalPage() {
   }
 
   return (
-    <div className="order-status-page">
+    <div className="order-status-page mp-shell">
       <div className="order-status-scroll">
-    <div style={{ maxWidth: 400, margin: '0 auto', padding: '24px 14px' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-        <h1 style={{ fontSize: 20, margin: 0, flex: 1, minWidth: 0 }}>{t('member.title')}</h1>
-        <LanguageSwitcher />
+    <div className="mp-page">
+      <div className="mp-top">
+        <Link to={`/${storeSlug}`} className="mp-back">{t('member.backStore')}</Link>
+        <LanguageSwitcher variant="text" />
+      </div>
+      <div className="mp-hero">
+        <h1>{t('member.title')}</h1>
       </div>
       {!storeSlug ? (
-        <div className="card" style={{ padding: 12, marginBottom: 14, background: '#fff8e1', fontSize: 13, lineHeight: 1.5 }}>
-          {t('member.missingStoreSlugHint')}
-        </div>
-      ) : null}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-        <button type="button" className="btn" style={{ flex: 1, background: view === 'login' ? 'var(--red-primary)' : 'var(--bg)', color: view === 'login' ? '#fff' : 'inherit' }} onClick={() => { setView('login'); setError(''); setPinResetNotice(''); }}>
-          {t('member.loginTab')}
-        </button>
-        <button type="button" className="btn" style={{ flex: 1, background: view === 'register' ? 'var(--red-primary)' : 'var(--bg)', color: view === 'register' ? '#fff' : 'inherit' }} onClick={() => { setView('register'); setError(''); setPinResetNotice(''); }}>
-          {t('member.registerTab')}
-        </button>
-      </div>
-
-      {error ? <div style={{ color: 'var(--red-primary)', marginBottom: 12, fontSize: 13, whiteSpace: 'pre-line' }}>{error}</div> : null}
-      {pinResetNotice ? (
-        <div style={{ color: 'var(--green, #2e7d32)', marginBottom: 12, fontSize: 13, whiteSpace: 'pre-line' }}>{pinResetNotice}</div>
+        <div className="mp-alert mp-alert-warn">{t('member.missingStoreSlugHint')}</div>
       ) : null}
 
-      {view === 'login' ? (
-        <>
-          <input className="input" placeholder={t('member.phone')} value={phone} onChange={(e) => setPhone(e.target.value)} style={{ width: '100%', marginBottom: 10 }} />
-          <input className="input" type="password" inputMode="numeric" placeholder={t('member.pin')} value={pin} onChange={(e) => setPin(e.target.value)} style={{ width: '100%', marginBottom: 16 }} />
-          <button type="button" className="btn btn-primary" style={{ width: '100%' }} disabled={loading || !storeSlug} onClick={() => void handleLogin()}>
-            {loading ? t('common.loading') : t('member.login')}
-          </button>
-          <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 12, marginBottom: 8, lineHeight: 1.45 }}>
-            {t('member.forgotPinHint')}
-          </p>
+      <div className="mp-card">
+        <div className="mp-tabs">
           <button
             type="button"
-            className="btn"
-            style={{ width: '100%' }}
-            disabled={pinResetLoading || loading || !storeSlug}
-            onClick={() => void handleRequestPinReset()}
+            className={`mp-tab${view === 'login' ? ' is-on' : ''}`}
+            onClick={() => { setView('login'); setError(''); setPinResetNotice(''); }}
           >
-            {pinResetLoading ? t('common.loading') : t('member.forgotPinSubmit')}
+            {t('member.loginTab')}
           </button>
-        </>
-      ) : (
-        <>
-          <input className="input" placeholder={t('member.phone')} value={phone} onChange={(e) => setPhone(e.target.value)} style={{ width: '100%', marginBottom: 10 }} />
-          <input className="input" placeholder={t('member.displayName')} value={displayName} onChange={(e) => setDisplayName(e.target.value)} style={{ width: '100%', marginBottom: 10 }} />
-          <input className="input" type="password" inputMode="numeric" placeholder={t('member.pin')} value={pin} onChange={(e) => setPin(e.target.value)} style={{ width: '100%', marginBottom: 10 }} />
-          <input className="input" type="password" inputMode="numeric" placeholder={t('member.pinAgain')} value={pin2} onChange={(e) => setPin2(e.target.value)} style={{ width: '100%', marginBottom: 16 }} />
-          <button type="button" className="btn btn-primary" style={{ width: '100%' }} disabled={loading || !storeSlug} onClick={handleRegister}>
-            {loading ? t('common.loading') : t('member.register')}
+          <button
+            type="button"
+            className={`mp-tab${view === 'register' ? ' is-on' : ''}`}
+            onClick={() => { setView('register'); setError(''); setPinResetNotice(''); }}
+          >
+            {t('member.registerTab')}
           </button>
-        </>
-      )}
+        </div>
 
-      <div style={{ marginTop: 20, textAlign: 'center' }}>
-        <Link to={`/${storeSlug}`} style={{ color: 'var(--text-secondary)', fontSize: 13 }}>{t('member.backStore')}</Link>
+        {error ? <div className="mp-alert mp-alert-error">{error}</div> : null}
+        {pinResetNotice ? <div className="mp-alert mp-alert-ok">{pinResetNotice}</div> : null}
+
+        {view === 'login' ? (
+          <>
+            <label className="mp-field">
+              <span className="mp-label">{t('member.phone')}</span>
+              <input className="input" value={phone} onChange={(e) => setPhone(e.target.value)} autoComplete="tel" />
+            </label>
+            <label className="mp-field">
+              <span className="mp-label">{t('member.pin')}</span>
+              <input className="input" type="password" inputMode="numeric" value={pin} onChange={(e) => setPin(e.target.value)} autoComplete="current-password" />
+            </label>
+            <button type="button" className="mp-btn mp-btn-primary" disabled={loading || !storeSlug} onClick={() => void handleLogin()}>
+              {loading ? t('common.loading') : t('member.login')}
+            </button>
+            <p className="mp-hint">{t('member.forgotPinHint')}</p>
+            <button
+              type="button"
+              className="mp-btn mp-btn-secondary"
+              disabled={pinResetLoading || loading || !storeSlug}
+              onClick={() => void handleRequestPinReset()}
+            >
+              {pinResetLoading ? t('common.loading') : t('member.forgotPinSubmit')}
+            </button>
+          </>
+        ) : (
+          <>
+            <label className="mp-field">
+              <span className="mp-label">{t('member.phone')}</span>
+              <input className="input" value={phone} onChange={(e) => setPhone(e.target.value)} autoComplete="tel" />
+            </label>
+            <label className="mp-field">
+              <span className="mp-label">{t('member.displayName')}</span>
+              <input className="input" value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
+            </label>
+            <label className="mp-field">
+              <span className="mp-label">{t('member.pin')}</span>
+              <input className="input" type="password" inputMode="numeric" value={pin} onChange={(e) => setPin(e.target.value)} />
+            </label>
+            <label className="mp-field">
+              <span className="mp-label">{t('member.pinAgain')}</span>
+              <input className="input" type="password" inputMode="numeric" value={pin2} onChange={(e) => setPin2(e.target.value)} />
+            </label>
+            <button type="button" className="mp-btn mp-btn-primary" disabled={loading || !storeSlug} onClick={handleRegister}>
+              {loading ? t('common.loading') : t('member.register')}
+            </button>
+          </>
+        )}
       </div>
     </div>
       </div>

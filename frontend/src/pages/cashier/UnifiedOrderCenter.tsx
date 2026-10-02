@@ -529,7 +529,6 @@ export default function UnifiedOrderCenter() {
     await printBuiltReceipt(receipt, config, {
       cashReceived: opts?.cashReceived,
       changeAmount: opts?.changeAmount,
-      copies: 1,
     });
   }, [config]);
 

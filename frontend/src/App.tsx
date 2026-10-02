@@ -10,6 +10,9 @@ import PlatformLoginPage from './pages/platform/PlatformLoginPage';
 import PlatformStoresPage from './pages/platform/PlatformStoresPage';
 import PlatformPostOrderAdsPage from './pages/platform/PlatformPostOrderAdsPage';
 import PlatformIntegrationsPage from './pages/platform/PlatformIntegrationsPage';
+import PlatformCloudPrintersPage from './pages/platform/PlatformCloudPrintersPage';
+import PlatformMembershipPage from './pages/platform/PlatformMembershipPage';
+import PlatformGiftCardsPage from './pages/platform/PlatformGiftCardsPage';
 import LoginPage from './pages/LoginPage';
 import CustomerLayout from './layouts/CustomerLayout';
 import CashierLayout from './layouts/CashierLayout';
@@ -53,6 +56,7 @@ import MemberManager from './pages/admin/MemberManager';
 import BusinessHours from './pages/admin/BusinessHours';
 import CustomerNotifications from './pages/admin/CustomerNotifications';
 import StripeSettings from './pages/admin/StripeSettings';
+import PrintSettings, { CloudPrintPathRedirect } from './pages/admin/PrintSettings';
 
 const DEFAULT_STORE_SLUG = import.meta.env.VITE_DEFAULT_STORE_SLUG || 'demo';
 
@@ -159,6 +163,9 @@ export default function App() {
             <Route path="stores" element={<PlatformStoresPage />} />
             <Route path="ads" element={<PlatformPostOrderAdsPage />} />
             <Route path="integrations" element={<PlatformIntegrationsPage />} />
+            <Route path="cloud-printers" element={<PlatformCloudPrintersPage />} />
+            <Route path="membership" element={<PlatformMembershipPage />} />
+            <Route path="gift-cards" element={<PlatformGiftCardsPage />} />
           </Route>
 
           <Route path="/:storeSlug" element={<StoreRouteShell />}>
@@ -214,6 +221,8 @@ export default function App() {
               <Route path="users" element={<UserManager />} />
               <Route path="config" element={<SystemConfig />} />
               <Route path="stripe" element={<StripeSettings />} />
+              <Route path="print-settings" element={<PrintSettings />} />
+              <Route path="cloud-print" element={<CloudPrintPathRedirect />} />
               <Route path="offers" element={<RequireFeature featureKey="admin.offers.page"><OfferManager /></RequireFeature>} />
               <Route path="coupons" element={<RequireFeature featureKey="admin.coupons.page"><CouponManager /></RequireFeature>} />
               <Route path="members" element={<RequireFeature featureKey="cashier.member.wallet"><MemberManager /></RequireFeature>} />

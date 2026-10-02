@@ -1814,7 +1814,6 @@ export default function CashierOrder() {
           bundleDiscounts: matchedBundles.length > 0
             ? matchedBundles.map((b) => ({ name: b.offer.name, nameEn: b.offer.nameEn, discount: b.savings }))
             : undefined,
-          copies: 1,
         });
       } catch { /* print error ignored */ }
       }
@@ -2005,7 +2004,6 @@ export default function CashierOrder() {
           bundleDiscounts: matchedBundles.length > 0
             ? matchedBundles.map((b) => ({ name: b.offer.name, nameEn: b.offer.nameEn, discount: b.savings }))
             : undefined,
-          copies: 1,
         });
       } catch {
         /* print error ignored */
@@ -2333,7 +2331,6 @@ export default function CashierOrder() {
           bundleDiscounts: matchedBundles.length > 0
             ? matchedBundles.map((b) => ({ name: b.offer.name, nameEn: b.offer.nameEn, discount: b.savings }))
             : undefined,
-          copies: 1,
         });
       } catch {
         /* guest slip print is best-effort */

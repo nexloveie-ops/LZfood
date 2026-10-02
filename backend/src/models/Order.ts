@@ -80,6 +80,8 @@ const OrderSchema = new mongoose.Schema({
    */
   placementPrepaidMethod: { type: String, enum: ['card', 'member'] },
   memberId: { type: mongoose.Schema.Types.ObjectId, ref: 'Member' },
+  /** 平台会员扣款钱包：guest 客人钱包 / staff 本店员工额度（员工单结账后 status 带 -hide） */
+  memberWallet: { type: String, enum: ['guest', 'staff'] },
   /** 送餐客户档案（CustomerProfile），非会员也可关联 */
   customerProfileId: { type: mongoose.Schema.Types.ObjectId, ref: 'CustomerProfile' },
   memberPhoneSnapshot: { type: String, default: '' },

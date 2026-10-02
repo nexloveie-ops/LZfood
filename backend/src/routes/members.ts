@@ -6,7 +6,6 @@ import { requirePermission } from '../middleware/auth';
 import { requireAuthSameStore } from '../middleware/authForStore';
 import { memberAuthMiddleware, signMemberToken } from '../middleware/memberJwt';
 import {
-  allocateNextMemberNo,
   hashMemberPin,
   IRISH_MEMBER_MOBILE_RE,
   normalizeMemberPhone,
@@ -19,17 +18,30 @@ import {
 } from '../utils/memberWalletOps';
 import {
   TOPUP_CARD_DUMMY_PIN_HASH,
+  TOPUP_CARD_MAX_PIN_FAILS,
   TOPUP_CARD_REDEEM_GENERIC_MESSAGE,
   assertTopUpCardCodeFormat,
   assertTopUpCardPinFormat,
   normalizeTopUpCardCode,
   verifyTopUpCardPin,
 } from '../utils/memberTopUpCard';
-import { createStripeClient } from '../utils/stripeConfig';
+import { createStripeClient, getStripePublishableResolved } from '../utils/stripeConfig';
+import { createPlatformStripeClient, getPlatformStripePublishable } from '../utils/platformStripeConfig';
 import { requireFeature } from '../middleware/featureAccess';
 import { FeatureKeys } from '../utils/featureCatalog';
 import { randomInt } from 'node:crypto';
 import { assertTwilioSmsReadyForOutbound, sendMemberPinResetSms } from '../utils/twilioSms';
+import {
+  allocatePlatformMemberNo,
+  ensurePlatformMemberNo,
+  findLegacyStoreMemberByPhone,
+  findPlatformMemberById,
+  findPlatformMemberByPhone,
+  isStaffAtStore,
+  staffBalanceAtStore,
+  toMemberPublicJson,
+} from '../utils/platformMemberIdentity';
+import { creditPlatformMemberWallet } from '../utils/platformMemberWalletOps';
 
 const MEMBER_TOPUP_MIN_EUR = 1;
 const MEMBER_TOPUP_MAX_EUR = 500;
@@ -38,8 +50,8 @@ const MEMBER_TOPUP_MAX_EUR = 500;
 const MEMBER_PIN_RESET_COOLDOWN_MS = 60_000;
 const memberPinResetLastAt = new Map<string, number>();
 
-function memberPinResetCooldownKey(storeId: string, phone: string): string {
-  return `${storeId}:${phone}`;
+function memberPinResetCooldownKey(_storeId: string, phone: string): string {
+  return `platform:${phone}`;
 }
 
 function randomFourDigitPin(): string {
@@ -66,6 +78,9 @@ function mModels() {
     MemberTopUpCard: mongoose.Model<any>;
     Store: mongoose.Model<any>;
     CustomerProfile: mongoose.Model<any>;
+    PlatformMember: mongoose.Model<any>;
+    PlatformMemberWalletTxn: mongoose.Model<any>;
+    PlatformTopUpCard: mongoose.Model<any>;
   };
 }
 
@@ -86,6 +101,41 @@ type MemberTxnBundleOffer = {
 
 function round2MemberTxnEuro(n: number): number {
   return Math.round(n * 100) / 100;
+}
+
+type TxnStoreLabel = { slug: string; displayName: string };
+
+async function storeLabelsByIds(ids: unknown[]): Promise<Map<string, TxnStoreLabel>> {
+  const uniq: mongoose.Types.ObjectId[] = [];
+  const seen = new Set<string>();
+  for (const raw of ids) {
+    const sid = String(raw || '');
+    if (!sid || !mongoose.Types.ObjectId.isValid(sid) || seen.has(sid)) continue;
+    seen.add(sid);
+    uniq.push(new mongoose.Types.ObjectId(sid));
+  }
+  const map = new Map<string, TxnStoreLabel>();
+  if (!uniq.length) return map;
+  const { Store } = mModels();
+  const rows = (await Store.find({ _id: { $in: uniq } }).select('slug displayName').lean()) as {
+    _id: unknown;
+    slug?: string;
+    displayName?: string;
+  }[];
+  for (const s of rows) {
+    const slug = String(s.slug || '').trim();
+    map.set(String(s._id), { slug, displayName: String(s.displayName || '').trim() || slug });
+  }
+  return map;
+}
+
+function withTxnStore(
+  txn: Record<string, unknown>,
+  labels: Map<string, TxnStoreLabel>,
+  fallbackStoreId?: mongoose.Types.ObjectId | null,
+): Record<string, unknown> {
+  const sid = String(txn.storeId || fallbackStoreId || '');
+  return { ...txn, store: sid ? labels.get(sid) || null : null };
 }
 
 /** 合并多订单上的套餐/优惠（按 offerId 或名称聚合减免额） */
@@ -165,7 +215,11 @@ async function buildMemberWalletTxnDetail(params: {
     Checkout: mongoose.Model<unknown>;
   };
 
-  const memberDoc = (await Member.findOne({ _id: memberId, storeId }).lean()) as { phone?: string } | null;
+  let memberDoc = (await Member.findOne({ _id: memberId, storeId }).lean()) as { phone?: string } | null;
+  if (!memberDoc) {
+    const pm = await findPlatformMemberById(memberId);
+    memberDoc = pm ? { phone: pm.phone } : null;
+  }
   let phoneNorm = '';
   try {
     if (memberDoc?.phone) phoneNorm = normalizeMemberPhone(String(memberDoc.phone));
@@ -270,10 +324,10 @@ function validatePin(pin: unknown): string {
   return pin;
 }
 
-// POST /api/members/register
+// POST /api/members/register — 任意店注册为平台会员（一号全店通用）
 router.post('/register', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { Member, Store, CustomerProfile } = mModels();
+    const { Member, PlatformMember } = mModels();
     const phone = normalizeMemberPhone(String(req.body.phone || ''));
     if (!phone) throw createAppError('VALIDATION_ERROR', '请填写手机号');
     if (!IRISH_MEMBER_MOBILE_RE.test(phone)) {
@@ -285,36 +339,28 @@ router.post('/register', async (req: Request, res: Response, next: NextFunction)
     const pin = validatePin(req.body.pin);
     const displayName = String(req.body.displayName || '').trim().slice(0, 80);
 
-    const exists = await Member.findOne({ storeId: req.storeId, phone, status: { $ne: 'deleted' } });
-    if (exists) throw createAppError('CONFLICT', '该手机号已注册');
+    const platformExists = await PlatformMember.findOne({ phone });
+    if (platformExists) throw createAppError('CONFLICT', '该手机号已注册');
 
-    const memberNo = await allocateNextMemberNo(Store, req.storeId!);
+    const legacyHere = await Member.findOne({ storeId: req.storeId, phone, status: { $ne: 'deleted' } });
+    if (legacyHere) throw createAppError('CONFLICT', '该手机号已注册');
+
+    const memberNo = await allocatePlatformMemberNo();
     const pinHash = await hashMemberPin(pin);
-    const doc = await Member.create({
-      storeId: req.storeId,
-      memberNo,
+    const doc = await PlatformMember.create({
       phone,
+      memberNo,
       displayName,
       pinHash,
+      creditBalance: 0,
+      staffStoreIds: [],
+      staffBalances: [],
     });
-
-    await CustomerProfile.updateMany(
-      { storeId: req.storeId, phoneNorm: phone, $or: [{ memberId: null }, { memberId: { $exists: false } }] },
-      { $set: { memberId: doc._id } },
-    ).catch(() => {});
 
     const token = signMemberToken(doc._id.toString(), req.storeId!.toString());
     res.status(201).json({
       token,
-      member: {
-        _id: doc._id,
-        memberNo: doc.memberNo,
-        phone: doc.phone,
-        displayName: doc.displayName,
-        deliveryAddress: (doc as { deliveryAddress?: string }).deliveryAddress ?? '',
-        postalCode: (doc as { postalCode?: string }).postalCode ?? '',
-        creditBalance: doc.creditBalance,
-      },
+      member: toMemberPublicJson(doc as never),
     });
   } catch (err) {
     next(err);
@@ -324,12 +370,25 @@ router.post('/register', async (req: Request, res: Response, next: NextFunction)
 // POST /api/members/login
 router.post('/login', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { Member } = mModels();
+    const { Member, PlatformMember } = mModels();
     const phone = normalizeMemberPhone(String(req.body.phone || ''));
     if (!phone) throw createAppError('VALIDATION_ERROR', '请填写手机号');
     const pin = validatePin(req.body.pin);
 
-    const doc = (await Member.findOne({ storeId: req.storeId, phone, status: 'active' }).lean()) as {
+    const platform = await findPlatformMemberByPhone(phone);
+    if (platform) {
+      await assertMemberPinOk(PlatformMember, platform as never, pin);
+      await ensurePlatformMemberNo(platform._id);
+      const fresh = await findPlatformMemberById(platform._id);
+      const token = signMemberToken(platform._id.toString(), req.storeId!.toString());
+      res.json({
+        token,
+        member: toMemberPublicJson(fresh || platform),
+      });
+      return;
+    }
+
+    const doc = (await findLegacyStoreMemberByPhone(req.storeId!, phone)) as {
       _id: mongoose.Types.ObjectId;
       pinHash: string;
       pinFailedAttempts: number;
@@ -339,23 +398,17 @@ router.post('/login', async (req: Request, res: Response, next: NextFunction) =>
       displayName: string;
       creditBalance: number;
       status: string;
+      deliveryAddress?: string;
+      postalCode?: string;
     } | null;
     if (!doc) throw createAppError('UNAUTHORIZED', '手机号或 PIN 错误');
 
-    await assertMemberPinOk(Member, doc as any, pin);
+    await assertMemberPinOk(Member, doc as never, pin);
 
     const token = signMemberToken(doc._id.toString(), req.storeId!.toString());
     res.json({
       token,
-      member: {
-        _id: doc._id,
-        memberNo: doc.memberNo,
-        phone: doc.phone,
-        displayName: doc.displayName,
-        deliveryAddress: (doc as { deliveryAddress?: string }).deliveryAddress ?? '',
-        postalCode: (doc as { postalCode?: string }).postalCode ?? '',
-        creditBalance: doc.creditBalance,
-      },
+      member: toMemberPublicJson(doc),
     });
   } catch (err) {
     next(err);
@@ -402,13 +455,19 @@ router.post(
         throw createAppError('SERVICE_UNAVAILABLE', msg);
       }
 
-      const { Member } = mModels();
-      const memberDoc = await Member.findOne({ storeId: req.storeId, phone, status: 'active' });
       const genericOk = {
         ok: true as const,
         message:
-          '若该手机号已在本店注册且短信发送成功，您将收到新的 4 位 PIN；请查收短信后使用新 PIN 登录。',
+          '若该手机号已注册且短信发送成功，您将收到新的 4 位 PIN；请查收短信后使用新 PIN 登录。',
       };
+
+      const { Member, PlatformMember } = mModels();
+      const platform = await findPlatformMemberByPhone(phone);
+      const legacy = platform
+        ? null
+        : await Member.findOne({ storeId: req.storeId, phone, status: 'active' });
+      const memberDoc = platform || legacy;
+      const MemberModel = platform ? PlatformMember : Member;
 
       if (!memberDoc) {
         memberPinResetLastAt.set(ck, now);
@@ -420,7 +479,7 @@ router.post(
       const newHash = await hashMemberPin(newPin);
       const oldHash = String((memberDoc as { pinHash?: string }).pinHash || '');
 
-      await Member.updateOne(
+      await MemberModel.updateOne(
         { _id: memberDoc._id },
         { $set: { pinHash: newHash, pinFailedAttempts: 0, lockedUntil: null } },
       );
@@ -428,7 +487,7 @@ router.post(
       try {
         await sendMemberPinResetSms({ storeId: req.storeId, memberPhoneLocal: phone, newPin });
       } catch (e) {
-        await Member.updateOne({ _id: memberDoc._id }, { $set: { pinHash: oldHash } });
+        await MemberModel.updateOne({ _id: memberDoc._id }, { $set: { pinHash: oldHash } });
         throw createAppError(
           'SERVICE_UNAVAILABLE',
           e instanceof Error ? `短信发送失败，PIN 未变更：${e.message}` : '短信发送失败，PIN 未变更',
@@ -446,7 +505,6 @@ router.post(
 /** 扫码点单：仅校验手机号对应有效会员（不返回余额，避免未验证 PIN 泄露信息） */
 export async function membersScanOrderLookup(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { Member } = mModels();
     const phone = normalizeMemberPhone(String(req.query.phone || ''));
     if (!phone) throw createAppError('VALIDATION_ERROR', '请填写手机号');
     if (!IRISH_MEMBER_MOBILE_RE.test(phone)) {
@@ -455,7 +513,17 @@ export async function membersScanOrderLookup(req: Request, res: Response, next: 
         '手机号须为爱尔兰手机：仅保存数字，格式为 08 开头的 10 位数（可从 +353 8… 或含空格/括号输入自动转换）',
       );
     }
-    const doc = (await Member.findOne({ storeId: req.storeId, phone, status: 'active' }).lean()) as {
+    const platform = await findPlatformMemberByPhone(phone);
+    if (platform) {
+      await ensurePlatformMemberNo(platform._id);
+      const fresh = await findPlatformMemberById(platform._id);
+      res.json({
+        memberNo: Number(fresh?.memberNo || platform.memberNo) || 0,
+        displayName: platform.displayName ?? '',
+      });
+      return;
+    }
+    const doc = (await findLegacyStoreMemberByPhone(req.storeId!, phone)) as {
       memberNo: number;
       displayName?: string;
     } | null;
@@ -472,20 +540,45 @@ export async function membersScanOrderLookup(req: Request, res: Response, next: 
 // POST /api/members/verify-pin — 收银结账前校验（不签发长期 token）
 router.post('/verify-pin', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { Member } = mModels();
+    const { Member, PlatformMember } = mModels();
     const phone = normalizeMemberPhone(String(req.body.phone || ''));
     if (!phone) throw createAppError('VALIDATION_ERROR', '请填写手机号');
     const pin = validatePin(req.body.pin);
 
-    const doc = (await Member.findOne({ storeId: req.storeId, phone, status: 'active' }).lean()) as any;
+    const platform = await findPlatformMemberByPhone(phone);
+    if (platform) {
+      await assertMemberPinOk(PlatformMember, platform as never, pin);
+      const staffHere = isStaffAtStore(platform, req.storeId!);
+      res.json({
+        ok: true,
+        memberId: platform._id.toString(),
+        memberNo: Number(platform.memberNo) || 0,
+        creditBalance: Number(platform.creditBalance) || 0,
+        isStaffHere: staffHere,
+        staffBalance: staffHere ? staffBalanceAtStore(platform, req.storeId!) : null,
+      });
+      return;
+    }
+
+    const doc = (await findLegacyStoreMemberByPhone(req.storeId!, phone)) as {
+      _id: mongoose.Types.ObjectId;
+      memberNo: number;
+      creditBalance: number;
+      pinHash: string;
+      pinFailedAttempts: number;
+      lockedUntil?: Date | null;
+      status: string;
+    } | null;
     if (!doc) throw createAppError('UNAUTHORIZED', '手机号或 PIN 错误');
-    await assertMemberPinOk(Member, doc, pin);
+    await assertMemberPinOk(Member, doc as never, pin);
 
     res.json({
       ok: true,
       memberId: doc._id.toString(),
       memberNo: doc.memberNo,
       creditBalance: doc.creditBalance,
+      isStaffHere: false,
+      staffBalance: null,
     });
   } catch (err) {
     next(err);
@@ -499,13 +592,27 @@ router.get(
   requirePermission('checkout:process'),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { Member } = mModels();
       const phone = normalizeMemberPhone(String(req.query.phone || ''));
       if (!phone) {
         res.json(null);
         return;
       }
-      const doc = (await Member.findOne({ storeId: req.storeId, phone, status: 'active' }).lean()) as {
+      const platform = await findPlatformMemberByPhone(phone);
+      if (platform) {
+        await ensurePlatformMemberNo(platform._id);
+        const fresh = (await findPlatformMemberById(platform._id)) || platform;
+        const staffHere = isStaffAtStore(fresh, req.storeId!);
+        res.json({
+          memberNo: Number(fresh.memberNo) || 0,
+          displayName: fresh.displayName ?? '',
+          phone: fresh.phone,
+          creditBalance: Number(fresh.creditBalance) || 0,
+          isStaffHere: staffHere,
+          staffBalance: staffHere ? staffBalanceAtStore(fresh, req.storeId!) : null,
+        });
+        return;
+      }
+      const doc = (await findLegacyStoreMemberByPhone(req.storeId!, phone)) as {
         memberNo: number;
         displayName?: string;
         phone: string;
@@ -520,6 +627,8 @@ router.get(
         displayName: doc.displayName ?? '',
         phone: doc.phone,
         creditBalance: doc.creditBalance,
+        isStaffHere: false,
+        staffBalance: null,
       });
     } catch (err) {
       next(err);
@@ -575,22 +684,20 @@ router.get('/me', memberAuthMiddleware, async (req: Request, res: Response, next
   try {
     const { Member } = mModels();
     const mid = req.memberAuth!.memberId;
+    const platform = await findPlatformMemberById(mid);
+    if (platform && platform.status === 'active') {
+      await ensurePlatformMemberNo(platform._id);
+      const fresh = (await findPlatformMemberById(platform._id)) || platform;
+      res.json(toMemberPublicJson(fresh));
+      return;
+    }
     const doc = await Member.findOne({
       _id: mid,
       storeId: req.storeId,
       status: 'active',
     }).lean();
     if (!doc) throw createAppError('NOT_FOUND', '会员不存在');
-    const d = doc as any;
-    res.json({
-      _id: d._id,
-      memberNo: d.memberNo,
-      phone: d.phone,
-      displayName: d.displayName,
-      deliveryAddress: d.deliveryAddress ?? '',
-      postalCode: d.postalCode ?? '',
-      creditBalance: d.creditBalance,
-    });
+    res.json(toMemberPublicJson(doc as never));
   } catch (err) {
     next(err);
   }
@@ -598,31 +705,46 @@ router.get('/me', memberAuthMiddleware, async (req: Request, res: Response, next
 
 router.get('/me/transactions', memberAuthMiddleware, async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { MemberWalletTxn } = mModels();
+    const { MemberWalletTxn, PlatformMemberWalletTxn } = mModels();
     const midRaw = req.memberAuth!.memberId;
     const memberIdQuery = mongoose.Types.ObjectId.isValid(midRaw)
       ? new mongoose.Types.ObjectId(midRaw)
       : midRaw;
-    const filter = { storeId: req.storeId, memberId: memberIdQuery };
+    const platform = await findPlatformMemberById(midRaw);
+    const TxnModel = platform ? PlatformMemberWalletTxn : MemberWalletTxn;
+    const filter = platform
+      ? { memberId: memberIdQuery }
+      : { storeId: req.storeId, memberId: memberIdQuery };
 
     /** 兼容旧客户端：仅传 limit 时仍返回纯数组 */
     const rawLimit = req.query.limit;
     const hasPageParam = req.query.page != null && String(req.query.page).trim() !== '';
     if (rawLimit != null && String(rawLimit).trim() !== '' && !hasPageParam) {
       const limit = Math.min(100, Math.max(1, Number(rawLimit) || 50));
-      const list = await MemberWalletTxn.find(filter).sort({ createdAt: -1 }).limit(limit).lean();
-      res.json(list);
+      const list = (await TxnModel.find(filter).sort({ createdAt: -1 }).limit(limit).lean()) as Record<
+        string,
+        unknown
+      >[];
+      const labels = await storeLabelsByIds(list.map((t) => t.storeId || (!platform ? req.storeId : null)));
+      res.json(list.map((t) => withTxnStore(t, labels, platform ? null : req.storeId)));
       return;
     }
 
     const pageSize = Math.min(50, Math.max(1, Number(req.query.pageSize) || 10));
     const page = Math.max(1, Number(req.query.page) || 1);
     const skip = (page - 1) * pageSize;
-    const [total, list] = await Promise.all([
-      MemberWalletTxn.countDocuments(filter),
-      MemberWalletTxn.find(filter).sort({ createdAt: -1 }).skip(skip).limit(pageSize).lean(),
+    const [total, listRaw] = await Promise.all([
+      TxnModel.countDocuments(filter),
+      TxnModel.find(filter).sort({ createdAt: -1 }).skip(skip).limit(pageSize).lean(),
     ]);
-    res.json({ items: list, total, page, pageSize });
+    const list = listRaw as Record<string, unknown>[];
+    const labels = await storeLabelsByIds(list.map((t) => t.storeId || (!platform ? req.storeId : null)));
+    res.json({
+      items: list.map((t) => withTxnStore(t, labels, platform ? null : req.storeId)),
+      total,
+      page,
+      pageSize,
+    });
   } catch (err) {
     next(err);
   }
@@ -631,26 +753,35 @@ router.get('/me/transactions', memberAuthMiddleware, async (req: Request, res: R
 /** 会员流水详情：返回可读菜品行（消费/退款等），不暴露内部 ID */
 router.get('/me/transactions/:txnId/detail', memberAuthMiddleware, async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { MemberWalletTxn } = mModels();
     const rawParam = req.params.txnId;
     const rawId = typeof rawParam === 'string' ? rawParam : Array.isArray(rawParam) ? rawParam[0] : '';
     if (!rawId || !mongoose.Types.ObjectId.isValid(rawId)) {
       throw createAppError('VALIDATION_ERROR', '无效的记录 ID');
     }
     const memberId = new mongoose.Types.ObjectId(req.memberAuth!.memberId);
-    const txn = await MemberWalletTxn.findOne({
-      _id: new mongoose.Types.ObjectId(rawId),
-      storeId: req.storeId,
-      memberId,
-    }).lean();
+    const platform = await findPlatformMemberById(memberId);
+    const { MemberWalletTxn, PlatformMemberWalletTxn } = mModels();
+    const txn = platform
+      ? await PlatformMemberWalletTxn.findOne({
+          _id: new mongoose.Types.ObjectId(rawId),
+          memberId,
+        }).lean()
+      : await MemberWalletTxn.findOne({
+          _id: new mongoose.Types.ObjectId(rawId),
+          storeId: req.storeId,
+          memberId,
+        }).lean();
     if (!txn) throw createAppError('NOT_FOUND', '记录不存在');
 
+    const txnStore = (txn as { storeId?: mongoose.Types.ObjectId }).storeId || req.storeId!;
     const { lines, bundles } = await buildMemberWalletTxnDetail({
       txn: txn as Record<string, unknown>,
-      storeId: req.storeId!,
+      storeId: txnStore,
       memberId,
     });
-    res.json({ lines, bundles });
+    const labels = await storeLabelsByIds([txnStore]);
+    const store = labels.get(String(txnStore)) || null;
+    res.json({ lines, bundles, store });
   } catch (err) {
     next(err);
   }
@@ -658,7 +789,7 @@ router.get('/me/transactions/:txnId/detail', memberAuthMiddleware, async (req: R
 
 router.patch('/me', memberAuthMiddleware, async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { Member } = mModels();
+    const { Member, PlatformMember } = mModels();
     const mid = req.memberAuth!.memberId;
     const $set: Record<string, string> = {};
     if (req.body.displayName != null) {
@@ -673,18 +804,18 @@ router.patch('/me', memberAuthMiddleware, async (req: Request, res: Response, ne
     if (Object.keys($set).length === 0) {
       throw createAppError('VALIDATION_ERROR', '无可更新字段');
     }
+    const platform = await findPlatformMemberById(mid);
+    if (platform && platform.status === 'active') {
+      await PlatformMember.updateOne({ _id: mid, status: 'active' }, { $set });
+      const doc = await findPlatformMemberById(mid);
+      if (!doc) throw createAppError('NOT_FOUND', '会员不存在');
+      res.json(toMemberPublicJson(doc));
+      return;
+    }
     await Member.updateOne({ _id: mid, storeId: req.storeId, status: 'active' }, { $set });
     const doc = await Member.findById(mid).lean();
-    const d = doc as any;
-    res.json({
-      _id: d._id,
-      memberNo: d.memberNo,
-      phone: d.phone,
-      displayName: d.displayName,
-      deliveryAddress: d.deliveryAddress ?? '',
-      postalCode: d.postalCode ?? '',
-      creditBalance: d.creditBalance,
-    });
+    if (!doc) throw createAppError('NOT_FOUND', '会员不存在');
+    res.json(toMemberPublicJson(doc as never));
   } catch (err) {
     next(err);
   }
@@ -693,19 +824,25 @@ router.patch('/me', memberAuthMiddleware, async (req: Request, res: Response, ne
 // POST /api/members/me/change-pin
 router.post('/me/change-pin', memberAuthMiddleware, async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { Member } = mModels();
+    const { Member, PlatformMember } = mModels();
     const mid = req.memberAuth!.memberId;
     const oldPin = validatePin(req.body.oldPin);
     const newPin = validatePin(req.body.newPin);
 
-    const doc = (await Member.findOne({ _id: mid, storeId: req.storeId, status: 'active' }).lean()) as any;
+    const platform = await findPlatformMemberById(mid);
+    const doc = platform && platform.status === 'active'
+      ? platform
+      : ((await Member.findOne({ _id: mid, storeId: req.storeId, status: 'active' }).lean()) as {
+          pinHash?: string;
+        } | null);
     if (!doc) throw createAppError('NOT_FOUND', '会员不存在');
-    const ok = await verifyMemberPin(oldPin, doc.pinHash);
+    const ok = await verifyMemberPin(oldPin, String(doc.pinHash || ''));
     if (!ok) throw createAppError('UNAUTHORIZED', '原 PIN 错误');
 
     const pinHash = await hashMemberPin(newPin);
-    await Member.updateOne(
-      { _id: mid, storeId: req.storeId },
+    const Model = platform && platform.status === 'active' ? PlatformMember : Member;
+    await Model.updateOne(
+      platform && platform.status === 'active' ? { _id: mid } : { _id: mid, storeId: req.storeId },
       { $set: { pinHash, pinFailedAttempts: 0, lockedUntil: null } },
     );
     res.json({ ok: true });
@@ -715,7 +852,23 @@ router.post('/me/change-pin', memberAuthMiddleware, async (req: Request, res: Re
 });
 
 /**
- * 会员自助储值：创建 PaymentIntent（密钥与元数据均绑定当前 `req.storeId` 对应门店的 Stripe 配置）。
+ * 会员自助储值：平台会员走平台 Stripe；旧店会员仍走本店 Stripe。
+ * GET /api/members/me/wallet/stripe-config
+ */
+router.get('/me/wallet/stripe-config', memberAuthMiddleware, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const mid = req.memberAuth!.memberId;
+    const platform = await findPlatformMemberById(mid);
+    const publishableKey = platform
+      ? await getPlatformStripePublishable()
+      : await getStripePublishableResolved(req.storeId!);
+    res.json({ publishableKey });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
  * POST /api/members/me/wallet/stripe-create-intent  body: { amountEuro: number }
  */
 router.post('/me/wallet/stripe-create-intent', memberAuthMiddleware, async (req: Request, res: Response, next: NextFunction) => {
@@ -725,13 +878,14 @@ router.post('/me/wallet/stripe-create-intent', memberAuthMiddleware, async (req:
     if (cents < 1) throw createAppError('VALIDATION_ERROR', '充值金额无效');
 
     const mid = new mongoose.Types.ObjectId(req.memberAuth!.memberId);
-    const stripe = await createStripeClient(req.storeId!);
+    const platform = await findPlatformMemberById(mid);
+    const stripe = platform ? await createPlatformStripeClient() : await createStripeClient(req.storeId!);
     const paymentIntent = await stripe.paymentIntents.create({
       amount: cents,
       currency: 'eur',
       automatic_payment_methods: { enabled: true },
       metadata: {
-        purpose: 'member_wallet_topup',
+        purpose: platform ? 'platform_member_wallet_topup' : 'member_wallet_topup',
         memberId: mid.toString(),
         storeId: req.storeId!.toString(),
         amountEuro: amountEuro.toFixed(2),
@@ -759,7 +913,9 @@ router.post('/me/wallet/stripe-confirm', memberAuthMiddleware, async (req: Reque
       throw createAppError('VALIDATION_ERROR', '无效支付');
     }
 
-    const stripe = await createStripeClient(req.storeId!);
+    const memberId = new mongoose.Types.ObjectId(req.memberAuth!.memberId);
+    const platform = await findPlatformMemberById(memberId);
+    const stripe = platform ? await createPlatformStripeClient() : await createStripeClient(req.storeId!);
     const pi = await stripe.paymentIntents.retrieve(paymentIntentId);
     if (pi.status !== 'succeeded') {
       throw createAppError('VALIDATION_ERROR', '支付未完成，请稍后再试或更换支付方式');
@@ -769,13 +925,14 @@ router.post('/me/wallet/stripe-confirm', memberAuthMiddleware, async (req: Reque
     }
 
     const meta = pi.metadata || {};
-    if (meta.purpose !== 'member_wallet_topup') {
+    const expectedPurpose = platform ? 'platform_member_wallet_topup' : 'member_wallet_topup';
+    if (meta.purpose !== expectedPurpose) {
       throw createAppError('VALIDATION_ERROR', '支付类型不匹配');
     }
     if (meta.memberId !== req.memberAuth!.memberId) {
       throw createAppError('FORBIDDEN', '支付与当前会员不一致');
     }
-    if (meta.storeId !== req.storeId!.toString()) {
+    if (!platform && meta.storeId !== req.storeId!.toString()) {
       throw createAppError('FORBIDDEN', '店铺不匹配');
     }
 
@@ -785,7 +942,20 @@ router.post('/me/wallet/stripe-confirm', memberAuthMiddleware, async (req: Reque
       throw createAppError('VALIDATION_ERROR', '支付金额不一致');
     }
 
-    const memberId = new mongoose.Types.ObjectId(req.memberAuth!.memberId);
+    if (platform) {
+      const { balanceAfter, alreadyCredited } = await creditPlatformMemberWallet({
+        memberId,
+        storeId: req.storeId!,
+        wallet: 'guest',
+        amountEuro: chargedEuro,
+        type: 'recharge',
+        note: `Stripe 自助充值 ${paymentIntentId}`,
+        stripePaymentIntentId: paymentIntentId,
+      });
+      res.json({ creditBalance: balanceAfter, alreadyCredited: !!alreadyCredited });
+      return;
+    }
+
     const { balanceAfter, alreadyCredited } = await creditMemberWallet({
       Member,
       MemberWalletTxn,
@@ -816,6 +986,86 @@ type MemberTopUpCardLean = {
  */
 router.post('/me/wallet/redeem-topup-card', memberAuthMiddleware, async (req: Request, res: Response, next: NextFunction) => {
   try {
+    const platform = await findPlatformMemberById(req.memberAuth!.memberId);
+    if (platform) {
+      const { PlatformTopUpCard } = mModels();
+      const codeRaw = normalizeTopUpCardCode(String(req.body.cardCode || ''));
+      assertTopUpCardCodeFormat(codeRaw);
+      const pin = String(req.body.pin || '');
+      assertTopUpCardPinFormat(pin);
+      const card = (await PlatformTopUpCard.findOne({ cardCode: codeRaw }).lean()) as {
+        _id: mongoose.Types.ObjectId;
+        pinHash: string;
+        status: string;
+        amountEuro?: number | null;
+        pinFailedAttempts?: number;
+      } | null;
+      const memberOid = new mongoose.Types.ObjectId(req.memberAuth!.memberId);
+      if (!card) {
+        await verifyMemberPin(pin, TOPUP_CARD_DUMMY_PIN_HASH);
+        throw createAppError('FORBIDDEN', TOPUP_CARD_REDEEM_GENERIC_MESSAGE);
+      }
+      const pinOk = await verifyTopUpCardPin(pin, card.pinHash);
+      if (!pinOk) {
+        if (card.status !== 'used' && card.status !== 'locked') {
+          await PlatformTopUpCard.updateOne(
+            { _id: card._id },
+            {
+              $inc: { pinFailedAttempts: 1 },
+              $push: {
+                pinFailures: {
+                  $each: [{ at: new Date(), memberId: memberOid, reason: 'bad_pin' }],
+                  $slice: -40,
+                },
+              },
+            },
+          );
+          const fresh = (await PlatformTopUpCard.findById(card._id).lean()) as {
+            pinFailedAttempts?: number;
+            status?: string;
+          } | null;
+          if (fresh && (fresh.pinFailedAttempts ?? 0) >= TOPUP_CARD_MAX_PIN_FAILS && fresh.status !== 'used') {
+            await PlatformTopUpCard.updateOne({ _id: card._id }, { $set: { status: 'locked' } });
+          }
+        }
+        throw createAppError('FORBIDDEN', TOPUP_CARD_REDEEM_GENERIC_MESSAGE);
+      }
+      if (card.status === 'used' || card.status === 'locked' || card.status !== 'active') {
+        throw createAppError('FORBIDDEN', TOPUP_CARD_REDEEM_GENERIC_MESSAGE);
+      }
+      const amt = Number(card.amountEuro);
+      if (!Number.isFinite(amt) || amt <= 0) {
+        throw createAppError('FORBIDDEN', TOPUP_CARD_REDEEM_GENERIC_MESSAGE);
+      }
+      const reserved = await PlatformTopUpCard.findOneAndUpdate(
+        { _id: card._id, status: 'active' },
+        { $set: { status: 'used', usedAt: new Date(), usedByMemberId: memberOid } },
+        { new: true },
+      ).lean();
+      if (!reserved) throw createAppError('FORBIDDEN', TOPUP_CARD_REDEEM_GENERIC_MESSAGE);
+      try {
+        const { balanceAfter, alreadyCredited } = await creditPlatformMemberWallet({
+          memberId: memberOid,
+          wallet: 'guest',
+          amountEuro: amt,
+          type: 'gift_card',
+          note: `平台充值卡 ${codeRaw}`,
+          topUpCardId: card._id,
+        });
+        res.json({
+          creditBalance: balanceAfter,
+          creditedEuro: amt,
+          alreadyCredited: !!alreadyCredited,
+        });
+      } catch (e) {
+        await PlatformTopUpCard.updateOne(
+          { _id: card._id },
+          { $set: { status: 'active', usedAt: null, usedByMemberId: null } },
+        );
+        throw e;
+      }
+      return;
+    }
     const { Member, MemberWalletTxn, MemberTopUpCard } = mModels();
     const codeRaw = normalizeTopUpCardCode(String(req.body.cardCode || ''));
     assertTopUpCardCodeFormat(codeRaw);

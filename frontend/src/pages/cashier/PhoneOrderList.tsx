@@ -156,7 +156,7 @@ export default function PhoneOrderList() {
           <button className="btn btn-primary" onClick={() => { setCheckoutId(null); setCheckoutMeta(null); setSelected(null); }}>继续</button>
           <button className="btn btn-outline" onClick={() => window.print()} style={{ marginLeft: 8 }}>🖨️ 打印小票</button>
         </div>
-        <ReceiptPrint checkoutId={checkoutId} cashReceived={checkoutMeta?.cashReceived} changeAmount={checkoutMeta?.change} bundleDiscounts={checkoutBundles} printCopies={1} />
+        <ReceiptPrint checkoutId={checkoutId} cashReceived={checkoutMeta?.cashReceived} changeAmount={checkoutMeta?.change} bundleDiscounts={checkoutBundles} />
       </div>
     );
   }

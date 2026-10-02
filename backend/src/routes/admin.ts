@@ -22,7 +22,18 @@ import {
 } from '../utils/stripeConfig';
 import { FeatureKeys, resolveStoreEffectiveFeatures } from '../utils/featureCatalog';
 import { requireFeature } from '../middleware/featureAccess';
-import { applyMemberWalletToTargetBalance, creditMemberWallet } from '../utils/memberWalletOps';
+import { creditWalletForMemberId, applyStoreStaffWalletToTarget, creditPlatformMemberWallet } from '../utils/platformMemberWalletOps';
+import {
+  allocatePlatformMemberNo,
+  affiliateStaffAtStore,
+  ensureStaffBalanceRow,
+  findKnownCustomerNameByPhone,
+  findPlatformMemberByPhone,
+  isStaffAtStore,
+  requireStaffAtStore,
+  toStoreStaffAdminRow,
+  type PlatformMemberLean,
+} from '../utils/platformMemberIdentity';
 import {
   computeMemberCreditRefundGapEuro,
   round2Euro,
@@ -44,8 +55,16 @@ import {
   type DeliveryCustomerRow,
 } from '../utils/deliveryCustomerStats';
 import { normalizeDeliveryAddressKey } from '../utils/customerProfileDelivery';
-import { normalizeMemberPhone, customerPhoneMatchCandidates, expandOrderPhoneQueryVariants } from '../utils/memberWalletOps';
+import { normalizeMemberPhone, customerPhoneMatchCandidates, expandOrderPhoneQueryVariants, hashMemberPin, IRISH_MEMBER_MOBILE_RE, PIN_MIN_LEN, PIN_MAX_LEN } from '../utils/memberWalletOps';
 import { generateWidgetApiKey } from '../utils/widgetApiKey';
+import {
+  CLOUD_PRINT_AUTO_KEY,
+  CLOUD_PRINT_COPIES_KEY,
+  CLOUD_PRINT_ENABLED_KEY,
+  parseCloudPrintAutoCheckout,
+  parseCloudPrintCopies,
+  parseCloudPrintEnabled,
+} from '../utils/cloudPrint/config';
 
 function adminModels() {
   return getModels() as {
@@ -58,6 +77,8 @@ function adminModels() {
     MemberWalletTxn: mongoose.Model<any>;
     MemberTopUpCard: mongoose.Model<any>;
     CustomerProfile: mongoose.Model<any>;
+    PlatformMember: mongoose.Model<any>;
+    PlatformMemberWalletTxn: mongoose.Model<any>;
   };
 }
 
@@ -338,7 +359,7 @@ router.put('/users/:id', ...requireAuthSameStore, requirePermission('admin:users
   }
 });
 
-// GET /api/admin/members — 会员列表/搜索（config；与送餐能力包同一开关）
+// GET /api/admin/members — 本店挂靠员工（config；与送餐能力包同一开关）
 router.get(
   '/members',
   ...requireAuthSameStore,
@@ -346,10 +367,11 @@ router.get(
   requireFeature(FeatureKeys.CashierMemberWallet),
   async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { Member } = adminModels();
+    const { PlatformMember } = adminModels();
+    const storeId = req.storeId!;
     const q = String(req.query.q || '').trim();
     const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 50));
-    const filter: Record<string, unknown> = { storeId: req.storeId, status: 'active' };
+    const filter: Record<string, unknown> = { staffStoreIds: storeId, status: 'active' };
     if (q) {
       const esc = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const or: Record<string, unknown>[] = [
@@ -361,21 +383,123 @@ router.get(
       if (mongoose.Types.ObjectId.isValid(q)) or.push({ _id: new mongoose.Types.ObjectId(q) });
       filter.$or = or;
     }
-    const list = await Member.find(filter).sort({ createdAt: -1 }).limit(limit).lean();
-    res.json(
-      list.map((m: Record<string, unknown>) => ({
-        _id: m._id,
-        memberNo: m.memberNo,
-        phone: m.phone,
-        displayName: m.displayName,
-        creditBalance: m.creditBalance,
-        createdAt: m.createdAt,
-      })),
-    );
+    const list = (await PlatformMember.find(filter).sort({ createdAt: -1 }).limit(limit).lean()) as unknown as PlatformMemberLean[];
+    res.json(list.map((m) => toStoreStaffAdminRow(m, storeId)));
   } catch (err) {
     next(err);
   }
 });
+
+// GET /api/admin/members/lookup?phone= — 录入前查平台会员是否已存在（不含客人钱包）
+router.get(
+  '/members/lookup',
+  ...requireAuthSameStore,
+  requirePermission('config:*'),
+  requireFeature(FeatureKeys.CashierMemberWallet),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const phone = normalizeMemberPhone(String(req.query.phone || ''));
+      if (!phone || !IRISH_MEMBER_MOBILE_RE.test(phone)) {
+        res.json({ exists: false });
+        return;
+      }
+      const existing = await findPlatformMemberByPhone(phone);
+      if (existing) {
+        res.json({
+          exists: true,
+          source: 'member',
+          phone: existing.phone,
+          memberNo: Number(existing.memberNo) || 0,
+          displayName: String(existing.displayName || ''),
+          alreadyStaff: isStaffAtStore(existing, req.storeId!),
+        });
+        return;
+      }
+      const known = await findKnownCustomerNameByPhone(phone);
+      if (known.found) {
+        res.json({
+          exists: true,
+          source: 'customer',
+          phone,
+          memberNo: 0,
+          displayName: known.displayName,
+          alreadyStaff: false,
+        });
+        return;
+      }
+      res.json({ exists: false, phone });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+function validateStoreStaffPin(pin: unknown): string {
+  if (typeof pin !== 'string' || pin.length < PIN_MIN_LEN || pin.length > PIN_MAX_LEN) {
+    throw createAppError('VALIDATION_ERROR', `PIN 长度须在 ${PIN_MIN_LEN}-${PIN_MAX_LEN} 位`);
+  }
+  if (!/^\d+$/.test(pin)) throw createAppError('VALIDATION_ERROR', 'PIN 须为数字');
+  return pin;
+}
+
+// POST /api/admin/members — 录入本店员工（已有平台会员则挂靠本店）
+router.post(
+  '/members',
+  ...requireAuthSameStore,
+  requirePermission('config:*'),
+  requireFeature(FeatureKeys.CashierMemberWallet),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { PlatformMember } = adminModels();
+      const storeId = req.storeId!;
+      const phone = normalizeMemberPhone(String((req.body as { phone?: unknown }).phone || ''));
+      if (!phone) throw createAppError('VALIDATION_ERROR', '请填写手机号');
+      if (!IRISH_MEMBER_MOBILE_RE.test(phone)) {
+        throw createAppError('VALIDATION_ERROR', '手机号须为爱尔兰 08 开头 10 位');
+      }
+      const displayName = String((req.body as { displayName?: unknown }).displayName || '').trim().slice(0, 80);
+      const pinRaw = (req.body as { pin?: unknown }).pin;
+
+      const existing = await findPlatformMemberByPhone(phone);
+      if (existing) {
+        const already = isStaffAtStore(existing, storeId);
+        const affiliated = await affiliateStaffAtStore(existing._id, storeId);
+        res.status(already ? 200 : 201).json({
+          ...toStoreStaffAdminRow(affiliated, storeId),
+          created: false,
+          alreadyStaff: already,
+          affiliated: !already,
+        });
+        return;
+      }
+
+      const known = await findKnownCustomerNameByPhone(phone);
+      const hasPin = typeof pinRaw === 'string' && pinRaw.trim().length > 0;
+      if (!hasPin && !known.found) {
+        throw createAppError('VALIDATION_ERROR', '新员工须设置 PIN');
+      }
+      const pinHash = hasPin ? await hashMemberPin(validateStoreStaffPin(pinRaw)) : '';
+      const memberNo = await allocatePlatformMemberNo();
+      const created = (await PlatformMember.create({
+        phone,
+        memberNo,
+        displayName: displayName || known.displayName,
+        pinHash,
+        creditBalance: 0,
+        staffStoreIds: [storeId],
+        staffBalances: [{ storeId, creditBalance: 0 }],
+      })) as unknown as PlatformMemberLean;
+      res.status(201).json({
+        ...toStoreStaffAdminRow(created, storeId),
+        created: !known.found,
+        alreadyStaff: false,
+        affiliated: true,
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 // GET /api/admin/members/:memberId/transactions — 会员储值流水（config）
 router.get(
@@ -385,22 +509,22 @@ router.get(
   requireFeature(FeatureKeys.CashierMemberWallet),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { Member, MemberWalletTxn } = adminModels();
+      const { PlatformMemberWalletTxn } = adminModels();
       const rawMid = req.params.memberId;
       const memberIdStr = typeof rawMid === 'string' ? rawMid : rawMid[0];
       if (!mongoose.Types.ObjectId.isValid(memberIdStr)) {
         throw createAppError('VALIDATION_ERROR', 'Invalid member ID');
       }
       const memberId = new mongoose.Types.ObjectId(memberIdStr);
-      const member = await Member.findOne({
-        _id: memberId,
-        storeId: req.storeId,
-        status: 'active',
-      }).lean();
-      if (!member) throw createAppError('NOT_FOUND', '会员不存在');
+      const storeId = req.storeId!;
+      await requireStaffAtStore(memberId, storeId);
 
       const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 100));
-      const list = await MemberWalletTxn.find({ storeId: req.storeId, memberId })
+      const list = await PlatformMemberWalletTxn.find({
+        memberId,
+        wallet: 'staff',
+        storeId,
+      })
         .sort({ createdAt: -1 })
         .limit(limit)
         .lean();
@@ -487,13 +611,12 @@ router.post(
         return;
       }
 
-      await creditMemberWallet({
-        Member,
-        MemberWalletTxn,
-        storeId: req.storeId!,
+      await creditWalletForMemberId({
         memberId: ch.memberId,
+        storeId: req.storeId!,
         amountEuro: gapEuro,
         type: 'refund_credit',
+        wallet: (ch as { memberWallet?: 'guest' | 'staff' }).memberWallet,
         checkoutId: new mongoose.Types.ObjectId(checkoutId),
         note: '补录：订单退款退回储值（系统重试）',
       });
@@ -522,7 +645,6 @@ router.post(
   requireFeature(FeatureKeys.CashierMemberWallet),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { Member, MemberWalletTxn } = adminModels();
       const rawMid = req.params.memberId;
       const memberId = typeof rawMid === 'string' ? rawMid : rawMid[0];
       if (!mongoose.Types.ObjectId.isValid(memberId)) {
@@ -542,17 +664,9 @@ router.post(
         );
       }
 
-      const adminId = req.user?.userId;
-      const opId = adminId && mongoose.Types.ObjectId.isValid(adminId) ? new mongoose.Types.ObjectId(adminId) : undefined;
-
-      const member = (await Member.findOne({
-        _id: memberId,
-        storeId: req.storeId,
-        status: 'active',
-      }).lean()) as { creditBalance?: number } | null;
-      if (!member) throw createAppError('NOT_FOUND', '会员不存在');
-
       const memberOid = new mongoose.Types.ObjectId(memberId);
+      const storeId = req.storeId!;
+      await ensureStaffBalanceRow(memberOid, storeId);
 
       let amount: number;
       let note = String(body.note || '').trim().slice(0, 200);
@@ -562,14 +676,11 @@ router.post(
         if (!Number.isFinite(target) || target < 0) {
           throw createAppError('VALIDATION_ERROR', 'targetBalanceEuro 无效');
         }
-        const { balanceAfter, deltaEuro } = await applyMemberWalletToTargetBalance({
-          Member,
-          MemberWalletTxn,
-          storeId: req.storeId!,
+        const { balanceAfter, deltaEuro } = await applyStoreStaffWalletToTarget({
           memberId: memberOid,
+          storeId,
           targetBalanceEuro: target,
           note: note || undefined,
-          operatorAdminId: opId,
         });
         res.json({
           ok: true,
@@ -584,18 +695,16 @@ router.post(
         if (!Number.isFinite(amount) || amount <= 0) {
           throw createAppError('VALIDATION_ERROR', 'amountEuro 须为正数');
         }
-        if (!note) note = '后台充值';
+        if (!note) note = '后台充值本店员工额度';
       }
 
-      const { balanceAfter } = await creditMemberWallet({
-        Member,
-        MemberWalletTxn,
-        storeId: req.storeId!,
+      const { balanceAfter } = await creditPlatformMemberWallet({
         memberId: memberOid,
+        storeId,
+        wallet: 'staff',
         amountEuro: amount,
-        type: 'recharge',
+        type: 'staff_credit',
         note,
-        operatorAdminId: opId,
       });
 
       res.json({ ok: true, creditBalance: balanceAfter, creditedEuro: amount });
@@ -605,69 +714,14 @@ router.post(
   },
 );
 
-// DELETE /api/admin/members/:memberId — 手动删除误注册会员（软删除）
+// DELETE /api/admin/members/:memberId — 身份归平台，店铺不可删除
 router.delete(
   '/members/:memberId',
   ...requireAuthSameStore,
   requirePermission('config:*'),
   requireFeature(FeatureKeys.CashierMemberWallet),
-  async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const { Member, MemberWalletTxn, CustomerProfile } = adminModels();
-      const rawMid = req.params.memberId;
-      const memberId = typeof rawMid === 'string' ? rawMid : rawMid[0];
-      if (!mongoose.Types.ObjectId.isValid(memberId)) {
-        throw createAppError('VALIDATION_ERROR', 'Invalid member ID');
-      }
-      const memberOid = new mongoose.Types.ObjectId(memberId);
-      const member = (await Member.findOne({
-        _id: memberOid,
-        storeId: req.storeId,
-      }).lean()) as {
-        _id: mongoose.Types.ObjectId;
-        phone?: string;
-        displayName?: string;
-        creditBalance?: number;
-        status?: string;
-      } | null;
-      if (!member || member.status === 'deleted') {
-        throw createAppError('NOT_FOUND', '会员不存在');
-      }
-      const balance = Number(member.creditBalance) || 0;
-      if (balance > 0.001) {
-        throw createAppError('VALIDATION_ERROR', '该会员仍有储值余额，无法删除');
-      }
-      const txnCount = await MemberWalletTxn.countDocuments({ storeId: req.storeId, memberId: memberOid });
-      if (txnCount > 0) {
-        throw createAppError('VALIDATION_ERROR', '该会员已有储值流水，无法删除');
-      }
-
-      const oldPhone = String(member.phone || '').trim();
-      const oldName = String(member.displayName || '').trim();
-      const deletedPhone = oldPhone
-        ? `${oldPhone}#deleted:${memberOid.toString().slice(-6)}`
-        : `deleted:${memberOid.toString().slice(-6)}`;
-
-      await Member.updateOne(
-        { _id: memberOid, storeId: req.storeId },
-        {
-          $set: {
-            status: 'deleted',
-            phone: deletedPhone,
-            displayName: oldName ? `${oldName} [deleted]` : '[deleted]',
-          },
-        },
-      );
-
-      await CustomerProfile.updateMany(
-        { storeId: req.storeId, memberId: memberOid },
-        { $unset: { memberId: 1 } },
-      ).catch(() => {});
-
-      res.json({ ok: true });
-    } catch (err) {
-      next(err);
-    }
+  async (_req: Request, _res: Response, next: NextFunction) => {
+    next(createAppError('FORBIDDEN', '店铺无法删除平台会员；请到平台后台取消挂靠'));
   },
 );
 
@@ -704,6 +758,16 @@ function serializeTopUpCard(
     activatedAt: c.activatedAt ?? null,
   };
 }
+
+// 店铺储值卡已停用（改由平台充值卡）
+router.use((req: Request, _res: Response, next: NextFunction) => {
+  const p = String(req.path || '');
+  if (p === '/topup-cards-export.xlsx' || p === '/topup-cards' || p.startsWith('/topup-cards/')) {
+    next(createAppError('FORBIDDEN', '店铺储值卡已停用，请到平台后台管理充值卡'));
+    return;
+  }
+  next();
+});
 
 // POST /api/admin/topup-cards/batch — 批量生成未激活卡（响应含一次性明文 PIN；可选 xlsx 下载）
 router.post(
@@ -1428,6 +1492,73 @@ router.delete(
         { $set: { revokedAt: new Date() } },
       );
       res.json({ revoked: result.modifiedCount > 0 });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+const cloudPrintFeature = requireFeature(FeatureKeys.CloudPrint);
+
+router.get(
+  '/cloud-print',
+  ...requireAuthSameStore,
+  cloudPrintFeature,
+  requirePermission('config:update'),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { SystemConfig, CloudPrinter } = getModels() as {
+        SystemConfig: mongoose.Model<any>;
+        CloudPrinter: mongoose.Model<any>;
+      };
+      const [cfgRows, printers] = await Promise.all([
+        SystemConfig.find({
+          storeId: req.storeId,
+          key: { $in: [CLOUD_PRINT_ENABLED_KEY, CLOUD_PRINT_COPIES_KEY, CLOUD_PRINT_AUTO_KEY] },
+        }).lean() as Promise<unknown> as Promise<Array<{ key: string; value: string }>>,
+        CloudPrinter.find({ storeId: req.storeId }).sort({ createdAt: 1 }).lean() as Promise<unknown> as Promise<Array<{
+          sn: string;
+          label?: string;
+        }>>,
+      ]);
+      const cfg: Record<string, string> = {};
+      for (const r of cfgRows) cfg[r.key] = r.value;
+      res.json({
+        enabled: parseCloudPrintEnabled(cfg[CLOUD_PRINT_ENABLED_KEY]),
+        copies: parseCloudPrintCopies(cfg[CLOUD_PRINT_COPIES_KEY]),
+        autoCheckout: parseCloudPrintAutoCheckout(cfg[CLOUD_PRINT_AUTO_KEY]),
+        printers: printers.map((p) => ({ sn: p.sn, label: p.label || '' })),
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.put(
+  '/cloud-print',
+  ...requireAuthSameStore,
+  cloudPrintFeature,
+  requirePermission('config:update'),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { SystemConfig } = adminModels();
+      const enabled = !!req.body?.enabled;
+      const autoCheckout = !!req.body?.autoCheckout;
+      const copies = parseCloudPrintCopies(req.body?.copies);
+      const pairs: Array<[string, string]> = [
+        [CLOUD_PRINT_ENABLED_KEY, enabled ? '1' : '0'],
+        [CLOUD_PRINT_COPIES_KEY, String(copies)],
+        [CLOUD_PRINT_AUTO_KEY, autoCheckout ? '1' : '0'],
+      ];
+      for (const [key, value] of pairs) {
+        await SystemConfig.findOneAndUpdate(
+          { storeId: req.storeId, key },
+          { storeId: req.storeId, key, value },
+          { upsert: true },
+        );
+      }
+      res.json({ enabled, copies, autoCheckout });
     } catch (err) {
       next(err);
     }

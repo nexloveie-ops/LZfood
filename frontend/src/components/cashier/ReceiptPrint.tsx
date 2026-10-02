@@ -177,9 +177,9 @@ interface RestaurantConfig {
   receipt_print_copies?: string;
   /**
    * 小票分类打印：
-   * - '0' | 'off' = 不显示分类标题/分割线（仍按分类排序）
-   * - 'headers' | 'same' | '2' = 显示分类标题/分割线，打两张相同完整小票（不按分类切厨房单）
-   * - '1' | 'split' | unset = 显示分类标题，并切割：完整小票 + 每分类一张厨房单
+   * - '0' | 'off' = 不显示分类标题/分割线（仍按分类排序）；份数按 receipt_print_copies
+   * - 'headers' | 'same' | '2' = 显示分类标题/分割线，打相同完整小票（不按分类切厨房单）；份数按 receipt_print_copies
+   * - '1' | 'split' | unset = 显示分类标题，并切割：完整小票（份数按 receipt_print_copies）+ 每分类一张厨房单
    */
   receipt_print_by_catalog?: string;
 }
@@ -192,6 +192,12 @@ export function getReceiptCatalogPrintMode(config: { receipt_print_by_catalog?: 
   if (v === 'headers' || v === 'same' || v === '2' || v === 'grouped') return 'headers';
   // '1' | 'true' | 'split' | 'kitchen' | unset → 切割多张（兼容旧「开启」）
   return 'split';
+}
+
+export function parseReceiptPrintCopies(config: { receipt_print_copies?: string }, fallback = 1): number {
+  const n = parseInt(String(config.receipt_print_copies ?? ''), 10);
+  if (!Number.isFinite(n) || n < 1) return fallback;
+  return Math.min(10, n);
 }
 
 function isReceiptPrintByCatalog(config: RestaurantConfig): boolean {
@@ -1398,7 +1404,10 @@ export async function printBuiltReceipt(
 ) {
   const enriched = await enrichReceiptWithCatalog(receipt);
   const mode = getReceiptCatalogPrintMode(config);
-  const copies = Math.max(1, Math.floor(opts?.copies ?? 1));
+  const copies = Math.max(
+    1,
+    Math.floor(opts?.copies != null ? opts.copies : parseReceiptPrintCopies(config, 1)),
+  );
 
   const fullHtml = buildReceiptHTML(
     enriched,
@@ -1415,17 +1424,12 @@ export async function printBuiltReceipt(
     opts?.bundleDiscounts,
   );
 
-  if (opts?.reprintOnly || mode === 'off') {
+  if (opts?.reprintOnly || mode === 'off' || mode === 'headers') {
     return printHtmlReceipt({ html: fullHtml, plainText: fullPlain, copies });
   }
 
-  // 显示分类标题：两张相同完整小票（不切厨房单）
-  if (mode === 'headers') {
-    return printHtmlReceipt({ html: fullHtml, plainText: fullPlain, copies: 2 });
-  }
-
-  // split：1) 完整小票一次 2) 每分类一张厨房单
-  let result = await printHtmlReceipt({ html: fullHtml, plainText: fullPlain, copies: 1 });
+  // split：1) 完整小票（份数按设置） 2) 每分类一张厨房单
+  let result = await printHtmlReceipt({ html: fullHtml, plainText: fullPlain, copies });
 
   const foodItems = enriched.orders
     .flatMap((o) => o.items)

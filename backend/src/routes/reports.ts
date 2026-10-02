@@ -8,6 +8,7 @@ import { FeatureKeys } from '../utils/featureCatalog';
 import { aggregateVatSalesByMonth, assertVatExportReady, checkVatExportReadiness } from '../utils/vatReportAggregation';
 import { buildVatReportPdfBuffer } from '../utils/vatReportPdf';
 import { checkoutCheckedOutFilterUtc, orderCreatedAtFilterUtc } from '../utils/reportDateRange';
+import { omitOrderFromStoreSales } from '../utils/reportOrderExclusions';
 import { deliveryFeePortionEuro } from '../utils/orderPayableTotal';
 import {
   aggregateDeliveryFeeExclusions,
@@ -25,7 +26,7 @@ import {
 
 const router = Router();
 
-/** 营业报表 / 汇总 / VAT / 默认钻取：仅这些状态，且再经 statusContainsHide 过滤（防枚举外带 hide 字样的值） */
+/** 营业报表 / 汇总 / VAT / 默认钻取：仅这些状态，且再经 omitOrderFromStoreSales 过滤（hide + 员工钱包） */
 const REPORT_STATS_ORDER_STATUSES = ['checked_out', 'completed', 'refunded'] as const;
 
 /** 订单历史页 ?includeHiddenOrders=1 时额外包含 */
@@ -45,12 +46,7 @@ function requireStoreId(req: Request): mongoose.Types.ObjectId {
   return req.storeId;
 }
 
-/** status 含 hide（不区分大小写）的订单不计入营业报表、汇总、VAT；订单历史可 ?includeHiddenOrders=1 查看 */
-function statusContainsHide(status: unknown): boolean {
-  return String(status ?? '').toLowerCase().includes('hide');
-}
-
-/** 若结账所关联的任一订单为 hide，则该结账不参与报表金额（与「隐藏单不统计」一致） */
+/** 若结账所关联的任一订单为 hide 或员工钱包，则该结账不参与报表金额 */
 async function checkoutIdsToSkipWhenLinkedOrderHidden(
   storeId: mongoose.Types.ObjectId,
   checkouts: { _id: unknown; orderIds?: mongoose.Types.ObjectId[] }[],
@@ -66,12 +62,12 @@ async function checkoutIdsToSkipWhenLinkedOrderHidden(
     storeId,
     _id: { $in: oidStrs.map((id) => new mongoose.Types.ObjectId(id)) },
   })
-    .select('_id status')
-    .lean()) as { _id: mongoose.Types.ObjectId; status?: string }[];
-  const stById = new Map(rows.map((r) => [r._id.toString(), r.status]));
+    .select('_id status memberWallet')
+    .lean()) as { _id: mongoose.Types.ObjectId; status?: string; memberWallet?: string }[];
+  const stById = new Map(rows.map((r) => [r._id.toString(), r]));
   for (const c of checkouts) {
-    const anyHide = (c.orderIds || []).some((oid) => statusContainsHide(stById.get(oid.toString())));
-    if (anyHide) skip.add(String(c._id));
+    const anyOmit = (c.orderIds || []).some((oid) => omitOrderFromStoreSales(stById.get(oid.toString())));
+    if (anyOmit) skip.add(String(c._id));
   }
   return skip;
 }
@@ -131,7 +127,9 @@ router.get('/orders', authMiddleware, requirePermission('report:view'), async (r
       filter.$or = [{ tableNumber: { $in: [0, null] } }, { seatNumber: { $in: [0, null] } }];
     }
 
-    const orders = (await Order.find(filter).sort({ createdAt: -1 }).lean()) as any[];
+    const orders = ((await Order.find(filter).sort({ createdAt: -1 }).lean()) as any[]).filter((o) =>
+      includeHidden ? true : !omitOrderFromStoreSales(o),
+    );
 
     // Attach checkout info to each order
     const orderIds = orders.map((o) => o._id);
@@ -275,7 +273,7 @@ router.get('/detailed', authMiddleware, requirePermission('report:view'), async 
     if (createdUtc) orderFilter.createdAt = createdUtc;
 
     const allOrdersRaw = (await Order.find(orderFilter).lean()) as any[];
-    let allOrders = allOrdersRaw.filter((o) => !statusContainsHide(o.status));
+    let allOrders = allOrdersRaw.filter((o) => !omitOrderFromStoreSales(o));
 
     // Attach checkout info
     const orderIds = allOrders.map((o) => o._id);
@@ -605,7 +603,7 @@ router.get('/item-options', authMiddleware, requirePermission('report:view'), as
     if (createdUtc) filter.createdAt = createdUtc;
 
     const ordersRaw = (await Order.find(filter).lean()) as any[];
-    const orders = ordersRaw.filter((o) => !statusContainsHide(o.status));
+    const orders = ordersRaw.filter((o) => !omitOrderFromStoreSales(o));
 
     const optionStats: Record<string, { groupName: string; choiceName: string; extraPrice: number; count: number; revenue: number }> = {};
     let totalSold = 0;

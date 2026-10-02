@@ -71,6 +71,7 @@ const FEATURE_GROUPS: {
       { key: 'admin.salesForecast.page', label: '管理员-备货预测（菜品份数预测 / 回测与校准）' },
       { key: 'admin.reportSegments.page', label: '管理员-品类结构报表（按餐品目录分组统计营业额）' },
       { key: 'admin.widget.api', label: '管理员-Owner Widget API（iOS 小组件只读数据）' },
+      { key: 'print.cloud', label: '云打印（飞鹅云小票：结账/补打推送，店长配置份数）' },
     ],
   },
   {

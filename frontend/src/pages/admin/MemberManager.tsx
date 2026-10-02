@@ -3,7 +3,6 @@ import { useTranslation } from 'react-i18next';
 import { useAuth } from '../../context/AuthContext';
 import { apiFetch } from '../../api/client';
 import { translateMemberWalletTxnNote } from '../../utils/memberTxnNoteI18n';
-import MemberTopUpCardsPanel from './MemberTopUpCardsPanel';
 
 interface MemberRow {
   _id: string;
@@ -48,14 +47,26 @@ export default function MemberManager() {
   const [ledgerTxns, setLedgerTxns] = useState<WalletTxnRow[]>([]);
   const [ledgerLoading, setLedgerLoading] = useState(false);
   const [ledgerErr, setLedgerErr] = useState('');
-  const [adminTab, setAdminTab] = useState<'members' | 'cards'>('members');
+  const [enrollPhone, setEnrollPhone] = useState('');
+  const [enrollName, setEnrollName] = useState('');
+  const [enrollPin, setEnrollPin] = useState('');
+  const [enrollPin2, setEnrollPin2] = useState('');
+  const [enrollBusy, setEnrollBusy] = useState(false);
+  const [enrollOpen, setEnrollOpen] = useState(false);
+  const [enrollLookup, setEnrollLookup] = useState<{
+    exists: boolean;
+    source?: 'member' | 'customer';
+    phone?: string;
+    memberNo?: number;
+    displayName?: string;
+    alreadyStaff?: boolean;
+  } | null>(null);
+  const [enrollLookupBusy, setEnrollLookupBusy] = useState(false);
 
   const authH = { Authorization: `Bearer ${token}` };
 
   const fetchMembers = useCallback(async () => {
     setLoading(true);
-    setMsg('');
-    setMsgOk(false);
     try {
       const params = new URLSearchParams({ limit: '80' });
       if (q.trim()) params.set('q', q.trim());
@@ -64,6 +75,7 @@ export default function MemberManager() {
       else {
         const d = await res.json().catch(() => null);
         setMsg(d?.error?.message || 'Error');
+        setMsgOk(false);
       }
     } finally {
       setLoading(false);
@@ -74,6 +86,49 @@ export default function MemberManager() {
     const tmr = setTimeout(() => { fetchMembers(); }, 300);
     return () => clearTimeout(tmr);
   }, [fetchMembers]);
+
+  useEffect(() => {
+    const raw = enrollPhone.trim();
+    if (!raw) {
+      setEnrollLookup(null);
+      setEnrollLookupBusy(false);
+      return;
+    }
+    setEnrollLookup(null);
+    const tmr = window.setTimeout(() => {
+      void (async () => {
+        setEnrollLookupBusy(true);
+        try {
+          const res = await apiFetch(`/api/admin/members/lookup?phone=${encodeURIComponent(raw)}`, { headers: authH });
+          const d = await res.json().catch(() => null) as {
+            exists?: boolean;
+            source?: 'member' | 'customer';
+            phone?: string;
+            memberNo?: number;
+            displayName?: string;
+            alreadyStaff?: boolean;
+          } | null;
+          if (!res.ok) {
+            setEnrollLookup(null);
+            return;
+          }
+          setEnrollLookup({
+            exists: !!d?.exists,
+            source: d?.source === 'customer' ? 'customer' : d?.exists ? 'member' : undefined,
+            phone: d?.phone,
+            memberNo: d?.memberNo,
+            displayName: d?.displayName,
+            alreadyStaff: !!d?.alreadyStaff,
+          });
+        } catch {
+          setEnrollLookup(null);
+        } finally {
+          setEnrollLookupBusy(false);
+        }
+      })();
+    }, 350);
+    return () => window.clearTimeout(tmr);
+  }, [enrollPhone, token]);
 
   const openLedger = useCallback(
     async (m: MemberRow) => {
@@ -117,6 +172,63 @@ export default function MemberManager() {
 
   const memberRechargeLabel = (m: MemberRow) =>
     `#${m.memberNo} · ${m.phone}${m.displayName ? ` · ${m.displayName}` : ''}`;
+
+  const enrollStaff = async () => {
+    const phone = enrollPhone.trim();
+    if (!phone) {
+      setMsg(t('admin.staffEnrollNeedPhone', '请填写手机号'));
+      setMsgOk(false);
+      return;
+    }
+    const known = enrollLookup?.exists === true;
+    if (!known && enrollPin !== enrollPin2) {
+      setMsg(t('member.pinMismatch', '两次 PIN 不一致'));
+      setMsgOk(false);
+      return;
+    }
+    if (!known && !enrollPin.trim()) {
+      setMsg(t('admin.staffEnrollNeedPin', '新员工须设置 PIN'));
+      setMsgOk(false);
+      return;
+    }
+    setEnrollBusy(true);
+    setMsg('');
+    setMsgOk(false);
+    try {
+      const res = await apiFetch('/api/admin/members', {
+        method: 'POST',
+        headers: { ...authH, 'Content-Type': 'application/json' },
+        body: JSON.stringify(
+          known
+            ? { phone }
+            : {
+                phone,
+                displayName: enrollName.trim(),
+                pin: enrollPin,
+              },
+        ),
+      });
+      const d = await res.json().catch(() => null);
+      if (!res.ok) {
+        setMsg(d?.error?.message || t('admin.staffEnrollFailed', '录入失败'));
+        return;
+      }
+      const already = !!(d as { alreadyStaff?: boolean }).alreadyStaff;
+      const created = !!(d as { created?: boolean }).created;
+      setEnrollPhone('');
+      setEnrollName('');
+      setEnrollPin('');
+      setEnrollPin2('');
+      setEnrollLookup(null);
+      setMsgOk(true);
+      if (created) setMsg(t('admin.staffEnrollOkNew', '已录入本店员工'));
+      else if (already) setMsg(t('admin.staffEnrollAlready', '该手机号已是本店员工'));
+      else setMsg(t('admin.staffEnrollOkExisting', '已将现有会员挂靠为本店员工'));
+      await fetchMembers();
+    } finally {
+      setEnrollBusy(false);
+    }
+  };
 
   const confirmRecharge = (): boolean => {
     if (!selected) return false;
@@ -228,30 +340,6 @@ export default function MemberManager() {
     fetchMembers();
   };
 
-  const doDeleteMember = async (m: MemberRow) => {
-    const ok = window.confirm(
-      t('admin.memberDeleteConfirm', '确认删除该会员？此操作用于误注册清理，且不可恢复。'),
-    );
-    if (!ok) return;
-    setMsg('');
-    setMsgOk(false);
-    const res = await apiFetch(`/api/admin/members/${m._id}`, {
-      method: 'DELETE',
-      headers: authH,
-    });
-    const d = await res.json().catch(() => null);
-    if (!res.ok) {
-      setMsg(d?.error?.message || t('admin.memberDeleteFailed', '删除失败'));
-      setMsgOk(false);
-      return;
-    }
-    if (selected?._id === m._id) setSelected(null);
-    if (ledgerMember?._id === m._id) setLedgerMember(null);
-    setMsg(t('admin.memberDeleteOk', '会员已删除'));
-    setMsgOk(true);
-    fetchMembers();
-  };
-
   const doRetryWalletRefund = async () => {
     const id = retryCheckoutId.trim();
     if (!id || !mongooseObjectIdOk(id)) {
@@ -294,36 +382,105 @@ export default function MemberManager() {
 
   return (
     <div>
-      <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 12 }}>👤 {t('admin.membersTitle', '会员与储值')}</h2>
-      <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
-        <button
-          type="button"
-          className={adminTab === 'members' ? 'btn btn-primary' : 'btn btn-outline'}
-          style={{ fontSize: 13 }}
-          onClick={() => { setAdminTab('members'); }}
-        >
-          {t('admin.membersNav')}
-        </button>
-        <button
-          type="button"
-          className={adminTab === 'cards' ? 'btn btn-primary' : 'btn btn-outline'}
-          style={{ fontSize: 13 }}
-          onClick={() => { setAdminTab('cards'); }}
-        >
-          {t('admin.topupCardsTab')}
-        </button>
-      </div>
-
-      {adminTab === 'cards' ? (
-        <MemberTopUpCardsPanel />
-      ) : (
-        <>
+      <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 12 }}>👤 {t('admin.membersTitle', '本店员工储值')}</h2>
       <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 8 }}>
-        {t('admin.membersHint', '按手机号、会员号、姓名搜索；顾客自助入口：/店铺/customer/member')}
+        {t('admin.membersHint')}
       </p>
       <p style={{ fontSize: 12, color: 'var(--text-light)', marginBottom: 16 }}>
         {t('admin.memberLedgerRowHint')}
       </p>
+
+      <div className="card" style={{ padding: 16, marginBottom: 16 }}>
+        <button
+          type="button"
+          onClick={() => setEnrollOpen((v) => !v)}
+          aria-expanded={enrollOpen}
+          style={{
+            width: '100%',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            gap: 12,
+            background: 'transparent',
+            border: 'none',
+            padding: 0,
+            cursor: 'pointer',
+            font: 'inherit',
+            textAlign: 'left',
+            color: 'inherit',
+          }}
+        >
+          <span style={{ fontWeight: 700 }}>{t('admin.staffEnrollTitle', '录入本店员工')}</span>
+          <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{enrollOpen ? '▲' : '▼'}</span>
+        </button>
+        {enrollOpen ? (
+          <>
+            <p style={{ fontSize: 12, color: 'var(--text-secondary)', margin: '10px 0 12px', lineHeight: 1.45 }}>
+              {t('admin.staffEnrollHint')}
+            </p>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'flex-end' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: 12, color: 'var(--text-secondary)', marginBottom: 4 }}>{t('member.phone')}</label>
+                <input className="input" value={enrollPhone} onChange={(e) => setEnrollPhone(e.target.value)} placeholder="08…" style={{ width: 160 }} />
+              </div>
+              {enrollLookup?.exists ? (
+                <>
+                  <div style={{ fontSize: 13, color: 'var(--text-secondary)', paddingBottom: 8, maxWidth: 420 }}>
+                    {enrollLookup.source === 'customer'
+                      ? t('admin.staffEnrollFoundCustomer', {
+                          name: enrollLookup.displayName || t('admin.staffEnrollUnnamed', '未设称呼'),
+                          phone: enrollLookup.phone || enrollPhone,
+                        })
+                      : t('admin.staffEnrollFound', {
+                          no: enrollLookup.memberNo || '—',
+                          name: enrollLookup.displayName || t('admin.staffEnrollUnnamed', '未设称呼'),
+                          phone: enrollLookup.phone || enrollPhone,
+                        })}
+                    {enrollLookup.alreadyStaff ? ` · ${t('admin.staffEnrollAlready', '该手机号已是本店员工')}` : ''}
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    disabled={enrollBusy || enrollLookupBusy || !!enrollLookup.alreadyStaff}
+                    onClick={() => void enrollStaff()}
+                  >
+                    {enrollBusy
+                      ? t('common.loading')
+                      : enrollLookup.alreadyStaff
+                        ? t('admin.staffEnrollAlready', '该手机号已是本店员工')
+                        : t('admin.staffEnrollLink', '关联本店')}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <div>
+                    <label style={{ display: 'block', fontSize: 12, color: 'var(--text-secondary)', marginBottom: 4 }}>{t('member.editName')}</label>
+                    <input className="input" value={enrollName} onChange={(e) => setEnrollName(e.target.value)} style={{ width: 140 }} />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: 12, color: 'var(--text-secondary)', marginBottom: 4 }}>{t('member.pin')}</label>
+                    <input className="input" type="password" inputMode="numeric" value={enrollPin} onChange={(e) => setEnrollPin(e.target.value)} style={{ width: 110 }} />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: 12, color: 'var(--text-secondary)', marginBottom: 4 }}>{t('member.pinAgain')}</label>
+                    <input className="input" type="password" inputMode="numeric" value={enrollPin2} onChange={(e) => setEnrollPin2(e.target.value)} style={{ width: 110 }} />
+                  </div>
+                  <button type="button" className="btn btn-primary" disabled={enrollBusy || enrollLookupBusy} onClick={() => void enrollStaff()}>
+                    {enrollBusy ? t('common.loading') : t('admin.staffEnrollSubmit', '录入')}
+                  </button>
+                </>
+              )}
+            </div>
+            {enrollLookupBusy ? (
+              <div style={{ fontSize: 12, color: 'var(--text-light)', marginTop: 8 }}>{t('common.loading')}</div>
+            ) : null}
+          </>
+        ) : (
+          <p style={{ fontSize: 12, color: 'var(--text-secondary)', margin: '8px 0 0' }}>
+            {t('admin.staffEnrollCollapsedHint', '点击展开，录入或挂靠本店员工')}
+          </p>
+        )}
+      </div>
 
       <div style={{ display: 'flex', gap: 12, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
         <input
@@ -380,17 +537,6 @@ export default function MemberManager() {
                         }}
                       >
                         {t('admin.memberRecharge', '充值')}
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-outline"
-                        style={{ fontSize: 12, padding: '4px 10px', color: 'var(--red-primary)', borderColor: 'var(--red-primary)' }}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          void doDeleteMember(m);
-                        }}
-                      >
-                        {t('admin.memberDelete', '删除')}
                       </button>
                     </div>
                   </td>
@@ -596,8 +742,6 @@ export default function MemberManager() {
           </div>
         </div>
       ) : null}
-        </>
-      )}
     </div>
   );
 }

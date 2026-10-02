@@ -303,7 +303,7 @@ export default function MemberTopUpCardsPanel() {
   return (
     <div>
       <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 12, lineHeight: 1.45 }}>
-        {t('admin.membersHint')}
+        {t('admin.topupCardsPageHint')}
       </p>
 
       <div className="card" style={{ padding: 16, marginBottom: 16 }}>

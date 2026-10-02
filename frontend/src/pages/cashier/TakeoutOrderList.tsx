@@ -141,7 +141,7 @@ export default function TakeoutOrderList() {
           }],
         };
         const bundleDiscounts = (order.appliedBundles || []).map(b => ({ name: b.name, nameEn: b.nameEn || '', discount: b.discount }));
-        void printBuiltReceipt(receiptData, config, { bundleDiscounts, copies: 1 });
+        void printBuiltReceipt(receiptData, config, { bundleDiscounts });
         setSelected(null);
         fetchOrders();
       }

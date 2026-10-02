@@ -21,8 +21,33 @@ import {
 } from '../utils/postOrderAdSchedule';
 import { getSlidesFromDoc, parseSlidesFromBody, requireNonEmptySlides } from '../utils/postOrderAdSlides';
 import { parseAdStoreTarget } from '../utils/postOrderAdStoreTarget';
-import { FeatureKeys } from '../utils/featureCatalog';
+import { FeatureKeys, resolveStoreEffectiveFeatures } from '../utils/featureCatalog';
 import { buildIntegrationsOverview } from '../utils/integrationsOverview';
+import { isFeieyunConfigured } from '../utils/cloudPrint/feieyunClient';
+import { isValidPrinterSn, normalizePrinterSn } from '../utils/cloudPrint/config';
+import {
+  IRISH_MEMBER_MOBILE_RE,
+  PIN_MAX_LEN,
+  PIN_MIN_LEN,
+  hashMemberPin,
+  normalizeMemberPhone,
+} from '../utils/memberWalletOps';
+import { allocatePlatformMemberNo } from '../utils/platformMemberIdentity';
+import { creditPlatformMemberWallet, debitPlatformGuestWalletByAdmin } from '../utils/platformMemberWalletOps';
+import platformGiftCardsRouter from './platformGiftCards';
+import {
+  STRIPE_PUBLISHABLE_CONFIG_KEY,
+  STRIPE_SECRET_CONFIG_KEY,
+  isValidPublishableKeyFormat,
+  isValidSecretKeyFormat,
+} from '../utils/stripeConfig';
+import {
+  deletePlatformConfig,
+  getPlatformStripePublishable,
+  hasPlatformStripeSecret,
+  runPlatformStripeHealthCheck,
+  upsertPlatformConfig,
+} from '../utils/platformStripeConfig';
 
 const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
@@ -45,6 +70,10 @@ function models() {
     PostOrderAd: mongoose.Model<any>;
     FeaturePlan: mongoose.Model<any>;
     FeatureAddon: mongoose.Model<any>;
+    CloudPrinter: mongoose.Model<any>;
+    PlatformConfig: mongoose.Model<any>;
+    PlatformMember: mongoose.Model<any>;
+    PlatformMemberWalletTxn: mongoose.Model<any>;
   };
 }
 
@@ -591,6 +620,7 @@ router.delete('/stores/:id', ...platformAuth, async (req: Request, res: Response
       m.SystemConfig.deleteMany({ storeId: storeOid }),
       m.Admin.deleteMany({ storeId: storeOid }),
       m.AdminAuditLog.deleteMany({ targetStoreId: storeOid }),
+      m.CloudPrinter.deleteMany({ storeId: storeOid }),
     ]);
 
     await Store.findByIdAndDelete(id);
@@ -878,5 +908,471 @@ router.delete('/post-order-ads/:id', ...platformAuth, async (req: Request, res: 
     next(err);
   }
 });
+
+// ===== 飞鹅云打印机分配 =====
+router.get('/cloud-printers', ...platformAuth, async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { CloudPrinter, Store } = models();
+    const [printers, stores] = await Promise.all([
+      CloudPrinter.find({}).sort({ createdAt: -1 }).lean() as Promise<unknown> as Promise<Array<{
+        _id: mongoose.Types.ObjectId;
+        storeId: mongoose.Types.ObjectId;
+        sn: string;
+        label?: string;
+        createdAt?: Date;
+      }>>,
+      Store.find({}).select('_id slug displayName basePlanId enabledAddOnIds featureOverrides').sort({ slug: 1 }).lean() as Promise<unknown> as Promise<Array<{
+        _id: mongoose.Types.ObjectId;
+        slug: string;
+        displayName: string;
+      }>>,
+    ]);
+    const featureByStore = new Map<string, boolean>();
+    await Promise.all(stores.map(async (s) => {
+      const feats = await resolveStoreEffectiveFeatures(s._id);
+      featureByStore.set(String(s._id), feats.has(FeatureKeys.CloudPrint));
+    }));
+    const storeById = new Map(stores.map((s) => [String(s._id), s]));
+    res.json({
+      feieyunConfigured: isFeieyunConfigured(),
+      stores: stores.map((s) => ({
+        _id: String(s._id),
+        slug: s.slug,
+        displayName: s.displayName,
+        hasCloudPrint: featureByStore.get(String(s._id)) === true,
+      })),
+      printers: printers.map((p) => {
+        const st = storeById.get(String(p.storeId));
+        return {
+          _id: String(p._id),
+          storeId: String(p.storeId),
+          storeSlug: st?.slug || '',
+          storeName: st?.displayName || '',
+          sn: p.sn,
+          label: p.label || '',
+          createdAt: p.createdAt,
+        };
+      }),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/cloud-printers', ...platformAuth, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { CloudPrinter, Store } = models();
+    const storeId = parseObjectIdOrNull(req.body?.storeId, 'storeId');
+    if (!storeId) throw createAppError('VALIDATION_ERROR', 'storeId 必填');
+    const sn = normalizePrinterSn(req.body?.sn);
+    if (!isValidPrinterSn(sn)) throw createAppError('VALIDATION_ERROR', '打印机编号无效（6–32 位字母或数字）');
+    const label = String(req.body?.label || '').trim().slice(0, 40);
+    const store = await Store.findById(storeId).lean();
+    if (!store) throw createAppError('NOT_FOUND', '店铺不存在');
+    const feats = await resolveStoreEffectiveFeatures(storeId);
+    if (!feats.has(FeatureKeys.CloudPrint)) {
+      throw createAppError('VALIDATION_ERROR', '该店尚未开通云打印（请先在 Plan 中勾选 print.cloud）');
+    }
+    const exists = await CloudPrinter.findOne({ sn }).lean();
+    if (exists) throw createAppError('VALIDATION_ERROR', '该打印机编号已分配给其他店铺');
+    try {
+      const doc = await CloudPrinter.create({ storeId, sn, label });
+      res.status(201).json({
+        _id: String(doc._id),
+        storeId: String(storeId),
+        sn,
+        label,
+      });
+    } catch (e: unknown) {
+      const code = (e as { code?: number })?.code;
+      if (code === 11000) throw createAppError('VALIDATION_ERROR', '该打印机编号已分配给其他店铺');
+      throw e;
+    }
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.patch('/cloud-printers/:id', ...platformAuth, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { CloudPrinter } = models();
+    const id = paramStr(req.params.id);
+    if (!mongoose.Types.ObjectId.isValid(id)) throw createAppError('VALIDATION_ERROR', 'Invalid id');
+    const doc = await CloudPrinter.findById(id);
+    if (!doc) throw createAppError('NOT_FOUND', '记录不存在');
+    if (req.body?.label !== undefined) doc.set('label', String(req.body.label || '').trim().slice(0, 40));
+    await doc.save();
+    res.json({ _id: String(doc._id), sn: doc.get('sn'), label: doc.get('label') || '' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.delete('/cloud-printers/:id', ...platformAuth, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { CloudPrinter } = models();
+    const id = paramStr(req.params.id);
+    if (!mongoose.Types.ObjectId.isValid(id)) throw createAppError('VALIDATION_ERROR', 'Invalid id');
+    const doc = await CloudPrinter.findByIdAndDelete(id);
+    if (!doc) throw createAppError('NOT_FOUND', '记录不存在');
+    res.json({ message: 'deleted' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+function escapeRegex(raw: string): string {
+  return raw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function staffBalanceForStore(
+  staffBalances: Array<{ storeId?: unknown; creditBalance?: number }> | undefined,
+  storeId: string,
+): number {
+  const row = (staffBalances || []).find((b) => String(b.storeId) === storeId);
+  return Number(row?.creditBalance) || 0;
+}
+
+function mapStaffStores(
+  staffStoreIds: unknown[] | undefined,
+  staffBalances: Array<{ storeId?: unknown; creditBalance?: number }> | undefined,
+  storeMap: Map<string, { slug?: string; displayName?: string }>,
+) {
+  return (staffStoreIds || []).map((sidRaw) => {
+    const storeId = String(sidRaw);
+    const s = storeMap.get(storeId);
+    return {
+      storeId,
+      slug: s?.slug || '',
+      displayName: s?.displayName || '',
+      staffBalance: staffBalanceForStore(staffBalances, storeId),
+    };
+  });
+}
+
+router.get('/membership/stripe-config', ...platformAuth, async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    const publishableKey = await getPlatformStripePublishable();
+    const hasSecret = await hasPlatformStripeSecret();
+    res.json({ publishableKey, hasSecret });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.put('/membership/stripe-config', ...platformAuth, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const body = req.body as { publishableKey?: string; secretKey?: string; clearSecret?: boolean };
+    if (body.publishableKey !== undefined) {
+      if (typeof body.publishableKey !== 'string') {
+        throw createAppError('VALIDATION_ERROR', 'publishableKey must be a string');
+      }
+      const p = body.publishableKey.trim();
+      if (p === '') {
+        await deletePlatformConfig(STRIPE_PUBLISHABLE_CONFIG_KEY);
+      } else {
+        if (!isValidPublishableKeyFormat(p)) {
+          throw createAppError('VALIDATION_ERROR', 'Publishable key must start with pk_test_ or pk_live_');
+        }
+        await upsertPlatformConfig(STRIPE_PUBLISHABLE_CONFIG_KEY, p);
+      }
+    }
+
+    if (body.clearSecret === true) {
+      await deletePlatformConfig(STRIPE_SECRET_CONFIG_KEY);
+    } else if (typeof body.secretKey === 'string' && body.secretKey.length > 0) {
+      const sk = body.secretKey.trim();
+      if (!isValidSecretKeyFormat(sk)) {
+        throw createAppError('VALIDATION_ERROR', 'Secret key must start with sk_test_ or sk_live_');
+      }
+      await upsertPlatformConfig(STRIPE_SECRET_CONFIG_KEY, sk);
+    }
+
+    const publishableKey = await getPlatformStripePublishable();
+    const hasSecret = await hasPlatformStripeSecret();
+    res.json({ publishableKey, hasSecret, message: 'Saved' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/membership/stripe-health', ...platformAuth, async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    res.json(await runPlatformStripeHealthCheck());
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/membership/members', ...platformAuth, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { PlatformMember, Store } = models();
+    const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+    const filter: Record<string, unknown> = {};
+    if (q) {
+      const phone = normalizeMemberPhone(q);
+      const rx = new RegExp(escapeRegex(q), 'i');
+      filter.$or = [
+        { phone: phone || q },
+        { phone: rx },
+        { displayName: rx },
+      ];
+    }
+    const rows = await PlatformMember.find(filter).sort({ updatedAt: -1 }).limit(80).lean();
+    const storeIdSet = new Set<string>();
+    for (const m of rows as Array<{ staffStoreIds?: unknown[] }>) {
+      for (const sid of m.staffStoreIds || []) storeIdSet.add(String(sid));
+    }
+    const storeOids = [...storeIdSet]
+      .filter((id) => mongoose.Types.ObjectId.isValid(id))
+      .map((id) => new mongoose.Types.ObjectId(id));
+    const stores = storeOids.length
+      ? await Store.find({ _id: { $in: storeOids } }).select('_id slug displayName').lean()
+      : [];
+    const storeMap = new Map(
+      stores.map((s: { _id: unknown; slug?: string; displayName?: string }) => [String(s._id), s]),
+    );
+    res.json(rows.map((m: any) => {
+      const staffStores = mapStaffStores(m.staffStoreIds, m.staffBalances, storeMap);
+      return {
+        _id: String(m._id),
+        phone: m.phone,
+        memberNo: Number(m.memberNo) || 0,
+        displayName: m.displayName || '',
+        creditBalance: Number(m.creditBalance) || 0,
+        status: m.status,
+        staffStoreCount: staffStores.length,
+        staffStores,
+        hasPin: !!String(m.pinHash || '').trim(),
+        createdAt: m.createdAt,
+      };
+    }));
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/membership/members', ...platformAuth, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { PlatformMember } = models();
+    const phone = normalizeMemberPhone(String((req.body as { phone?: string }).phone || ''));
+    const displayName = String((req.body as { displayName?: string }).displayName || '').trim();
+    if (!IRISH_MEMBER_MOBILE_RE.test(phone)) {
+      throw createAppError('VALIDATION_ERROR', '手机号须为爱尔兰 08 开头 10 位');
+    }
+    const existing = await PlatformMember.findOne({ phone }).lean() as unknown as { _id: unknown; phone: string } | null;
+    if (existing) {
+      res.json({
+        _id: String(existing._id),
+        phone: existing.phone,
+        created: false,
+      });
+      return;
+    }
+    const memberNo = await allocatePlatformMemberNo();
+    const doc = await PlatformMember.create({
+      phone,
+      memberNo,
+      displayName,
+      creditBalance: 0,
+      staffStoreIds: [],
+      staffBalances: [],
+    }) as unknown as { _id: unknown; phone: string };
+    res.status(201).json({ _id: String(doc._id), phone: doc.phone, created: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/membership/members/:id', ...platformAuth, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { PlatformMember, PlatformMemberWalletTxn, Store } = models();
+    const id = paramStr(req.params.id);
+    if (!mongoose.Types.ObjectId.isValid(id)) throw createAppError('VALIDATION_ERROR', 'Invalid id');
+    const member = await PlatformMember.findById(id).lean() as unknown as {
+      _id: unknown;
+      phone: string;
+      displayName?: string;
+      creditBalance?: number;
+      status?: string;
+      pinHash?: string;
+      staffStoreIds?: unknown[];
+      staffBalances?: Array<{ storeId?: unknown; creditBalance?: number }>;
+      createdAt?: Date;
+      updatedAt?: Date;
+    } | null;
+    if (!member) throw createAppError('NOT_FOUND', '会员不存在');
+    const m = member;
+    const stores = await Store.find({}).select('_id slug displayName status').sort({ slug: 1 }).lean();
+    const storeMap = new Map(stores.map((s: any) => [String(s._id), s]));
+    const staffStores = mapStaffStores(m.staffStoreIds, m.staffBalances, storeMap);
+    const txns = await PlatformMemberWalletTxn.find({ memberId: m._id }).sort({ createdAt: -1 }).limit(100).lean();
+    res.json({
+      _id: String(m._id),
+      phone: m.phone,
+      memberNo: Number((m as { memberNo?: number }).memberNo) || 0,
+      displayName: m.displayName || '',
+      creditBalance: Number(m.creditBalance) || 0,
+      status: m.status || 'active',
+      hasPin: !!String(m.pinHash || '').trim(),
+      createdAt: m.createdAt,
+      updatedAt: m.updatedAt,
+      staffStores,
+      allStores: stores.map((s: any) => ({
+        _id: String(s._id),
+        slug: s.slug,
+        displayName: s.displayName,
+        status: s.status,
+      })),
+      txns: txns.map((t: any) => {
+        const storeId = t.storeId ? String(t.storeId) : null;
+        const s = storeId ? storeMap.get(storeId) : null;
+        return {
+          _id: String(t._id),
+          wallet: t.wallet,
+          storeId,
+          storeSlug: s?.slug || '',
+          storeDisplayName: s?.displayName || '',
+          type: t.type,
+          amountEuro: t.amountEuro,
+          balanceBefore: t.balanceBefore,
+          balanceAfter: t.balanceAfter,
+          note: t.note || '',
+          orderId: t.orderId ? String(t.orderId) : null,
+          createdAt: t.createdAt,
+        };
+      }),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.put('/membership/members/:id/staff-stores', ...platformAuth, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { PlatformMember, Store } = models();
+    const id = paramStr(req.params.id);
+    if (!mongoose.Types.ObjectId.isValid(id)) throw createAppError('VALIDATION_ERROR', 'Invalid id');
+    const rawIds = (req.body as { storeIds?: unknown }).storeIds;
+    if (!Array.isArray(rawIds)) throw createAppError('VALIDATION_ERROR', 'storeIds 须为数组');
+    const storeIds = [...new Set(rawIds.map((x) => String(x)))].filter((x) => mongoose.Types.ObjectId.isValid(x));
+    const objectIds = storeIds.map((x) => new mongoose.Types.ObjectId(x));
+    if (objectIds.length) {
+      const found = await Store.countDocuments({ _id: { $in: objectIds } });
+      if (found !== objectIds.length) throw createAppError('VALIDATION_ERROR', '存在无效店铺');
+    }
+    const member = await PlatformMember.findById(id);
+    if (!member) throw createAppError('NOT_FOUND', '会员不存在');
+    const existingBalances = (member as unknown as { staffBalances?: Array<{ storeId: mongoose.Types.ObjectId; creditBalance: number }> }).staffBalances || [];
+    const existing = existingBalances
+      .map((b) => ({ storeId: b.storeId, creditBalance: Number(b.creditBalance) || 0 }));
+    const byStore = new Map(existing.map((b) => [String(b.storeId), b]));
+    for (const sid of storeIds) {
+      if (!byStore.has(sid)) {
+        byStore.set(sid, { storeId: new mongoose.Types.ObjectId(sid), creditBalance: 0 });
+      }
+    }
+    (member as unknown as { staffStoreIds: mongoose.Types.ObjectId[]; staffBalances: typeof existing }).staffStoreIds = objectIds;
+    (member as unknown as { staffBalances: typeof existing }).staffBalances = [...byStore.values()];
+    await member.save();
+    res.json({ ok: true, staffStoreIds: storeIds });
+  } catch (err) {
+    next(err);
+  }
+});
+
+function validatePlatformMemberPin(pin: unknown): string {
+  if (typeof pin !== 'string' || pin.length < PIN_MIN_LEN || pin.length > PIN_MAX_LEN) {
+    throw createAppError('VALIDATION_ERROR', `PIN 长度须在 ${PIN_MIN_LEN}-${PIN_MAX_LEN} 位`);
+  }
+  if (!/^\d+$/.test(pin)) throw createAppError('VALIDATION_ERROR', 'PIN 须为数字');
+  return pin;
+}
+
+router.put('/membership/members/:id/pin', ...platformAuth, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { PlatformMember } = models();
+    const id = paramStr(req.params.id);
+    if (!mongoose.Types.ObjectId.isValid(id)) throw createAppError('VALIDATION_ERROR', 'Invalid id');
+    const pin = validatePlatformMemberPin((req.body as { pin?: unknown }).pin);
+    const pinConfirm = (req.body as { pinConfirm?: unknown }).pinConfirm;
+    if (pinConfirm !== undefined && pinConfirm !== pin) {
+      throw createAppError('VALIDATION_ERROR', '两次 PIN 不一致');
+    }
+    const member = await PlatformMember.findById(id);
+    if (!member) throw createAppError('NOT_FOUND', '会员不存在');
+    const pinHash = await hashMemberPin(pin);
+    (member as unknown as {
+      pinHash: string;
+      pinFailedAttempts: number;
+      lockedUntil: Date | null;
+    }).pinHash = pinHash;
+    (member as unknown as { pinFailedAttempts: number }).pinFailedAttempts = 0;
+    (member as unknown as { lockedUntil: Date | null }).lockedUntil = null;
+    await member.save();
+    res.json({ ok: true, hasPin: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.put('/membership/members/:id', ...platformAuth, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { PlatformMember } = models();
+    const id = paramStr(req.params.id);
+    if (!mongoose.Types.ObjectId.isValid(id)) throw createAppError('VALIDATION_ERROR', 'Invalid id');
+    const displayName = (req.body as { displayName?: unknown }).displayName;
+    if (typeof displayName !== 'string') throw createAppError('VALIDATION_ERROR', 'displayName 须为字符串');
+    const member = await PlatformMember.findById(id);
+    if (!member) throw createAppError('NOT_FOUND', '会员不存在');
+    (member as unknown as { displayName: string }).displayName = displayName.trim();
+    await member.save();
+    res.json({ ok: true, displayName: displayName.trim() });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/membership/members/:id/guest-credit', ...platformAuth, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const id = paramStr(req.params.id);
+    if (!mongoose.Types.ObjectId.isValid(id)) throw createAppError('VALIDATION_ERROR', 'Invalid id');
+    const body = req.body as { amountEuro?: unknown; note?: string };
+    const amount = Math.round(Number(body.amountEuro) * 100) / 100;
+    if (!Number.isFinite(amount) || amount === 0) {
+      throw createAppError('VALIDATION_ERROR', '金额不能为 0');
+    }
+    if (Math.abs(amount) > 10000) {
+      throw createAppError('VALIDATION_ERROR', '单次金额不能超过 €10000');
+    }
+    const isDebit = amount < 0;
+    const note =
+      String(body.note || '').trim().slice(0, 200) ||
+      (isDebit ? '平台手动扣减客人钱包' : '平台手动充值客人钱包');
+    const { balanceAfter } = isDebit
+      ? await debitPlatformGuestWalletByAdmin({
+          memberId: new mongoose.Types.ObjectId(id),
+          amountEuro: -amount,
+          note,
+        })
+      : await creditPlatformMemberWallet({
+          memberId: new mongoose.Types.ObjectId(id),
+          wallet: 'guest',
+          amountEuro: amount,
+          type: 'recharge',
+          note,
+        });
+    res.json({
+      ok: true,
+      creditBalance: balanceAfter,
+      creditedEuro: isDebit ? 0 : amount,
+      debitedEuro: isDebit ? -amount : 0,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.use(platformGiftCardsRouter);
 
 export default router;

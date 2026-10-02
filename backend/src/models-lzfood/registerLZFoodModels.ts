@@ -17,6 +17,12 @@ import { StoreSchema } from './Store';
 import { StoreReportSegmentConfigSchema } from './StoreReportSegmentConfig';
 import { TaxCategorySchema } from './TaxCategory';
 import { StoreWidgetApiKeySchema } from './StoreWidgetApiKey';
+import { CloudPrinterSchema } from './CloudPrinter';
+import { PlatformConfigSchema } from './PlatformConfig';
+import { PlatformMemberSchema } from './PlatformMember';
+import { PlatformMemberWalletTxnSchema } from './PlatformMemberWalletTxn';
+import { PlatformTopUpCardSchema } from './PlatformTopUpCard';
+import { PlatformStorePayoutSchema } from './PlatformStorePayout';
 import { AdminAuditLogSchema } from './AdminAuditLog';
 import { LZFoodAdminSchema } from './LZFoodAdmin';
 import { PostOrderAdSchema } from './PostOrderAd';
@@ -107,6 +113,12 @@ export type LZFoodModels = {
   StoreReportSegmentConfig: Model<unknown>;
   TaxCategory: Model<unknown>;
   StoreWidgetApiKey: Model<unknown>;
+  CloudPrinter: Model<unknown>;
+  PlatformConfig: Model<unknown>;
+  PlatformMember: Model<unknown>;
+  PlatformMemberWalletTxn: Model<unknown>;
+  PlatformTopUpCard: Model<unknown>;
+  PlatformStorePayout: Model<unknown>;
 };
 
 let cached: LZFoodModels | null = null;
@@ -197,6 +209,20 @@ export function registerLZFoodModels(conn: Connection): LZFoodModels {
     StoreWidgetApiKeySchema,
     'store_widget_api_keys',
   );
+  const CloudPrinter = m('CloudPrinter', CloudPrinterSchema, 'cloud_printers');
+  const PlatformConfig = m('PlatformConfig', PlatformConfigSchema, 'platform_configs');
+  const PlatformMember = m('PlatformMember', PlatformMemberSchema, 'platform_members');
+  const PlatformMemberWalletTxn = m(
+    'PlatformMemberWalletTxn',
+    PlatformMemberWalletTxnSchema,
+    'platform_member_wallet_txns',
+  );
+  const PlatformTopUpCard = m('PlatformTopUpCard', PlatformTopUpCardSchema, 'platform_topup_cards');
+  const PlatformStorePayout = m(
+    'PlatformStorePayout',
+    PlatformStorePayoutSchema,
+    'platform_store_payouts',
+  );
 
   cached = {
     Store,
@@ -235,6 +261,12 @@ export function registerLZFoodModels(conn: Connection): LZFoodModels {
     StoreReportSegmentConfig,
     TaxCategory,
     StoreWidgetApiKey,
+    CloudPrinter,
+    PlatformConfig,
+    PlatformMember,
+    PlatformMemberWalletTxn,
+    PlatformTopUpCard,
+    PlatformStorePayout,
   };
   return cached;
 }

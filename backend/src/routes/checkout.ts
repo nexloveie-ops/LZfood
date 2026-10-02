@@ -13,10 +13,16 @@ import {
   dineInHasUnsettledFoodLineQty,
 } from '../utils/orderPayableTotal';
 import { getDineInWorkflowModeForStore } from '../utils/dineInWorkflowMode';
-import { resolveMemberPaymentForCheckout } from '../utils/checkoutMemberResolve';
-import { creditMemberWallet, debitMemberWallet } from '../utils/memberWalletOps';
+import { resolveMemberPaymentForCheckout, type MemberPaymentResolution } from '../utils/checkoutMemberResolve';
+import {
+  creditResolvedMemberWallet,
+  creditWalletForMemberId,
+  debitResolvedMemberWallet,
+  staffHideStatus,
+} from '../utils/platformMemberWalletOps';
 import { computeRefundChannelBreakdown } from '../utils/memberRefundAlign';
 import { FeatureKeys, resolveStoreEffectiveFeatures } from '../utils/featureCatalog';
+import { scheduleStoreCloudPrint } from '../utils/cloudPrint/runJob';
 import {
   markDineInFoodLinesFullySettled,
   markDineInKitchenPrintedQtyFull,
@@ -93,7 +99,12 @@ async function finalizeSeatOrderCheckedOut(
   Order: mongoose.Model<any>,
   storeId: mongoose.Types.ObjectId,
   orderId: string,
-  patch: { memberId?: mongoose.Types.ObjectId; memberPhoneSnapshot?: string; memberCreditUsed?: number },
+  patch: {
+    memberId?: mongoose.Types.ObjectId;
+    memberPhoneSnapshot?: string;
+    memberCreditUsed?: number;
+    memberWallet?: 'guest' | 'staff';
+  },
 ): Promise<'checked_out' | 'completed'> {
   const doc = await Order.findOne({ _id: orderId, storeId });
   if (!doc) {
@@ -129,6 +140,10 @@ async function finalizeSeatOrderCheckedOut(
     doc.memberId = patch.memberId;
     doc.memberPhoneSnapshot = patch.memberPhoneSnapshot ?? '';
     doc.memberCreditUsed = patch.memberCreditUsed ?? 0;
+    if (patch.memberWallet) doc.memberWallet = patch.memberWallet;
+  }
+  if (patch.memberWallet === 'staff') {
+    doc.status = staffHideStatus(String(doc.status));
   }
   syncDualTrackBeforeSave(doc, { dineInWorkflowMode: dineInWf });
   await doc.save();
@@ -181,6 +196,23 @@ async function assertMemberWalletFeatureIfNeeded(req: Request): Promise<void> {
 }
 
 /** LZFoodModels uses Model<unknown>; narrow for route logic */
+function memberPatchFromResolution(mp: MemberPaymentResolution, creditUsed?: number) {
+  if (!mp.memberId) return {};
+  return {
+    memberId: mp.memberId as mongoose.Types.ObjectId,
+    memberPhoneSnapshot: mp.memberPhoneSnapshot ?? '',
+    memberCreditUsed: creditUsed ?? 0,
+    memberWallet: mp.identity === 'platform' ? mp.wallet : undefined,
+  };
+}
+
+function attachMemberToCheckoutData(checkoutData: Record<string, unknown>, mp: MemberPaymentResolution) {
+  if (!mp.memberId) return;
+  checkoutData.memberId = mp.memberId;
+  checkoutData.memberPhoneSnapshot = mp.memberPhoneSnapshot;
+  if (mp.identity === 'platform' && mp.wallet) checkoutData.memberWallet = mp.wallet;
+}
+
 function checkoutModels() {
   return getModels() as {
     Order: mongoose.Model<any>;
@@ -255,10 +287,7 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
         orderIds: orders.map(o => o._id),
         memberCreditUsed: mp.memberCreditUsed,
       };
-      if (mp.memberId) {
-        checkoutData.memberId = mp.memberId;
-        checkoutData.memberPhoneSnapshot = mp.memberPhoneSnapshot;
-      }
+      attachMemberToCheckoutData(checkoutData, mp);
       if (mp.paymentMethod === 'mixed') {
         checkoutData.cashAmount = mp.cashAmount;
         checkoutData.cardAmount = mp.cardAmount;
@@ -273,12 +302,9 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
       const checkout = await Checkout.create(checkoutData);
       try {
         if (mp.memberCreditUsed > 0 && mp.memberId) {
-          await debitMemberWallet({
-            Member,
-            MemberWalletTxn,
+          await debitResolvedMemberWallet({
+            resolution: mp,
             storeId: req.storeId!,
-            memberId: mp.memberId,
-            amountEuro: mp.memberCreditUsed,
             checkoutId: checkout._id,
             note: '整桌结账储值抵扣',
           });
@@ -289,13 +315,7 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
       }
 
       try {
-        const memberPatch = mp.memberId
-          ? {
-              memberId: mp.memberId as mongoose.Types.ObjectId,
-              memberPhoneSnapshot: mp.memberPhoneSnapshot ?? '',
-              memberCreditUsed: 0,
-            }
-          : {};
+        const memberPatch = memberPatchFromResolution(mp, 0);
         for (const o of orders) {
           const terminalStatus = await finalizeSeatOrderCheckedOut(Order, req.storeId!, o._id.toString(), memberPatch);
           const updatedLean = await Order.findOne({ _id: o._id, storeId: req.storeId }).lean();
@@ -303,12 +323,9 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
         }
       } catch (e) {
         if (mp.memberCreditUsed > 0 && mp.memberId) {
-          await creditMemberWallet({
-            Member,
-            MemberWalletTxn,
+          await creditResolvedMemberWallet({
+            resolution: mp,
             storeId: req.storeId!,
-            memberId: mp.memberId,
-            amountEuro: mp.memberCreditUsed,
             type: 'reversal',
             checkoutId: checkout._id,
             note: '结账后更新订单失败，冲回储值',
@@ -319,6 +336,9 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
       }
 
       res.status(201).json(checkout);
+      if (req.storeId && checkout?._id) {
+        scheduleStoreCloudPrint(req.storeId, checkout._id as mongoose.Types.ObjectId, 'checkout');
+      }
     } catch (err) {
       next(err);
     }
@@ -388,12 +408,9 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
             ? '外卖自提扫码储值支付（待收银收尾）'
             : '堂食扫码储值支付（待收银收尾）';
         try {
-          await debitMemberWallet({
-            Member,
-            MemberWalletTxn,
+          await debitResolvedMemberWallet({
+            resolution: mp,
             storeId: req.storeId!,
-            memberId: mp.memberId!,
-            amountEuro: mp.memberCreditUsed,
             orderId: new mongoose.Types.ObjectId(orderId),
             note: walletNote,
           });
@@ -405,6 +422,7 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
           memberId: mp.memberId,
           memberPhoneSnapshot: mp.memberPhoneSnapshot,
           memberCreditUsed: mp.memberCreditUsed,
+          ...(mp.identity === 'platform' && mp.wallet ? { memberWallet: mp.wallet } : {}),
         };
         if (order.type === 'dine_in' && dineInWf === 'pay_after') {
           prePaySet.dineInExposedToStaff = true;
@@ -425,12 +443,9 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
             await doc2.save();
           }
         } catch (e) {
-          await creditMemberWallet({
-            Member,
-            MemberWalletTxn,
+          await creditResolvedMemberWallet({
+            resolution: mp,
             storeId: req.storeId!,
-            memberId: mp.memberId!,
-            amountEuro: mp.memberCreditUsed,
             type: 'reversal',
             orderId: new mongoose.Types.ObjectId(orderId),
             note: '更新订单失败，冲回储值',
@@ -462,10 +477,7 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
         checkoutData.tableNumber = order.tableNumber;
       }
 
-      if (mp.memberId) {
-        checkoutData.memberId = mp.memberId;
-        checkoutData.memberPhoneSnapshot = mp.memberPhoneSnapshot;
-      }
+      attachMemberToCheckoutData(checkoutData, mp);
       if (mp.paymentMethod === 'mixed') {
         checkoutData.cashAmount = mp.cashAmount;
         checkoutData.cardAmount = mp.cardAmount;
@@ -496,12 +508,9 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
           });
         }
         if (mp.memberCreditUsed > 0 && mp.memberId) {
-          await debitMemberWallet({
-            Member,
-            MemberWalletTxn,
+          await debitResolvedMemberWallet({
+            resolution: mp,
             storeId: req.storeId!,
-            memberId: mp.memberId,
-            amountEuro: mp.memberCreditUsed,
             orderId: new mongoose.Types.ObjectId(orderId),
             checkoutId: checkout._id,
             note: '单笔结账储值抵扣',
@@ -522,25 +531,16 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
           Order,
           req.storeId!,
           orderId,
-          mp.memberId
-            ? {
-                memberId: mp.memberId as mongoose.Types.ObjectId,
-                memberPhoneSnapshot: mp.memberPhoneSnapshot ?? '',
-                memberCreditUsed: mp.memberCreditUsed ?? 0,
-              }
-            : {},
+          memberPatchFromResolution(mp, mp.memberCreditUsed ?? 0),
         );
       } catch (e) {
         if (voucherMeta) {
           await releaseNumberedVoucherForOrder(req.storeId!, orderId);
         }
         if (mp.memberCreditUsed > 0 && mp.memberId) {
-          await creditMemberWallet({
-            Member,
-            MemberWalletTxn,
+          await creditResolvedMemberWallet({
+            resolution: mp,
             storeId: req.storeId!,
-            memberId: mp.memberId,
-            amountEuro: mp.memberCreditUsed,
             type: 'reversal',
             orderId: new mongoose.Types.ObjectId(orderId),
             checkoutId: checkout._id,
@@ -555,6 +555,9 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
       emitOrderAfterSeatFinalize(io, req.storeId!, order, terminalStatus, updatedLean);
 
       res.status(201).json(checkout);
+      if (req.storeId && checkout?._id) {
+        scheduleStoreCloudPrint(req.storeId, checkout._id as mongoose.Types.ObjectId, 'checkout');
+      }
     } catch (err) {
       next(err);
     }
@@ -622,10 +625,7 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
       if (order.tableNumber != null) {
         checkoutData.tableNumber = order.tableNumber;
       }
-      if (mp.memberId) {
-        checkoutData.memberId = mp.memberId;
-        checkoutData.memberPhoneSnapshot = mp.memberPhoneSnapshot;
-      }
+      attachMemberToCheckoutData(checkoutData, mp);
       if (mp.paymentMethod === 'mixed') {
         checkoutData.cashAmount = mp.cashAmount;
         checkoutData.cardAmount = mp.cardAmount;
@@ -642,12 +642,9 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
       const checkout = await Checkout.create(checkoutData);
       try {
         if (mp.memberCreditUsed > 0 && mp.memberId) {
-          await debitMemberWallet({
-            Member,
-            MemberWalletTxn,
+          await debitResolvedMemberWallet({
+            resolution: mp,
             storeId: req.storeId!,
-            memberId: mp.memberId,
-            amountEuro: mp.memberCreditUsed,
             orderId: new mongoose.Types.ObjectId(orderId),
             checkoutId: checkout._id,
             note: '堂食后结部分结账储值抵扣',
@@ -661,12 +658,9 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
       const doc = await Order.findOne({ _id: orderId, storeId: req.storeId });
       if (!doc) {
         if (mp.memberCreditUsed > 0 && mp.memberId) {
-          await creditMemberWallet({
-            Member,
-            MemberWalletTxn,
+          await creditResolvedMemberWallet({
+            resolution: mp,
             storeId: req.storeId!,
-            memberId: mp.memberId,
-            amountEuro: mp.memberCreditUsed,
             type: 'reversal',
             orderId: new mongoose.Types.ObjectId(orderId),
             checkoutId: checkout._id,
@@ -680,12 +674,9 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
         const line = doc.items.id(row.lineId);
         if (!line) {
           if (mp.memberCreditUsed > 0 && mp.memberId) {
-            await creditMemberWallet({
-              Member,
-              MemberWalletTxn,
+            await creditResolvedMemberWallet({
+              resolution: mp,
               storeId: req.storeId!,
-              memberId: mp.memberId,
-              amountEuro: mp.memberCreditUsed,
               type: 'reversal',
               orderId: new mongoose.Types.ObjectId(orderId),
               checkoutId: checkout._id,
@@ -701,7 +692,7 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
       doc.markModified('items');
       const remaining = computeDineInUnsettledPayableEuro(doc);
       if (remaining <= 0.02 && !dineInHasUnsettledFoodLineQty(doc)) {
-        doc.status = 'checked_out';
+        doc.status = mp.wallet === 'staff' ? 'checked_out-hide' : 'checked_out';
         markDineInKitchenPrintedQtyFull(doc);
         doc.markModified('items');
       }
@@ -718,6 +709,9 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
       }
 
       res.status(201).json(checkout);
+      if (req.storeId && checkout?._id) {
+        scheduleStoreCloudPrint(req.storeId, checkout._id as mongoose.Types.ObjectId, 'checkout');
+      }
     } catch (err) {
       next(err);
     }
@@ -816,10 +810,7 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
         memberCreditUsed: mp.memberCreditUsed,
         dineInPartialLineSettlements: allCheckoutLines,
       };
-      if (mp.memberId) {
-        checkoutData.memberId = mp.memberId;
-        checkoutData.memberPhoneSnapshot = mp.memberPhoneSnapshot;
-      }
+      attachMemberToCheckoutData(checkoutData, mp);
       if (mp.paymentMethod === 'mixed') {
         checkoutData.cashAmount = mp.cashAmount;
         checkoutData.cardAmount = mp.cardAmount;
@@ -836,12 +827,9 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
       const checkout = await Checkout.create(checkoutData);
       try {
         if (mp.memberCreditUsed > 0 && mp.memberId) {
-          await debitMemberWallet({
-            Member,
-            MemberWalletTxn,
+          await debitResolvedMemberWallet({
+            resolution: mp,
             storeId: req.storeId!,
-            memberId: mp.memberId,
-            amountEuro: mp.memberCreditUsed,
             checkoutId: checkout._id,
             note: '堂食后结按桌部分结账储值抵扣',
           });
@@ -867,7 +855,7 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
           }
           const remaining = computeDineInUnsettledPayableEuro(order);
           if (remaining <= 0.02) {
-            order.status = 'checked_out';
+            order.status = mp.wallet === 'staff' ? 'checked_out-hide' : 'checked_out';
             if (!dineInHasUnsettledFoodLineQty(order)) {
               markDineInKitchenPrintedQtyFull(order);
             }
@@ -895,12 +883,9 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
           await doc.save();
         }
         if (mp.memberCreditUsed > 0 && mp.memberId) {
-          await creditMemberWallet({
-            Member,
-            MemberWalletTxn,
+          await creditResolvedMemberWallet({
+            resolution: mp,
             storeId: req.storeId!,
-            memberId: mp.memberId,
-            amountEuro: mp.memberCreditUsed,
             type: 'reversal',
             checkoutId: checkout._id,
             note: '按桌部分结账失败，冲回储值',
@@ -922,6 +907,9 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
       }
 
       res.status(201).json(checkout);
+      if (req.storeId && checkout?._id) {
+        scheduleStoreCloudPrint(req.storeId, checkout._id as mongoose.Types.ObjectId, 'checkout');
+      }
     } catch (err) {
       next(err);
     }
@@ -1408,13 +1396,12 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
         memberWalletRefundEuro = round2Euro(memberWalletRefundEuro);
         if (memberWalletRefundEuro > 0.001) {
           try {
-            await creditMemberWallet({
-              Member,
-              MemberWalletTxn,
-              storeId: req.storeId!,
+            await creditWalletForMemberId({
               memberId: ch.memberId,
+              storeId: req.storeId!,
               amountEuro: memberWalletRefundEuro,
               type: 'refund_credit',
+              wallet: (ch as { memberWallet?: 'guest' | 'staff' }).memberWallet,
               checkoutId: new mongoose.Types.ObjectId(checkoutId as string),
               note: `订单退款退回储值（退款额 €${refundedEuro}）`,
             });

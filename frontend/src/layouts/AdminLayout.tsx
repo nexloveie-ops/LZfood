@@ -32,6 +32,7 @@ const sidebarItems = [
   { path: 'users', icon: '👥', key: 'admin.users' },
   { path: 'config', icon: '⚙️', key: 'admin.systemConfig' },
   { path: 'stripe', icon: '💳', key: 'admin.stripeSettings' },
+  { path: 'print-settings', icon: '🖨️', key: 'admin.printSettings' },
 ];
 
 export default function AdminLayout() {

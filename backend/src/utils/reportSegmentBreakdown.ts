@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import { bundleAdjustedLineTotals } from './bundleLineAllocation';
 import { zonedDayBoundsForRef, zonedDayStart, zonedNextDayStart } from './zonedDayBounds';
+import { omitOrderFromStoreSales } from './reportOrderExclusions';
 
 export const REPORT_SEGMENT_TZ = 'Europe/Dublin';
 
@@ -42,6 +43,7 @@ type OrderDoc = {
   _id: mongoose.Types.ObjectId | string;
   createdAt: Date;
   status?: string;
+  memberWallet?: string;
   items?: {
     _id?: mongoose.Types.ObjectId | string;
     menuItemId?: mongoose.Types.ObjectId | string;
@@ -160,7 +162,7 @@ function aggregateOrdersIntoBuckets(
   for (const key of bucketKeys) rows.set(key, emptyBucket(groups));
 
   for (const order of orders) {
-    if (String(order.status ?? '').toLowerCase().includes('hide')) continue;
+    if (omitOrderFromStoreSales(order)) continue;
     const created = new Date(order.createdAt);
     const bucketKey = granularity === 'hour' ? dublinHourKey(created) : dublinDateKey(created);
     if (!rows.has(bucketKey)) continue;
