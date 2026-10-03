@@ -761,6 +761,8 @@ router.get('/me/apple-wallet-pass', memberAuthMiddleware, async (req: Request, r
     next(err instanceof Error && (err as { statusCode?: number }).statusCode ? err : createAppError('INTERNAL_ERROR', `无法生成会员卡：${msg}`));
   }
 });
+
+router.get('/me/transactions', memberAuthMiddleware, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { MemberWalletTxn, PlatformMemberWalletTxn } = mModels();
     const midRaw = req.memberAuth!.memberId;
