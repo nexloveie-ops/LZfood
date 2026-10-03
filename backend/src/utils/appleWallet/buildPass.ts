@@ -68,14 +68,41 @@ function fetchUrlBuffer(url: string, timeoutMs = 8000): Promise<Buffer> {
   });
 }
 
-/** 将设置里的 logoUrl 解析为 PNG buffer（本地 uploads 或 http） */
+/** 将设置里的 logoUrl 解析为 PNG buffer（本地 uploads、GCS 或公网 URL） */
 async function resolveLogoBuffer(logoUrl: string): Promise<Buffer | null> {
   const raw = logoUrl.trim();
   if (!raw) return null;
   try {
     if (raw.startsWith('/uploads/')) {
-      const fp = path.join(uploadsRoot(), raw.replace(/^\/uploads\//, ''));
+      const rel = raw.replace(/^\/uploads\//, '');
+      const fp = path.join(uploadsRoot(), rel);
       if (fs.existsSync(fp)) return fs.readFileSync(fp);
+
+      // Cloud Run：文件在 GCS，磁盘上没有；先走公网 /uploads 代理，再直读 GCS
+      const origin = (process.env.PORTAL_PUBLIC_ORIGIN || process.env.QR_BASE_URL || '')
+        .trim()
+        .replace(/\/+$/, '');
+      if (origin) {
+        try {
+          return await fetchUrlBuffer(`${origin}${raw}`);
+        } catch {
+          /* fall through */
+        }
+      }
+      try {
+        const { getFileStream } = await import('../../storage');
+        const result = await getFileStream(rel);
+        if (result?.stream) {
+          const chunks: Buffer[] = [];
+          for await (const c of result.stream as AsyncIterable<Buffer | string>) {
+            chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c));
+          }
+          const buf = Buffer.concat(chunks);
+          if (buf.length > 0) return buf;
+        }
+      } catch {
+        /* ignore */
+      }
       return null;
     }
     if (raw.startsWith('http://') || raw.startsWith('https://')) {
