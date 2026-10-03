@@ -11,9 +11,9 @@ import {
   parseCloudPrintEnabled,
 } from './config';
 import { feieyunPrintMsg, isFeieyunConfigured } from './feieyunClient';
-import { loadCloudPrintReceipt } from './loadReceipt';
+import { loadCloudPrintOrderTicket, loadCloudPrintReceipt } from './loadReceipt';
 
-export type CloudPrintTrigger = 'checkout' | 'reprint';
+export type CloudPrintTrigger = 'checkout' | 'reprint' | 'placement' | 'append';
 
 export type CloudPrintJobResult = {
   skipped?: string;
@@ -22,8 +22,10 @@ export type CloudPrintJobResult = {
 
 export async function runStoreCloudPrint(opts: {
   storeId: mongoose.Types.ObjectId;
-  checkoutId: mongoose.Types.ObjectId;
+  checkoutId?: mongoose.Types.ObjectId;
+  orderId?: mongoose.Types.ObjectId;
   trigger: CloudPrintTrigger;
+  onlyLineIds?: string[];
 }): Promise<CloudPrintJobResult> {
   if (!isFeieyunConfigured()) {
     return { skipped: 'feieyun_unconfigured' };
@@ -58,9 +60,19 @@ export async function runStoreCloudPrint(opts: {
     return { skipped: 'auto_off' };
   }
 
-  const receipt = await loadCloudPrintReceipt(opts.storeId, opts.checkoutId);
+  let receipt;
+  if (opts.trigger === 'placement' || opts.trigger === 'append') {
+    receipt = opts.orderId
+      ? await loadCloudPrintOrderTicket(opts.storeId, opts.orderId, {
+          ticketKind: opts.trigger,
+          onlyLineIds: opts.onlyLineIds,
+        })
+      : null;
+  } else {
+    receipt = opts.checkoutId ? await loadCloudPrintReceipt(opts.storeId, opts.checkoutId) : null;
+  }
   if (!receipt) {
-    return { skipped: 'checkout_not_found' };
+    return { skipped: (opts.trigger === 'placement' || opts.trigger === 'append') ? 'order_not_found' : 'checkout_not_found' };
   }
 
   const content = buildFeieyunReceiptContent(receipt);
@@ -80,6 +92,18 @@ export async function runStoreCloudPrint(opts: {
 
 export function scheduleStoreCloudPrint(storeId: mongoose.Types.ObjectId, checkoutId: mongoose.Types.ObjectId, trigger: CloudPrintTrigger): void {
   void runStoreCloudPrint({ storeId, checkoutId, trigger }).catch((err) => {
+    console.error('[cloud-print]', err);
+  });
+}
+
+/** 手持下单/加菜：不走结账自动开关，店铺开了云打印即推飞鹅。 */
+export function scheduleOrderCloudPrint(
+  storeId: mongoose.Types.ObjectId,
+  orderId: mongoose.Types.ObjectId,
+  trigger: 'placement' | 'append',
+  onlyLineIds?: string[],
+): void {
+  void runStoreCloudPrint({ storeId, orderId, trigger, onlyLineIds }).catch((err) => {
     console.error('[cloud-print]', err);
   });
 }

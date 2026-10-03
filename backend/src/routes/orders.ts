@@ -43,6 +43,7 @@ import {
   type OrderItemForInventory,
 } from '../utils/inventoryService';
 import { voidNotifyCustomerOrderEvent } from '../modules/customer-notifications/dispatcher';
+import { scheduleOrderCloudPrint } from '../utils/cloudPrint/runJob';
 import { releaseNumberedVoucherForOrder } from '../utils/numberedVoucherOps';
 import { handleNotifyCustomerReady } from './customerNotifications';
 import {
@@ -772,6 +773,10 @@ export function createOrdersRouter(io: SocketIOServer): Router {
 
       io.to(storeIoRoom(req.storeId!)).emit('order:new', order);
 
+      if (waiterPlacement) {
+        scheduleOrderCloudPrint(req.storeId!, order._id as mongoose.Types.ObjectId, 'placement');
+      }
+
       const orderLean = typeof order.toObject === 'function' ? order.toObject() : order;
       voidNotifyCustomerOrderEvent({
         storeId: req.storeId!,
@@ -850,6 +855,34 @@ export function createOrdersRouter(io: SocketIOServer): Router {
       next(err);
     }
   });
+
+  // GET /api/orders/open-dine-in-tab?table=N — 手持跑账：同桌未完结堂食单（pending，不含已付/已结）
+  router.get(
+    '/open-dine-in-tab',
+    ...requireAuthSameStore,
+    requirePermission('checkout:process'),
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const raw = req.query.table;
+        const table = typeof raw === 'string' ? Number(raw) : typeof raw === 'number' ? raw : NaN;
+        if (!Number.isFinite(table) || table <= 0) {
+          throw createAppError('VALIDATION_ERROR', 'table is required');
+        }
+        const { Order } = orderModels();
+        const order = await Order.findOne({
+          storeId: req.storeId,
+          type: 'dine_in',
+          tableNumber: table,
+          status: 'pending',
+          dineInExposedToStaff: { $ne: false },
+          paymentStatus: { $nin: ['paid', 'refunded'] },
+        }).sort({ createdAt: -1 });
+        res.json({ order: order || null });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
 
   // GET /api/orders/takeout — Get pending (not checked out) takeout orders sorted by dailyOrderNumber ASC
   router.get('/takeout', async (req: Request, res: Response, next: NextFunction) => {
@@ -1594,6 +1627,188 @@ export function createOrdersRouter(io: SocketIOServer): Router {
         await order.save();
         io.to(storeIoRoom(req.storeId!)).emit('order:updated', order);
         res.json(order);
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  // POST /api/orders/:id/append-items — 手持跑账：堂食未完结单只追加行并云打印新增
+  router.post(
+    '/:id/append-items',
+    ...requireAuthSameStore,
+    requirePermission('checkout:process'),
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const { MenuItem, Order } = orderModels();
+        const id = req.params.id as string;
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+          throw createAppError('VALIDATION_ERROR', 'Invalid order ID');
+        }
+        const order = await Order.findOne({ _id: id, storeId: req.storeId });
+        if (!order) {
+          throw createAppError('NOT_FOUND', 'Order not found');
+        }
+        if (String(order.type) !== 'dine_in') {
+          throw createAppError('VALIDATION_ERROR', 'append-items is only for dine_in orders');
+        }
+        if (String(order.status) !== 'pending') {
+          throw createAppError('ORDER_NOT_MODIFIABLE', 'Order cannot be appended', {
+            currentStatus: order.status,
+          });
+        }
+        if (String(order.paymentStatus || 'unpaid') === 'paid' || String(order.paymentStatus || '') === 'refunded') {
+          throw createAppError('ORDER_NOT_MODIFIABLE', 'Settled orders cannot be appended');
+        }
+
+        const { items } = req.body;
+        if (!Array.isArray(items) || items.length === 0) {
+          throw createAppError('VALIDATION_ERROR', 'items must be a non-empty array');
+        }
+        for (const item of items) {
+          if (!item.menuItemId || !mongoose.Types.ObjectId.isValid(item.menuItemId)) {
+            throw createAppError('VALIDATION_ERROR', `Invalid menuItemId: ${item.menuItemId}`);
+          }
+          if (!item.quantity || typeof item.quantity !== 'number' || item.quantity < 1) {
+            throw createAppError('VALIDATION_ERROR', 'Each item must have a quantity >= 1');
+          }
+        }
+
+        const menuItemIds = items.map((i: { menuItemId: string }) => i.menuItemId);
+        const menuItems = await MenuItem.find({ storeId: req.storeId, _id: { $in: menuItemIds } });
+        const foundIds = new Set(menuItems.map((m) => m._id.toString()));
+        const missingIds = menuItemIds.filter((mid: string) => !foundIds.has(mid));
+        if (missingIds.length > 0) {
+          throw createAppError('VALIDATION_ERROR', `Menu items not found: ${missingIds.join(', ')}`);
+        }
+        const soldOutItems = menuItems.filter((m) => m.isSoldOut);
+        if (soldOutItems.length > 0) {
+          throw createAppError('ITEM_SOLD_OUT', 'Some items are sold out', {
+            soldOutItemIds: soldOutItems.map((m) => m._id.toString()),
+          });
+        }
+
+        const menuItemMap = new Map(menuItems.map((m) => [m._id.toString(), m as MenuItemForOrder]));
+        const staffAllowed = isStaffCashierOrOwner(req);
+        const newLines = await buildOrderItemsPayload(req.storeId!, items, menuItemMap, staffAllowed);
+
+        const inventoryServings = aggregateServingsByMenuItem(items as OrderItemForInventory[]);
+        const inventoryDeduction = await deductStockForOrderCreation(
+          req.storeId!,
+          inventoryServings,
+          menuItems as unknown as Parameters<typeof deductStockForOrderCreation>[2],
+        );
+
+        const bomLinesForDeduction = newLines
+          .filter((oi) => oi.lineKind !== 'delivery_fee')
+          .map((oi) => ({
+            menuItemId: oi.menuItemId,
+            quantity: oi.quantity,
+            lineKind: oi.lineKind,
+            selectedOptions: (oi.selectedOptions || [])
+              .filter((s) => (s as { source?: string }).source !== 'adHoc')
+              .map((s) => ({
+                groupName: s.groupName,
+                choiceName: s.choiceName,
+              })),
+          }));
+        let rawDeduction: Awaited<ReturnType<typeof deductRawMaterialsForOrderCreation>>
+          = { demand: new Map(), snapshots: new Map() };
+        try {
+          rawDeduction = await deductRawMaterialsForOrderCreation(
+            req.storeId!,
+            bomLinesForDeduction as unknown as Parameters<typeof deductRawMaterialsForOrderCreation>[1],
+            menuItems as unknown as Parameters<typeof deductRawMaterialsForOrderCreation>[2],
+          );
+        } catch (rawErr) {
+          if (inventoryDeduction.demands.length > 0) {
+            const { MenuItem: MI } = orderModels();
+            for (const d of inventoryDeduction.demands) {
+              try {
+                await MI.updateOne(
+                  { _id: d.menuItemId, storeId: req.storeId },
+                  { $inc: { 'inventory.currentQty': d.baseQty } },
+                );
+              } catch { /* best-effort rollback */ }
+            }
+          }
+          throw rawErr;
+        }
+
+        const beforeCount = order.items.length;
+        for (const line of newLines) {
+          order.items.push(line);
+        }
+        order.markModified('items');
+        const wf = await getDineInWorkflowModeForStore(req.storeId!);
+        syncDualTrackBeforeSave(order, { dineInWorkflowMode: wf });
+        try {
+          await order.save();
+        } catch (writeErr) {
+          if (inventoryDeduction.demands.length > 0) {
+            const { MenuItem: MI } = orderModels();
+            for (const d of inventoryDeduction.demands) {
+              try {
+                await MI.updateOne(
+                  { _id: d.menuItemId, storeId: req.storeId },
+                  { $inc: { 'inventory.currentQty': d.baseQty } },
+                );
+              } catch { /* best-effort */ }
+            }
+          }
+          if (rawDeduction.demand.size > 0) {
+            const { RawMaterial: RM } = getModels() as { RawMaterial: mongoose.Model<any> };
+            for (const [rid, qty] of rawDeduction.demand) {
+              try {
+                await RM.updateOne(
+                  { _id: rid, storeId: req.storeId },
+                  { $inc: { currentQty: qty } },
+                );
+              } catch { /* best-effort */ }
+            }
+          }
+          throw writeErr;
+        }
+
+        if (inventoryDeduction.demands.length > 0) {
+          void writeSaleTxns(
+            req.storeId!,
+            order._id as mongoose.Types.ObjectId,
+            inventoryDeduction.demands,
+            inventoryDeduction.snapshots,
+          );
+        }
+        if (rawDeduction.demand.size > 0) {
+          void writeRawMaterialSaleTxns(
+            req.storeId!,
+            order._id as mongoose.Types.ObjectId,
+            rawDeduction.demand,
+            rawDeduction.snapshots,
+          );
+        }
+
+        const appendedIds = order.items.slice(beforeCount).map((line: { _id?: { toString(): string } }) => String(line._id));
+        scheduleOrderCloudPrint(req.storeId!, order._id as mongoose.Types.ObjectId, 'append', appendedIds);
+        io.to(storeIoRoom(req.storeId!)).emit('order:updated', order);
+
+        const inventoryUpdates = inventoryDeduction.demands.length === 0
+          ? []
+          : inventoryDeduction.demands.map((d) => {
+              const snap = inventoryDeduction.snapshots.get(d.menuItemId);
+              return {
+                menuItemId: d.menuItemId,
+                currentQty: snap?.qtyAfter ?? 0,
+                perServing: d.perServing,
+                baseUnit: d.baseUnit,
+              };
+            });
+        const responseBody: Record<string, unknown> = {
+          ...(typeof order.toObject === 'function' ? order.toObject() : order),
+          appendedItemIds: appendedIds,
+          merged: true,
+        };
+        if (inventoryUpdates.length > 0) responseBody.inventoryUpdates = inventoryUpdates;
+        res.json(responseBody);
       } catch (err) {
         next(err);
       }

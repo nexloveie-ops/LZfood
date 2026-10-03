@@ -40,8 +40,12 @@ export type CloudPrintOrder = {
   items: CloudPrintLine[];
 };
 
+export type CloudPrintTicketKind = 'checkout' | 'placement' | 'append';
+
 export type CloudPrintReceipt = {
   checkoutId: string;
+  /** checkout = 结账小票；placement = 手持下单全单；append = 加菜仅新增行 */
+  ticketKind?: CloudPrintTicketKind;
   tableNumber?: number;
   totalAmount: number;
   paymentMethod: string;
@@ -279,10 +283,12 @@ export function buildFeieyunReceiptContent(receipt: CloudPrintReceipt): string {
   const isDineIn = type === 'dine_in';
   const isPhone = type === 'phone';
   const isDelivery = type === 'delivery';
+  const ticketKind: CloudPrintTicketKind = receipt.ticketKind || 'checkout';
+  const isKitchenTicket = ticketKind === 'placement' || ticketKind === 'append';
   const restaurantName = receipt.restaurant.name || '';
-  const pay = paymentLabels(receipt.paymentMethod);
+  const pay = paymentLabels(isKitchenTicket ? 'pending' : receipt.paymentMethod);
   const allItems = receipt.orders.flatMap((o) => o.items);
-  const partial = describePartial(receipt);
+  const partial = isKitchenTicket ? null : describePartial(receipt);
   const qty = partial ? partial.lines.reduce((s, L) => s + L.qty, 0) : countQty(allItems);
   const checkedOutAt = new Date(receipt.checkedOutAt);
 
@@ -291,6 +297,11 @@ export function buildFeieyunReceiptContent(receipt: CloudPrintReceipt): string {
   if (receipt.restaurant.phone) lines.push(`<C>Tel: ${receipt.restaurant.phone}</C>`);
   if (receipt.restaurant.website) lines.push(`<C>${receipt.restaurant.website}</C>`);
   if (receipt.restaurant.email) lines.push(`<C>${receipt.restaurant.email}</C>`);
+  if (ticketKind === 'append') {
+    lines.push('<CB>Added items / 加菜</CB>');
+  } else if (ticketKind === 'placement') {
+    lines.push('<CB>Kitchen / 厨房</CB>');
+  }
 
   if (isDineIn) {
     if (receipt.tableNumber != null && receipt.tableNumber > 0) lines.push(`<CB>Table ${receipt.tableNumber}</CB>`);
@@ -404,7 +415,7 @@ export function buildFeieyunReceiptContent(receipt: CloudPrintReceipt): string {
   const ch = channelLabel(type);
   lines.push(`<CB>${ch.zh} / ${ch.en}</CB>`);
 
-  const terms = receipt.restaurant.terms ? parseQR(receipt.restaurant.terms) : [];
+  const terms = !isKitchenTicket && receipt.restaurant.terms ? parseQR(receipt.restaurant.terms) : [];
   if (terms.length > 0) {
     lines.push('--------------------------------');
     let qrUsed = false;
@@ -420,11 +431,13 @@ export function buildFeieyunReceiptContent(receipt: CloudPrintReceipt): string {
     }
   }
 
-  const thanks = isDineIn
-    ? 'Thank you for dining with us!'
-    : isPhone
-      ? 'Thank you!'
-      : 'Thank you for your order!';
+  const thanks = isKitchenTicket
+    ? (ticketKind === 'append' ? 'Added items / 加菜联' : 'Kitchen copy / 厨房联')
+    : isDineIn
+      ? 'Thank you for dining with us!'
+      : isPhone
+        ? 'Thank you!'
+        : 'Thank you for your order!';
   lines.push('--------------------------------');
   lines.push(`<C>${checkedOutAt.toLocaleString('en-GB', { timeZone: 'Europe/Dublin' })}</C>`);
   lines.push(`<C>${thanks}</C>`);

@@ -1431,3 +1431,92 @@ describe('PUT /api/orders/:id/items staff QR edit', () => {
     expect(res.body.error.code).toBe('ORDER_NOT_MODIFIABLE');
   });
 });
+
+describe('handheld dine-in tab merge', () => {
+  it('GET /open-dine-in-tab requires auth', async () => {
+    const res = await request(app).get('/api/orders/open-dine-in-tab').query({ table: 8 });
+    expect(res.status).toBe(401);
+  });
+
+  it('returns the latest pending unpaid dine-in order for the table', async () => {
+    const item = await createMenuItem();
+    await Order.create({
+      storeId: TEST_STORE_ID,
+      type: 'dine_in',
+      tableNumber: 8,
+      seatNumber: 1,
+      status: 'checked_out',
+      paymentStatus: 'paid',
+      items: [{ menuItemId: item._id, quantity: 1, unitPrice: 10, itemName: 'old' }],
+    });
+    const open = await Order.create({
+      storeId: TEST_STORE_ID,
+      type: 'dine_in',
+      tableNumber: 8,
+      seatNumber: 2,
+      status: 'pending',
+      paymentStatus: 'unpaid',
+      items: [{ menuItemId: item._id, quantity: 1, unitPrice: 10, itemName: 'open' }],
+    });
+
+    const res = await request(app)
+      .get('/api/orders/open-dine-in-tab')
+      .query({ table: 8 })
+      .set('Authorization', `Bearer ${cashierToken}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.order).toBeTruthy();
+    expect(res.body.order._id).toBe(open._id.toString());
+  });
+
+  it('POST append-items adds lines without replacing existing ones', async () => {
+    const duck = await createMenuItem({ translations: [{ locale: 'zh-CN', name: '烧鸭' }, { locale: 'en-US', name: 'Duck' }] });
+    const rice = await createMenuItem({ translations: [{ locale: 'zh-CN', name: '米饭' }, { locale: 'en-US', name: 'Rice' }] });
+    const created = await request(app)
+      .post('/api/orders')
+      .set('Authorization', `Bearer ${cashierToken}`)
+      .send({
+        type: 'dine_in',
+        tableNumber: 3,
+        seatNumber: 1,
+        waiterPlacement: true,
+        items: [{ menuItemId: duck._id.toString(), quantity: 1 }],
+      });
+    expect(created.status).toBe(201);
+    const orderId = created.body._id as string;
+
+    const appended = await request(app)
+      .post(`/api/orders/${orderId}/append-items`)
+      .set('Authorization', `Bearer ${cashierToken}`)
+      .send({ items: [{ menuItemId: rice._id.toString(), quantity: 2 }] });
+
+    expect(appended.status).toBe(200);
+    expect(appended.body.merged).toBe(true);
+    expect(appended.body.items).toHaveLength(2);
+    expect(appended.body.items[0].itemName).toBe('烧鸭');
+    expect(appended.body.items[1].itemName).toBe('米饭');
+    expect(appended.body.items[1].quantity).toBe(2);
+    expect(Array.isArray(appended.body.appendedItemIds)).toBe(true);
+    expect(appended.body.appendedItemIds).toHaveLength(1);
+  });
+
+  it('rejects append-items on takeout orders', async () => {
+    const item = await createMenuItem();
+    const created = await request(app)
+      .post('/api/orders')
+      .set('Authorization', `Bearer ${cashierToken}`)
+      .send({
+        type: 'takeout',
+        staffTakeoutPlacement: true,
+        waiterPlacement: true,
+        items: [{ menuItemId: item._id.toString(), quantity: 1 }],
+      });
+    expect(created.status).toBe(201);
+
+    const res = await request(app)
+      .post(`/api/orders/${created.body._id}/append-items`)
+      .set('Authorization', `Bearer ${cashierToken}`)
+      .send({ items: [{ menuItemId: item._id.toString(), quantity: 1 }] });
+    expect(res.status).toBe(400);
+  });
+});
