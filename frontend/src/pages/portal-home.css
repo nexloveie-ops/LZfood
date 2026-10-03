@@ -89,20 +89,18 @@
   color: var(--portal-accent);
 }
 
-/* 固定占位高度，Logo 视觉尺寸不变但不撑高顶栏 */
 .portal-light-logo-wrap {
   display: flex;
   align-items: center;
   flex-shrink: 0;
   height: 60px;
-  overflow: visible;
 }
 
 .portal-light-logo-img {
   display: block;
-  height: 80px;
+  height: 44px;
   width: auto;
-  max-width: min(420px, 58vw);
+  max-width: min(240px, 48vw);
   object-fit: contain;
   object-position: left center;
 }
@@ -146,8 +144,8 @@
   }
 
   .portal-light-logo-img {
-    height: 68px;
-    max-width: min(360px, 78vw);
+    height: 40px;
+    max-width: min(220px, 58vw);
   }
 }
 
@@ -165,8 +163,8 @@
   }
 
   .portal-light-logo-img {
-    height: 64px;
-    max-width: min(320px, 88vw);
+    height: 36px;
+    max-width: min(200px, 72vw);
   }
 }
 
@@ -1074,7 +1072,7 @@
 
   .portal-light-logo-img {
     height: 40px !important;
-    max-width: min(200px, 52vw);
+    max-width: min(220px, 72vw);
     width: auto;
   }
 
