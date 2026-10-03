@@ -49,6 +49,10 @@ import {
   runPlatformStripeHealthCheck,
   upsertPlatformConfig,
 } from '../utils/platformStripeConfig';
+import { getAppleWalletCertStatus } from '../utils/appleWallet/certs';
+import { getAppleWalletSettings, saveAppleWalletSettings } from '../utils/appleWallet/config';
+import { buildPlatformMemberPkpass } from '../utils/appleWallet/buildPass';
+import { resolvePassStoreLocations } from '../utils/appleWallet/storeLocations';
 
 const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
@@ -1104,6 +1108,105 @@ router.get('/membership/stripe-health', ...platformAuth, async (_req: Request, r
     next(err);
   }
 });
+
+router.get('/membership/apple-wallet-config', ...platformAuth, async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    const settings = await getAppleWalletSettings();
+    const certificates = getAppleWalletCertStatus();
+    const { Store } = models();
+    const stores = (await Store.find({ status: 'active' })
+      .select('_id slug displayName')
+      .sort({ displayName: 1 })
+      .lean()) as unknown as Array<{ _id: mongoose.Types.ObjectId; slug: string; displayName: string }>;
+    let locationPreview: Array<{ storeId: string; slug: string; displayName: string; ok: boolean }> = [];
+    try {
+      const resolved = await resolvePassStoreLocations(settings.storeIds);
+      const okIds = new Set(resolved.map((r) => r.storeId));
+      locationPreview = settings.storeIds.map((id) => {
+        const s = stores.find((x) => x._id.toString() === id);
+        return {
+          storeId: id,
+          slug: s?.slug || '',
+          displayName: s?.displayName || id,
+          ok: okIds.has(id),
+        };
+      });
+    } catch {
+      locationPreview = settings.storeIds.map((id) => ({
+        storeId: id,
+        slug: '',
+        displayName: id,
+        ok: false,
+      }));
+    }
+    res.json({
+      settings,
+      certificates,
+      stores: stores.map((s) => ({
+        _id: s._id.toString(),
+        slug: s.slug,
+        displayName: s.displayName,
+      })),
+      locationPreview,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.put('/membership/apple-wallet-config', ...platformAuth, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const settings = await saveAppleWalletSettings(req.body?.settings ?? req.body);
+    const certificates = getAppleWalletCertStatus();
+    res.json({ settings, certificates, message: 'Saved' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get(
+  '/membership/members/:id/apple-wallet-pass',
+  ...platformAuth,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const settings = await getAppleWalletSettings();
+      if (!settings.enabled) {
+        throw createAppError('VALIDATION_ERROR', '平台尚未启用 Apple Wallet 会员卡');
+      }
+      const cert = getAppleWalletCertStatus();
+      if (!cert.ready) {
+        throw createAppError(
+          'VALIDATION_ERROR',
+          '服务器未配置 Apple Wallet 证书（APPLE_PASS_P12 / APPLE_WWDR / APPLE_TEAM_ID）',
+        );
+      }
+      const { PlatformMember } = models();
+      const doc = await PlatformMember.findById(req.params.id).lean();
+      if (!doc) throw createAppError('NOT_FOUND', '会员不存在');
+      if ((doc as { status?: string }).status !== 'active') {
+        throw createAppError('VALIDATION_ERROR', '会员未激活');
+      }
+      const buf = await buildPlatformMemberPkpass(
+        {
+          id: String((doc as { _id: mongoose.Types.ObjectId })._id),
+          memberNo: (doc as { memberNo?: number }).memberNo,
+          displayName: (doc as { displayName?: string }).displayName,
+          phone: (doc as { phone?: string }).phone,
+          creditBalance: (doc as { creditBalance?: number }).creditBalance,
+        },
+        settings,
+      );
+      res.setHeader('Content-Type', 'application/vnd.apple.pkpass');
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="lzfood-member-${String((doc as { _id: unknown })._id)}.pkpass"`,
+      );
+      res.send(buf);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 router.get('/membership/members', ...platformAuth, async (req: Request, res: Response, next: NextFunction) => {
   try {

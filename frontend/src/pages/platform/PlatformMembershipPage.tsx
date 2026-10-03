@@ -189,6 +189,35 @@ export default function PlatformMembershipPage() {
   const [guestCreditNote, setGuestCreditNote] = useState('');
   const [guestCreditSaving, setGuestCreditSaving] = useState(false);
 
+  type WalletStoreOpt = { _id: string; slug: string; displayName: string };
+  type WalletCertStatus = {
+    passTypeId: string;
+    teamId: string;
+    hasP12: boolean;
+    hasWwdr: boolean;
+    hasPassword: boolean;
+    ready: boolean;
+  };
+  type WalletSettings = {
+    enabled: boolean;
+    organizationName: string;
+    description: string;
+    logoText: string;
+    backgroundColor: string;
+    foregroundColor: string;
+    labelColor: string;
+    maxDistanceMeters: number;
+    storeIds: string[];
+  };
+  const [walletOpen, setWalletOpen] = useState(false);
+  const [walletLoading, setWalletLoading] = useState(false);
+  const [walletSaving, setWalletSaving] = useState(false);
+  const [walletSettings, setWalletSettings] = useState<WalletSettings | null>(null);
+  const [walletCerts, setWalletCerts] = useState<WalletCertStatus | null>(null);
+  const [walletStores, setWalletStores] = useState<WalletStoreOpt[]>([]);
+  const [walletLocPreview, setWalletLocPreview] = useState<Array<{ storeId: string; displayName: string; ok: boolean }>>([]);
+  const [walletPassBusyId, setWalletPassBusyId] = useState<string | null>(null);
+
   const loadStripe = useCallback(async () => {
     setStripeLoading(true);
     try {
@@ -439,6 +468,89 @@ export default function PlatformMembershipPage() {
     setStaffIds((prev) => (prev.includes(storeId) ? prev.filter((x) => x !== storeId) : [...prev, storeId]));
   };
 
+  const loadWallet = useCallback(async () => {
+    setWalletLoading(true);
+    try {
+      const res = await platformApiFetch('/api/platform/membership/apple-wallet-config');
+      if (!res.ok) {
+        setErr(await res.text());
+        return;
+      }
+      const data = await res.json();
+      setWalletSettings(data.settings);
+      setWalletCerts(data.certificates);
+      setWalletStores(Array.isArray(data.stores) ? data.stores : []);
+      setWalletLocPreview(Array.isArray(data.locationPreview) ? data.locationPreview : []);
+    } finally {
+      setWalletLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (walletOpen && !walletSettings) void loadWallet();
+  }, [walletOpen, walletSettings, loadWallet]);
+
+  const saveWallet = async () => {
+    if (!walletSettings) return;
+    setWalletSaving(true);
+    setErr('');
+    setMsg('');
+    try {
+      const res = await platformApiFetch('/api/platform/membership/apple-wallet-config', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ settings: walletSettings }),
+      });
+      if (!res.ok) {
+        setErr(await res.text());
+        return;
+      }
+      const data = await res.json();
+      setWalletSettings(data.settings);
+      setWalletCerts(data.certificates);
+      setMsg('Apple Wallet 会员卡设置已保存');
+      await loadWallet();
+    } finally {
+      setWalletSaving(false);
+    }
+  };
+
+  const toggleWalletStore = (storeId: string) => {
+    setWalletSettings((prev) => {
+      if (!prev) return prev;
+      const on = prev.storeIds.includes(storeId);
+      if (!on && prev.storeIds.length >= 10) {
+        setErr('Apple Wallet 每张卡最多 10 个附近门店坐标');
+        return prev;
+      }
+      return {
+        ...prev,
+        storeIds: on ? prev.storeIds.filter((x) => x !== storeId) : [...prev.storeIds, storeId],
+      };
+    });
+  };
+
+  const downloadMemberPass = async (memberId: string) => {
+    setWalletPassBusyId(memberId);
+    setErr('');
+    try {
+      const res = await platformApiFetch(`/api/platform/membership/members/${memberId}/apple-wallet-pass`);
+      if (!res.ok) {
+        setErr(await res.text());
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `lzfood-member-${memberId}.pkpass`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } finally {
+      setWalletPassBusyId(null);
+    }
+  };
+
   return (
     <div style={{ width: '100%' }}>
       <h1 style={{ margin: '0 0 8px', fontSize: 22, fontWeight: 700, color: '#1a237e' }}>平台会员</h1>
@@ -538,6 +650,150 @@ export default function PlatformMembershipPage() {
               </div>
             ) : null}
           </>
+          )
+        ) : null}
+      </div>
+
+      <div className="card" style={{ padding: walletOpen ? 20 : '12px 20px', marginBottom: 24 }}>
+        <button
+          type="button"
+          onClick={() => setWalletOpen((v) => !v)}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            width: '100%',
+            gap: 12,
+            background: 'none',
+            border: 0,
+            padding: 0,
+            cursor: 'pointer',
+            textAlign: 'left',
+          }}
+        >
+          <h2 style={{ margin: 0, fontSize: 16 }}>Apple Wallet 会员卡</h2>
+          <span style={{ fontSize: 13, color: '#5c6bc0', whiteSpace: 'nowrap' }}>
+            {walletSettings?.enabled ? '已启用' : (walletLoading ? '' : '未启用')}
+            {' · '}
+            {walletCerts?.ready ? '证书就绪' : '证书未齐'}
+            {' · '}
+            {walletOpen ? '收起' : '展开'}
+          </span>
+        </button>
+        {walletOpen ? (
+          walletLoading || !walletSettings ? (
+            <div style={{ color: '#789', marginTop: 12 }}>加载中…</div>
+          ) : (
+            <>
+              <p style={{ margin: '12px 0 0', fontSize: 12, color: '#789', lineHeight: 1.5 }}>
+                面向平台客人会员。靠近勾选门店时可能提示会员卡；卡面含 QR（扫码业务后续再接）。证书用服务器环境变量配置，勿上传 Git。
+                NFC 碰卡为后续能力，本阶段未启用。
+              </p>
+              <div style={{
+                marginTop: 12,
+                padding: 12,
+                borderRadius: 8,
+                background: walletCerts?.ready ? 'rgba(46,125,50,0.08)' : 'rgba(198,40,40,0.06)',
+                border: `1px solid ${walletCerts?.ready ? 'rgba(46,125,50,0.35)' : 'rgba(198,40,40,0.25)'}`,
+                fontSize: 13,
+              }}>
+                <div style={{ fontWeight: 600, marginBottom: 6 }}>
+                  证书状态：{walletCerts?.ready ? '可签发' : '未就绪'}
+                </div>
+                <div>Pass Type ID：{walletCerts?.passTypeId || '—'}</div>
+                <div>Team ID：{walletCerts?.teamId || '（未配置 APPLE_TEAM_ID）'}</div>
+                <div>
+                  P12 {walletCerts?.hasP12 ? 'OK' : '缺'} · 密码 {walletCerts?.hasPassword ? 'OK' : '缺'} · WWDR{' '}
+                  {walletCerts?.hasWwdr ? 'OK' : '缺'}
+                </div>
+              </div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 14, fontSize: 14 }}>
+                <input
+                  type="checkbox"
+                  checked={walletSettings.enabled}
+                  onChange={(e) => setWalletSettings({ ...walletSettings, enabled: e.target.checked })}
+                />
+                启用顾客「加入 Apple 钱包」
+              </label>
+              <label style={{ display: 'block', fontSize: 12, color: '#789', margin: '12px 0 6px' }}>组织名称</label>
+              <input
+                className="input"
+                value={walletSettings.organizationName}
+                onChange={(e) => setWalletSettings({ ...walletSettings, organizationName: e.target.value })}
+                style={{ width: '100%', marginBottom: 8 }}
+              />
+              <label style={{ display: 'block', fontSize: 12, color: '#789', marginBottom: 6 }}>卡面 Logo 文字</label>
+              <input
+                className="input"
+                value={walletSettings.logoText}
+                onChange={(e) => setWalletSettings({ ...walletSettings, logoText: e.target.value })}
+                style={{ width: '100%', marginBottom: 8 }}
+              />
+              <label style={{ display: 'block', fontSize: 12, color: '#789', marginBottom: 6 }}>描述</label>
+              <input
+                className="input"
+                value={walletSettings.description}
+                onChange={(e) => setWalletSettings({ ...walletSettings, description: e.target.value })}
+                style={{ width: '100%', marginBottom: 8 }}
+              />
+              <label style={{ display: 'block', fontSize: 12, color: '#789', marginBottom: 6 }}>
+                附近提醒距离（米，50–5000）
+              </label>
+              <input
+                className="input"
+                type="number"
+                min={50}
+                max={5000}
+                value={walletSettings.maxDistanceMeters}
+                onChange={(e) =>
+                  setWalletSettings({
+                    ...walletSettings,
+                    maxDistanceMeters: Number(e.target.value) || 120,
+                  })
+                }
+                style={{ width: 160, marginBottom: 12 }}
+              />
+              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
+                附近提醒门店（最多 10 家；需店后台填好地址且服务器有 GoogleGeo）
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 8, marginBottom: 12 }}>
+                {walletStores.map((s) => {
+                  const on = walletSettings.storeIds.includes(s._id);
+                  const prev = walletLocPreview.find((x) => x.storeId === s._id);
+                  return (
+                    <label
+                      key={s._id}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'flex-start',
+                        gap: 8,
+                        padding: 10,
+                        border: '1px solid #c5cae9',
+                        borderRadius: 8,
+                        background: on ? '#e8eaf6' : '#fff',
+                      }}
+                    >
+                      <input type="checkbox" checked={on} onChange={() => toggleWalletStore(s._id)} />
+                      <span>
+                        <div style={{ fontWeight: 600 }}>{s.displayName}</div>
+                        <div style={{ fontSize: 11, color: '#789' }}>
+                          {s.slug}
+                          {on ? (prev ? (prev.ok ? ' · 坐标 OK' : ' · 坐标未解析') : '') : ''}
+                        </div>
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                <button type="button" className="btn btn-primary" onClick={() => void saveWallet()} disabled={walletSaving}>
+                  {walletSaving ? '保存中…' : '保存 Wallet 设置'}
+                </button>
+                <button type="button" className="btn btn-outline" onClick={() => void loadWallet()} disabled={walletLoading}>
+                  刷新
+                </button>
+              </div>
+            </>
           )
         ) : null}
       </div>
@@ -791,6 +1047,21 @@ export default function PlatformMembershipPage() {
                         <button type="button" className="btn btn-primary" onClick={() => void saveDetail()} disabled={detailSaving}>
                           {detailSaving ? '保存中…' : '保存姓名与挂靠'}
                         </button>
+
+                        <div style={{ marginTop: 20, marginBottom: 8 }}>
+                          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>Apple Wallet 测试卡</div>
+                          <p style={{ fontSize: 12, color: '#789', margin: '0 0 10px' }}>
+                            下载 .pkpass 到 Mac/iPhone 验证签名与卡面（需已启用并配置证书）。
+                          </p>
+                          <button
+                            type="button"
+                            className="btn btn-outline"
+                            disabled={walletPassBusyId === detail._id || detail.status !== 'active'}
+                            onClick={() => void downloadMemberPass(detail._id)}
+                          >
+                            {walletPassBusyId === detail._id ? '生成中…' : '下载会员 .pkpass'}
+                          </button>
+                        </div>
 
                         <h3 style={{ margin: '24px 0 8px', fontSize: 15 }}>消费 / 流水</h3>
                         {detail.txns.length === 0 ? (

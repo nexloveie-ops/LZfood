@@ -315,6 +315,8 @@ export default function MemberPortalPage() {
   const [cardPinInput, setCardPinInput] = useState('');
   const [cardRedeemBusy, setCardRedeemBusy] = useState(false);
   const [walletHint, setWalletHint] = useState('');
+  const [appleWalletAvailable, setAppleWalletAvailable] = useState(false);
+  const [appleWalletBusy, setAppleWalletBusy] = useState(false);
 
   const authFetch = useMemo(
     () => (path: string, init?: RequestInit) => memberApiFetch(storeSlug, token, path, init),
@@ -328,6 +330,7 @@ export default function MemberPortalPage() {
       setToken(null);
       sessionStorage.removeItem(TOKEN_KEY(storeSlug));
       setView('login');
+      setAppleWalletAvailable(false);
       return;
     }
     const p = (await r.json()) as MemberProfile;
@@ -336,7 +339,46 @@ export default function MemberPortalPage() {
     setEditPostalCode(p.postalCode || '');
     setEditDeliveryAddress(p.deliveryAddress || '');
     postalEditedByUserRef.current = false;
+    try {
+      const wr = await authFetch('/api/members/me/apple-wallet');
+      if (wr.ok) {
+        const w = (await wr.json()) as { available?: boolean };
+        setAppleWalletAvailable(!!w.available);
+      } else {
+        setAppleWalletAvailable(false);
+      }
+    } catch {
+      setAppleWalletAvailable(false);
+    }
   }, [authFetch, token, storeSlug]);
+
+  const addToAppleWallet = async () => {
+    setAppleWalletBusy(true);
+    setError('');
+    try {
+      const r = await authFetch('/api/members/me/apple-wallet-pass');
+      if (!r.ok) {
+        setError(t('member.addToAppleWalletError', '无法生成会员卡'));
+        return;
+      }
+      const raw = await r.arrayBuffer();
+      const blob = new Blob([raw], { type: 'application/vnd.apple.pkpass' });
+      const url = URL.createObjectURL(blob);
+      // iOS Safari 对 application/vnd.apple.pkpass 会唤起「添加到钱包」
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'lzfood-membership.pkpass';
+      a.rel = 'noopener';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch {
+      setError(t('member.addToAppleWalletError', '无法生成会员卡'));
+    } finally {
+      setAppleWalletBusy(false);
+    }
+  };
 
   const loadTxns = useCallback(
     async (page: number) => {
@@ -675,6 +717,22 @@ export default function MemberPortalPage() {
           </div>
           <div className="mp-wallet-k">{t('member.balance', '储值余额')}</div>
           <div className="mp-wallet-bal">€{Number(profile.creditBalance).toFixed(2)}</div>
+          {appleWalletAvailable ? (
+            <div style={{ marginTop: 14 }}>
+              <button
+                type="button"
+                className="mp-btn mp-btn-primary"
+                style={{ width: '100%' }}
+                disabled={appleWalletBusy}
+                onClick={() => void addToAppleWallet()}
+              >
+                {appleWalletBusy ? '…' : t('member.addToAppleWallet', '加入 Apple 钱包')}
+              </button>
+              <p className="mp-hint" style={{ marginTop: 8, marginBottom: 0 }}>
+                {t('member.addToAppleWalletHint')}
+              </p>
+            </div>
+          ) : null}
         </div>
 
         {walletHint ? <div className="mp-alert mp-alert-ok">{walletHint}</div> : null}

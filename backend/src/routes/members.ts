@@ -42,6 +42,9 @@ import {
   toMemberPublicJson,
 } from '../utils/platformMemberIdentity';
 import { creditPlatformMemberWallet } from '../utils/platformMemberWalletOps';
+import { getAppleWalletCertStatus } from '../utils/appleWallet/certs';
+import { getAppleWalletSettings } from '../utils/appleWallet/config';
+import { buildPlatformMemberPkpass } from '../utils/appleWallet/buildPass';
 
 const MEMBER_TOPUP_MIN_EUR = 1;
 const MEMBER_TOPUP_MAX_EUR = 500;
@@ -698,6 +701,57 @@ router.get('/me', memberAuthMiddleware, async (req: Request, res: Response, next
     }).lean();
     if (!doc) throw createAppError('NOT_FOUND', '会员不存在');
     res.json(toMemberPublicJson(doc as never));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** 顾客端是否可领取 Apple Wallet 会员卡（平台会员 + 平台已启用 + 证书就绪） */
+router.get('/me/apple-wallet', memberAuthMiddleware, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const platform = await findPlatformMemberById(req.memberAuth!.memberId);
+    const settings = await getAppleWalletSettings();
+    const certificates = getAppleWalletCertStatus();
+    const available = !!(platform && platform.status === 'active' && settings.enabled && certificates.ready);
+    res.json({
+      available,
+      enabled: settings.enabled,
+      certificatesReady: certificates.ready,
+      isPlatformMember: !!(platform && platform.status === 'active'),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/me/apple-wallet-pass', memberAuthMiddleware, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const platform = await findPlatformMemberById(req.memberAuth!.memberId);
+    if (!platform || platform.status !== 'active') {
+      throw createAppError('VALIDATION_ERROR', '仅平台会员可添加 Apple Wallet 会员卡');
+    }
+    const settings = await getAppleWalletSettings();
+    if (!settings.enabled) {
+      throw createAppError('VALIDATION_ERROR', '平台尚未开放 Apple Wallet 会员卡');
+    }
+    if (!getAppleWalletCertStatus().ready) {
+      throw createAppError('SERVICE_UNAVAILABLE', 'Apple Wallet 证书未配置，请联系平台');
+    }
+    await ensurePlatformMemberNo(platform._id);
+    const fresh = (await findPlatformMemberById(platform._id)) || platform;
+    const buf = await buildPlatformMemberPkpass(
+      {
+        id: String(fresh._id),
+        memberNo: fresh.memberNo,
+        displayName: fresh.displayName,
+        phone: fresh.phone,
+        creditBalance: fresh.creditBalance,
+      },
+      settings,
+    );
+    res.setHeader('Content-Type', 'application/vnd.apple.pkpass');
+    res.setHeader('Content-Disposition', `attachment; filename="lzfood-member-${String(fresh._id)}.pkpass"`);
+    res.send(buf);
   } catch (err) {
     next(err);
   }

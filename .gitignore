@@ -9,6 +9,13 @@ backend/uploads/
 demo/
 backend/seed-admin.ts
 
+# Apple Wallet / signing secrets (never commit)
+*.p12
+*.pem
+**/AppleWWDR*.cer
+backend/certs/
+ios-cashier-app/
+
 # Local snapshots (git bundle / tar); do not commit
 backups/
 
