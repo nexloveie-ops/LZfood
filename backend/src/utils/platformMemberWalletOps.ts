@@ -11,6 +11,7 @@ import {
   type PlatformMemberLean,
 } from './platformMemberIdentity';
 import type { MemberPaymentResolution } from './checkoutMemberResolve';
+import { notifyAppleWalletPassBalanceChanged } from './appleWallet/passUpdate';
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
@@ -128,6 +129,7 @@ export async function debitPlatformMemberWallet(params: {
   }).catch((e) => {
     console.error('[twilio] platform member spend SMS failed:', e instanceof Error ? e.message : e);
   });
+  void notifyAppleWalletPassBalanceChanged(params.memberId);
   return { balanceAfter };
 }
 
@@ -172,6 +174,7 @@ export async function debitPlatformGuestWalletByAdmin(params: {
     balanceAfter,
     note: params.note || '',
   });
+  void notifyAppleWalletPassBalanceChanged(params.memberId);
   return { balanceAfter };
 }
 
@@ -297,6 +300,7 @@ export async function creditPlatformMemberWallet(params: {
     stripePaymentIntentId: piId || undefined,
     topUpCardId: cardId || undefined,
   });
+  void notifyAppleWalletPassBalanceChanged(params.memberId);
   return { balanceAfter };
 }
 

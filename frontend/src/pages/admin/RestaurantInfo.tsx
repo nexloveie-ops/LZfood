@@ -42,6 +42,10 @@ export default function RestaurantInfo() {
     return init as Record<ConfigKey, string>;
   });
   const [logoUrl, setLogoUrl] = useState('');
+  const [restaurantLat, setRestaurantLat] = useState('');
+  const [restaurantLng, setRestaurantLng] = useState('');
+  const [geocoding, setGeocoding] = useState(false);
+  const [geocodeMsg, setGeocodeMsg] = useState<string | null>(null);
   const [dineInWorkflowMode, setDineInWorkflowMode] = useState<'pay_first' | 'pay_after'>('pay_first');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -134,6 +138,8 @@ export default function RestaurantInfo() {
           return next;
         });
         if (data.restaurant_logo) setLogoUrl(data.restaurant_logo);
+        if (data.restaurant_lat !== undefined) setRestaurantLat(data.restaurant_lat);
+        if (data.restaurant_lng !== undefined) setRestaurantLng(data.restaurant_lng);
         if (data.dine_in_workflow_mode === 'pay_after' || data.dine_in_workflow_mode === 'pay_first') {
           setDineInWorkflowMode(data.dine_in_workflow_mode);
         }
@@ -148,6 +154,40 @@ export default function RestaurantInfo() {
     setSaved(false);
   };
 
+  const handleGeocodeFromAddress = async () => {
+    if (!token) return;
+    setGeocoding(true);
+    setGeocodeMsg(null);
+    setSaved(false);
+    try {
+      const name = (values.restaurant_name_en || values.restaurant_name_zh || '').trim();
+      const addr = (values.restaurant_address_en || values.restaurant_address || '').trim();
+      const address = [name, addr].filter(Boolean).join(', ');
+      const res = await apiFetch('/api/admin/geocode-from-address', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(address ? { address } : {}),
+      });
+      const data = await res.json().catch(() => ({} as Record<string, unknown>));
+      if (!res.ok) {
+        const errMsg = (data as { error?: { message?: string } })?.error?.message;
+        setGeocodeMsg(typeof errMsg === 'string' ? errMsg : t('admin.restaurantGeocodeFail'));
+        return;
+      }
+      if (typeof data.lat === 'number' && typeof data.lng === 'number') {
+        setRestaurantLat(String(data.lat));
+        setRestaurantLng(String(data.lng));
+        setGeocodeMsg(t('admin.restaurantGeocodeOk'));
+      } else {
+        setGeocodeMsg(t('admin.restaurantGeocodeFail'));
+      }
+    } catch {
+      setGeocodeMsg(t('admin.restaurantGeocodeFail'));
+    } finally {
+      setGeocoding(false);
+    }
+  };
+
   const handleSave = async () => {
     setSaving(true);
     setSaved(false);
@@ -155,6 +195,8 @@ export default function RestaurantInfo() {
       const body: Record<string, string> = {};
       CONFIG_KEYS.forEach(k => { body[k] = values[k]; });
       body.dine_in_workflow_mode = dineInWorkflowMode;
+      body.restaurant_lat = restaurantLat.trim();
+      body.restaurant_lng = restaurantLng.trim();
       const res = await apiFetch('/api/admin/config', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -162,6 +204,7 @@ export default function RestaurantInfo() {
       });
       if (res.ok) {
         setSaved(true);
+        setGeocodeMsg(null);
         await refreshRestaurantConfig(storeSlug);
       }
     } catch { /* ignore */ }
@@ -323,6 +366,50 @@ export default function RestaurantInfo() {
                   />
                 )}
               </div>
+              {key === 'restaurant_address_en' && (
+                <div style={{ marginTop: 16 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+                    <label style={{ width: 180, fontSize: 14, fontWeight: 500, color: 'var(--text-secondary)', flexShrink: 0 }}>
+                      {t('admin.restaurantLatLng')}
+                    </label>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, flexWrap: 'wrap', maxWidth: 520 }}>
+                      <input
+                        className="input"
+                        inputMode="decimal"
+                        placeholder={t('admin.restaurantLat')}
+                        value={restaurantLat}
+                        onChange={e => { setRestaurantLat(e.target.value); setSaved(false); setGeocodeMsg(null); }}
+                        style={{ width: 140 }}
+                      />
+                      <input
+                        className="input"
+                        inputMode="decimal"
+                        placeholder={t('admin.restaurantLng')}
+                        value={restaurantLng}
+                        onChange={e => { setRestaurantLng(e.target.value); setSaved(false); setGeocodeMsg(null); }}
+                        style={{ width: 140 }}
+                      />
+                      <button
+                        type="button"
+                        className="btn btn-outline"
+                        style={{ fontSize: 13 }}
+                        disabled={geocoding}
+                        onClick={() => void handleGeocodeFromAddress()}
+                      >
+                        {geocoding ? t('common.loading') : t('admin.restaurantGeocodeBtn')}
+                      </button>
+                    </div>
+                  </div>
+                  <div style={{ marginLeft: 196, marginTop: 6, fontSize: 12, color: 'var(--text-light)', lineHeight: 1.5, maxWidth: 520 }}>
+                    {t('admin.restaurantLatLngHint')}
+                  </div>
+                  {geocodeMsg && (
+                    <div style={{ marginLeft: 196, marginTop: 4, fontSize: 12, color: geocodeMsg === t('admin.restaurantGeocodeOk') ? 'green' : 'var(--danger, #c0392b)' }}>
+                      {geocodeMsg}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           ))}
         </div>

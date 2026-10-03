@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import { getModels } from '../../getModels';
 import { googleGeocodeAddress } from '../googleGeocode';
+import { parseStoredRestaurantLatLng } from '../storeLatLng';
 
 export type PassStoreLocation = {
   storeId: string;
@@ -15,7 +16,11 @@ type CacheEntry = { lat: number; lng: number; at: number };
 const cache = new Map<string, CacheEntry>();
 const TTL_MS = 60 * 60 * 1000;
 
-async function storeGeocodeQuery(storeId: mongoose.Types.ObjectId): Promise<{ query: string; label: string } | null> {
+async function loadStoreGeoMeta(storeId: mongoose.Types.ObjectId): Promise<{
+  map: Record<string, string>;
+  label: string;
+  query: string | null;
+} | null> {
   const { SystemConfig, Store } = getModels() as {
     SystemConfig: mongoose.Model<any>;
     Store: mongoose.Model<any>;
@@ -34,20 +39,31 @@ async function storeGeocodeQuery(storeId: mongoose.Types.ObjectId): Promise<{ qu
   } | null;
   const name = (map.restaurant_name_en || map.restaurant_name_zh || storeDoc?.displayName || '').trim();
   const addr = (map.restaurant_address_en || map.restaurant_address || '').trim();
-  if (!addr) return null;
   const label = name || storeDoc?.slug || 'LZFOOD';
-  return { query: [name, addr].filter(Boolean).join(', '), label };
+  return {
+    map,
+    label,
+    query: addr ? [name, addr].filter(Boolean).join(', ') : null,
+  };
 }
 
 async function resolveLatLng(
   storeId: mongoose.Types.ObjectId,
-  apiKey: string,
+  apiKey: string | undefined,
 ): Promise<{ lat: number; lng: number; label: string } | null> {
+  const meta = await loadStoreGeoMeta(storeId);
+  if (!meta) return null;
+
+  const stored = parseStoredRestaurantLatLng(meta.map);
+  if (stored) {
+    return { lat: stored.lat, lng: stored.lng, label: meta.label };
+  }
+
+  if (!meta.query || !apiKey) return null;
+
   const key = storeId.toString();
   const now = Date.now();
   const hit = cache.get(key);
-  const meta = await storeGeocodeQuery(storeId);
-  if (!meta) return null;
   if (hit && now - hit.at < TTL_MS) {
     return { lat: hit.lat, lng: hit.lng, label: meta.label };
   }
@@ -57,10 +73,9 @@ async function resolveLatLng(
   return { lat: geo.lat, lng: geo.lng, label: meta.label };
 }
 
-/** 解析最多 10 家店坐标，供 Wallet locations 使用 */
+/** 解析最多 10 家店坐标，供 Wallet locations 使用（优先后台保存的经纬度） */
 export async function resolvePassStoreLocations(storeIds: string[]): Promise<PassStoreLocation[]> {
   const apiKey = process.env.GoogleGeo?.trim();
-  if (!apiKey) return [];
 
   const { Store } = getModels() as { Store: mongoose.Model<any> };
   const ids = storeIds.filter((id) => mongoose.isValidObjectId(id)).slice(0, 10);

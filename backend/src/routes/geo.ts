@@ -11,41 +11,43 @@ import { googleGeocodeAddress } from '../utils/googleGeocode';
 import { haversineKm } from '../utils/haversineKm';
 import { resolveAddressToEircode } from '../utils/resolveAddressEircode';
 import { lookupEircodePlace } from '../utils/resolveEircodeLookup';
+import { parseStoredRestaurantLatLng } from '../utils/storeLatLng';
 
-type StoreGeoCache = { lat: number; lng: number; at: number };
+type StoreGeoCache = { lat: number; lng: number; at: number; source: 'stored' | 'geocode' };
 const storeLatLngCache = new Map<string, StoreGeoCache>();
 const STORE_GEO_TTL_MS = 60 * 60 * 1000;
 
-async function resolveStoreGeocodeQuery(storeId: mongoose.Types.ObjectId): Promise<string | null> {
-  const { SystemConfig, Store } = getModels() as {
-    SystemConfig: mongoose.Model<any>;
-    Store: mongoose.Model<any>;
-  };
-  const configs = await SystemConfig.find({ storeId }).lean();
-  const map: Record<string, string> = {};
-  for (const c of configs) {
-    map[c.key] = c.value;
-  }
-  const storeDoc = (await Store.findById(storeId).lean()) as { displayName?: string } | null;
-  const name = (
-    map.restaurant_name_en ||
-    map.restaurant_name_zh ||
-    storeDoc?.displayName ||
-    ''
-  ).trim();
-  const addr = (map.restaurant_address_en || map.restaurant_address || '').trim();
-  if (!addr) return null;
-  const parts = [name, addr].filter(Boolean);
-  return parts.join(', ');
-}
-
-async function getStoreAddressHint(storeId: mongoose.Types.ObjectId): Promise<string> {
+async function loadStoreConfigMap(storeId: mongoose.Types.ObjectId): Promise<Record<string, string>> {
   const { SystemConfig } = getModels() as { SystemConfig: mongoose.Model<any> };
   const configs = await SystemConfig.find({ storeId }).lean();
   const map: Record<string, string> = {};
   for (const c of configs) {
     map[c.key] = c.value;
   }
+  return map;
+}
+
+async function resolveStoreGeocodeQuery(
+  storeId: mongoose.Types.ObjectId,
+  map?: Record<string, string>,
+): Promise<string | null> {
+  const cfg = map ?? (await loadStoreConfigMap(storeId));
+  const { Store } = getModels() as { Store: mongoose.Model<any> };
+  const storeDoc = (await Store.findById(storeId).lean()) as { displayName?: string } | null;
+  const name = (
+    cfg.restaurant_name_en ||
+    cfg.restaurant_name_zh ||
+    storeDoc?.displayName ||
+    ''
+  ).trim();
+  const addr = (cfg.restaurant_address_en || cfg.restaurant_address || '').trim();
+  if (!addr) return null;
+  const parts = [name, addr].filter(Boolean);
+  return parts.join(', ');
+}
+
+async function getStoreAddressHint(storeId: mongoose.Types.ObjectId): Promise<string> {
+  const map = await loadStoreConfigMap(storeId);
   return (map.restaurant_address_en || map.restaurant_address || '').trim();
 }
 
@@ -54,13 +56,20 @@ async function getStoreLatLng(
   apiKey: string,
 ): Promise<{ lat: number; lng: number }> {
   const key = storeId.toString();
+  const map = await loadStoreConfigMap(storeId);
+  const stored = parseStoredRestaurantLatLng(map);
+  if (stored) {
+    storeLatLngCache.set(key, { lat: stored.lat, lng: stored.lng, at: Date.now(), source: 'stored' });
+    return stored;
+  }
+
   const now = Date.now();
   const hit = storeLatLngCache.get(key);
-  if (hit && now - hit.at < STORE_GEO_TTL_MS) {
+  if (hit && hit.source === 'geocode' && now - hit.at < STORE_GEO_TTL_MS) {
     return { lat: hit.lat, lng: hit.lng };
   }
 
-  const query = await resolveStoreGeocodeQuery(storeId);
+  const query = await resolveStoreGeocodeQuery(storeId, map);
   if (!query) {
     throw createAppError(
       'VALIDATION_ERROR',
@@ -76,7 +85,7 @@ async function getStoreLatLng(
     );
   }
 
-  storeLatLngCache.set(key, { lat: geo.lat, lng: geo.lng, at: now });
+  storeLatLngCache.set(key, { lat: geo.lat, lng: geo.lng, at: now, source: 'geocode' });
   return { lat: geo.lat, lng: geo.lng };
 }
 

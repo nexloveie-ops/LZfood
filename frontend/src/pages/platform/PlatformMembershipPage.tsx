@@ -231,6 +231,8 @@ export default function PlatformMembershipPage() {
   const [walletSaving, setWalletSaving] = useState(false);
   const [walletSettings, setWalletSettings] = useState<WalletSettings | null>(null);
   const [walletCerts, setWalletCerts] = useState<WalletCertStatus | null>(null);
+  const [walletWebServiceURL, setWalletWebServiceURL] = useState<string | null>(null);
+  const [walletPassUpdatesEnabled, setWalletPassUpdatesEnabled] = useState(false);
   const [walletStores, setWalletStores] = useState<WalletStoreOpt[]>([]);
   const [walletLocPreview, setWalletLocPreview] = useState<Array<{ storeId: string; displayName: string; ok: boolean }>>([]);
   const [walletPassBusyId, setWalletPassBusyId] = useState<string | null>(null);
@@ -510,6 +512,8 @@ export default function PlatformMembershipPage() {
       const data = await res.json();
       setWalletSettings(normalizeWalletSettings(data.settings));
       setWalletCerts(data.certificates);
+      setWalletWebServiceURL(typeof data.webServiceURL === 'string' ? data.webServiceURL : null);
+      setWalletPassUpdatesEnabled(!!data.passUpdatesEnabled);
       setWalletStores(Array.isArray(data.stores) ? data.stores : []);
       setWalletLocPreview(Array.isArray(data.locationPreview) ? data.locationPreview : []);
     } finally {
@@ -539,7 +543,9 @@ export default function PlatformMembershipPage() {
       const data = await res.json();
       setWalletSettings(normalizeWalletSettings(data.settings));
       setWalletCerts(data.certificates);
-      setMsg('Apple Wallet 会员卡设置已保存');
+      setWalletWebServiceURL(typeof data.webServiceURL === 'string' ? data.webServiceURL : null);
+      setWalletPassUpdatesEnabled(!!data.passUpdatesEnabled);
+      setMsg('Apple Wallet 会员卡设置已保存（已通知已安装卡更新样式）');
       await loadWallet();
     } finally {
       setWalletSaving(false);
@@ -774,6 +780,18 @@ export default function PlatformMembershipPage() {
                 <div>
                   P12 {walletCerts?.hasP12 ? 'OK' : '缺'} · 密码 {walletCerts?.hasPassword ? 'OK' : '缺'} · WWDR{' '}
                   {walletCerts?.hasWwdr ? 'OK' : '缺'}
+                </div>
+                <div style={{ marginTop: 8 }}>
+                  远程更新：{walletPassUpdatesEnabled ? '已启用' : '未启用'}
+                  {walletWebServiceURL ? (
+                    <div style={{ fontSize: 12, opacity: 0.85, wordBreak: 'break-all' }}>
+                      webServiceURL：{walletWebServiceURL}
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: 12, opacity: 0.85 }}>
+                      需 HTTPS 公网地址（PORTAL_PUBLIC_ORIGIN 或 APPLE_WALLET_WEB_SERVICE_URL）。本地请用 tunnel。
+                    </div>
+                  )}
                 </div>
               </div>
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 14, fontSize: 14 }}>

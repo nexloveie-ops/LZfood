@@ -24,6 +24,10 @@ export const PlatformMemberSchema = new mongoose.Schema(
     lockedUntil: { type: Date, default: null },
     staffStoreIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Store' }],
     staffBalances: { type: [StaffBalanceSchema], default: [] },
+    /** Apple Wallet PassKit authenticationToken（签发/更新卡时生成，勿泄露） */
+    appleWalletAuthToken: { type: String, default: '', trim: true },
+    /** 余额等变更时间，供 PassKit passesUpdatedSince / If-Modified-Since */
+    appleWalletUpdatedAt: { type: Date, default: null },
   },
   { timestamps: true },
 );

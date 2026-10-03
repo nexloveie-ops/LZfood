@@ -21,6 +21,7 @@ import { CloudPrinterSchema } from './CloudPrinter';
 import { PlatformConfigSchema } from './PlatformConfig';
 import { PlatformMemberSchema } from './PlatformMember';
 import { PlatformMemberWalletTxnSchema } from './PlatformMemberWalletTxn';
+import { AppleWalletRegistrationSchema } from './AppleWalletRegistration';
 import { PlatformTopUpCardSchema } from './PlatformTopUpCard';
 import { PlatformStorePayoutSchema } from './PlatformStorePayout';
 import { PlatformGeoSessionSchema } from './PlatformGeoSession';
@@ -119,6 +120,7 @@ export type LZFoodModels = {
   PlatformConfig: Model<unknown>;
   PlatformMember: Model<unknown>;
   PlatformMemberWalletTxn: Model<unknown>;
+  AppleWalletRegistration: Model<unknown>;
   PlatformTopUpCard: Model<unknown>;
   PlatformStorePayout: Model<unknown>;
   PlatformGeoSession: Model<unknown>;
@@ -221,6 +223,11 @@ export function registerLZFoodModels(conn: Connection): LZFoodModels {
     PlatformMemberWalletTxnSchema,
     'platform_member_wallet_txns',
   );
+  const AppleWalletRegistration = m(
+    'AppleWalletRegistration',
+    AppleWalletRegistrationSchema,
+    'apple_wallet_registrations',
+  );
   const PlatformTopUpCard = m('PlatformTopUpCard', PlatformTopUpCardSchema, 'platform_topup_cards');
   const PlatformStorePayout = m(
     'PlatformStorePayout',
@@ -279,6 +286,7 @@ export function registerLZFoodModels(conn: Connection): LZFoodModels {
     PlatformConfig,
     PlatformMember,
     PlatformMemberWalletTxn,
+    AppleWalletRegistration,
     PlatformTopUpCard,
     PlatformStorePayout,
     PlatformGeoSession,

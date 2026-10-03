@@ -65,6 +65,7 @@ import {
   parseCloudPrintCopies,
   parseCloudPrintEnabled,
 } from '../utils/cloudPrint/config';
+import { googleGeocodeAddress } from '../utils/googleGeocode';
 
 function adminModels() {
   return getModels() as {
@@ -140,6 +141,23 @@ router.get('/features', ...requireAuthSameStore, async (req: Request, res: Respo
   }
 });
 
+function assertLatLngString(key: string, value: string): string {
+  const trimmed = value.trim();
+  if (trimmed === '') return '';
+  const n = Number(trimmed);
+  if (!Number.isFinite(n)) {
+    throw createAppError('VALIDATION_ERROR', `${key} must be a number`);
+  }
+  if (key === 'restaurant_lat' && (n < -90 || n > 90)) {
+    throw createAppError('VALIDATION_ERROR', 'restaurant_lat must be between -90 and 90');
+  }
+  if (key === 'restaurant_lng' && (n < -180 || n > 180)) {
+    throw createAppError('VALIDATION_ERROR', 'restaurant_lng must be between -180 and 180');
+  }
+  // keep a stable string form for SystemConfig
+  return String(n);
+}
+
 // PUT /api/admin/config — Update system configs (requires auth + config:update)
 router.put('/config', ...requireAuthSameStore, requirePermission('config:update'), async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -168,9 +186,11 @@ router.put('/config', ...requireAuthSameStore, requirePermission('config:update'
       if (typeof value !== 'string') {
         throw createAppError('VALIDATION_ERROR', `Value for key "${key}" must be a string`);
       }
+      const stored =
+        key === 'restaurant_lat' || key === 'restaurant_lng' ? assertLatLngString(key, value) : value;
       const doc = await SystemConfig.findOneAndUpdate(
         { storeId: req.storeId, key },
-        { storeId: req.storeId, key, value },
+        { storeId: req.storeId, key, value: stored },
         { upsert: true, new: true },
       );
       results[doc.key] = doc.value;
@@ -181,6 +201,68 @@ router.put('/config', ...requireAuthSameStore, requirePermission('config:update'
     next(err);
   }
 });
+
+/**
+ * POST /api/admin/geocode-from-address
+ * 用 Google Geocoding 根据地址解析经纬度（服务端 GoogleGeo）。
+ * body.address 可选；不传则用本店 restaurant_name + restaurant_address(_en)。
+ */
+router.post(
+  '/geocode-from-address',
+  ...requireAuthSameStore,
+  requirePermission('config:update'),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const apiKey = process.env.GoogleGeo?.trim();
+      if (!apiKey) {
+        throw createAppError('SERVICE_UNAVAILABLE', '未配置 GoogleGeo 环境变量，无法解析地址');
+      }
+
+      let address =
+        typeof (req.body as { address?: unknown })?.address === 'string'
+          ? String((req.body as { address: string }).address).trim()
+          : '';
+
+      if (!address) {
+        const { SystemConfig, Store } = adminModels();
+        const configs = (await SystemConfig.find({ storeId: req.storeId }).lean()) as unknown as Array<{
+          key: string;
+          value: string;
+        }>;
+        const map: Record<string, string> = {};
+        for (const c of configs) {
+          map[c.key] = c.value;
+        }
+        const storeDoc = (await Store.findById(req.storeId).lean()) as { displayName?: string } | null;
+        const name = (
+          map.restaurant_name_en ||
+          map.restaurant_name_zh ||
+          storeDoc?.displayName ||
+          ''
+        ).trim();
+        const addr = (map.restaurant_address_en || map.restaurant_address || '').trim();
+        if (!addr) {
+          throw createAppError('VALIDATION_ERROR', '请先填写餐馆地址');
+        }
+        address = [name, addr].filter(Boolean).join(', ');
+      }
+
+      const geo = await googleGeocodeAddress(address, apiKey);
+      if (!geo) {
+        throw createAppError('VALIDATION_ERROR', '无法解析该地址，请核对后重试');
+      }
+
+      res.json({
+        lat: geo.lat,
+        lng: geo.lng,
+        formattedAddress: geo.formattedAddress,
+        query: address,
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 // GET /api/admin/stripe-config — Admin-only; publishable from DB + whether secret exists (never returns secret)
 router.get('/stripe-config', ...requireAuthSameStore, requirePermission('config:update'), async (req: Request, res: Response, next: NextFunction) => {

@@ -44,7 +44,8 @@ import {
 import { creditPlatformMemberWallet } from '../utils/platformMemberWalletOps';
 import { getAppleWalletCertStatus } from '../utils/appleWallet/certs';
 import { getAppleWalletSettings } from '../utils/appleWallet/config';
-import { buildPlatformMemberPkpass } from '../utils/appleWallet/buildPass';
+import { issuePlatformMemberPkpass } from '../utils/appleWallet/issuePass';
+import { resolveAppleWalletWebServiceUrl } from '../utils/appleWallet/webServiceUrl';
 
 const MEMBER_TOPUP_MIN_EUR = 1;
 const MEMBER_TOPUP_MAX_EUR = 500;
@@ -713,10 +714,12 @@ router.get('/me/apple-wallet', memberAuthMiddleware, async (req: Request, res: R
     const settings = await getAppleWalletSettings();
     const certificates = getAppleWalletCertStatus();
     const available = !!(platform && platform.status === 'active' && settings.enabled && certificates.ready);
+    const webServiceURL = resolveAppleWalletWebServiceUrl();
     res.json({
       available,
       enabled: settings.enabled,
       certificatesReady: certificates.ready,
+      passUpdatesEnabled: !!webServiceURL && certificates.ready,
       isPlatformMember: !!(platform && platform.status === 'active'),
     });
   } catch (err) {
@@ -739,9 +742,9 @@ router.get('/me/apple-wallet-pass', memberAuthMiddleware, async (req: Request, r
     }
     await ensurePlatformMemberNo(platform._id);
     const fresh = (await findPlatformMemberById(platform._id)) || platform;
-    const buf = await buildPlatformMemberPkpass(
+    const buf = await issuePlatformMemberPkpass(
       {
-        id: String(fresh._id),
+        _id: fresh._id,
         memberNo: fresh.memberNo,
         displayName: fresh.displayName,
         phone: fresh.phone,

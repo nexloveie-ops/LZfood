@@ -6,6 +6,7 @@ import { PKPass } from 'passkit-generator';
 import { loadAppleWalletSignerMaterial } from './certs';
 import type { AppleWalletSettings } from './config';
 import { resolvePassStoreLocations } from './storeLocations';
+import { memberPassSerialNumber, resolveAppleWalletWebServiceUrl } from './webServiceUrl';
 
 export type PlatformMemberPassInput = {
   id: string;
@@ -13,6 +14,8 @@ export type PlatformMemberPassInput = {
   displayName?: string;
   phone?: string;
   creditBalance?: number;
+  /** PassKit authenticationToken；有 webServiceURL 时必填（≥16） */
+  authenticationToken?: string;
 };
 
 function assetsDir(): string {
@@ -113,6 +116,11 @@ export async function buildPlatformMemberPkpass(
   const name = (member.displayName || '').trim() || member.phone || 'Member';
   const memberNo = member.memberNo != null ? String(member.memberNo) : member.id.slice(-8);
   const qr = memberWalletQrPayload(member.id);
+  const webServiceURL = resolveAppleWalletWebServiceUrl();
+  const authToken = (member.authenticationToken || '').trim();
+  if (webServiceURL && authToken.length < 16) {
+    throw new Error('Apple Wallet authenticationToken 无效（需 ≥16 字符）');
+  }
 
   const pass = new PKPass(
     await loadAssetBuffers(settings),
@@ -125,7 +133,7 @@ export async function buildPlatformMemberPkpass(
       formatVersion: 1,
       passTypeIdentifier: signer.passTypeId,
       teamIdentifier: signer.teamId,
-      serialNumber: `lzfood-member-${member.id}`,
+      serialNumber: memberPassSerialNumber(member.id),
       organizationName: settings.organizationName,
       description: settings.description,
       logoText: settings.logoText,
@@ -135,6 +143,9 @@ export async function buildPlatformMemberPkpass(
       ...(locations.length > 0 && settings.maxDistanceMeters > 0
         ? { maxDistance: settings.maxDistanceMeters }
         : {}),
+      ...(webServiceURL && authToken.length >= 16
+        ? { webServiceURL, authenticationToken: authToken }
+        : {}),
     },
   );
 
@@ -143,6 +154,7 @@ export async function buildPlatformMemberPkpass(
     key: 'balance',
     label: 'BALANCE',
     value: `€${balance.toFixed(2)}`,
+    changeMessage: 'Balance: %@',
   });
   pass.secondaryFields.push(
     {

@@ -6,6 +6,7 @@
 import mongoose from 'mongoose';
 import { getModels } from '../../getModels';
 import { googleGeocodeAddress } from '../googleGeocode';
+import { parseStoredRestaurantLatLng } from '../storeLatLng';
 import {
   FORECAST_TZ,
   WEATHER_CAL_CLIP_HI,
@@ -97,7 +98,10 @@ async function fetchJson(url: string): Promise<any> {
   }
 }
 
-async function loadStoreAddress(storeId: mongoose.Types.ObjectId): Promise<string> {
+async function loadStoreGeoConfig(storeId: mongoose.Types.ObjectId): Promise<{
+  address: string;
+  stored: { lat: number; lng: number } | null;
+}> {
   const { SystemConfig } = getModels() as { SystemConfig: mongoose.Model<any> };
   const configs = (await SystemConfig.find({ storeId }).lean()) as unknown as Array<{
     key: string;
@@ -107,7 +111,10 @@ async function loadStoreAddress(storeId: mongoose.Types.ObjectId): Promise<strin
   for (const c of configs) {
     map[c.key] = c.value;
   }
-  return (map.restaurant_address_en || map.restaurant_address || '').trim();
+  return {
+    address: (map.restaurant_address_en || map.restaurant_address || '').trim(),
+    stored: parseStoredRestaurantLatLng(map),
+  };
 }
 
 export async function resolveStoreLatLng(
@@ -119,7 +126,13 @@ export async function resolveStoreLatLng(
     return { lat: hit.lat, lng: hit.lng, address: hit.address };
   }
 
-  const address = await loadStoreAddress(storeId);
+  const { address, stored } = await loadStoreGeoConfig(storeId);
+  if (stored) {
+    const out = { lat: stored.lat, lng: stored.lng, address: address || `${stored.lat},${stored.lng}`, at: Date.now() };
+    geoCache.set(key, out);
+    return { lat: out.lat, lng: out.lng, address: out.address };
+  }
+
   if (!address) {
     throw new Error('NO_STORE_ADDRESS');
   }

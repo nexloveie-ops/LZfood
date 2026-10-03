@@ -29,6 +29,7 @@ import { createPaymentsRouter } from './routes/payments';
 import couponsRouter from './routes/coupons';
 import voucherCampaignsRouter from './routes/voucherCampaigns';
 import platformRouter from './routes/platform';
+import appleWalletWebServiceRouter from './routes/appleWalletWebService';
 import publicAdsRouter from './routes/publicAds';
 import publicPortalRouter from './routes/publicPortal';
 import publicWidgetRouter from './routes/publicWidget';
@@ -100,6 +101,9 @@ app.use('/api/auth', authRouter);
 
 // 平台管理员（不要求 X-Store-Slug）
 app.use('/api/platform', platformRouter);
+
+// Apple Wallet PassKit web service（设备注册 / 拉取最新卡 / 日志；不要求店铺头）
+app.use('/api/wallet', appleWalletWebServiceRouter);
 
 // 公开接口（不要求 X-Store-Slug）
 app.use('/api/public', publicAdsRouter);

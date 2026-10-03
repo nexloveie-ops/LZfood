@@ -94,6 +94,12 @@ export async function getAppleWalletSettings(): Promise<AppleWalletSettings> {
 export async function saveAppleWalletSettings(input: unknown): Promise<AppleWalletSettings> {
   const next = normalizeAppleWalletSettings(input);
   await upsertPlatformConfig(APPLE_WALLET_SETTINGS_KEY, JSON.stringify(next));
+  // 样式变更后推送已安装卡更新（异步，不阻塞保存）
+  void import('./passUpdate')
+    .then((m) => m.notifyAppleWalletPassStyleChanged())
+    .catch((e) => {
+      console.error('[apple-wallet] style notify import failed:', e instanceof Error ? e.message : e);
+    });
   return next;
 }
 

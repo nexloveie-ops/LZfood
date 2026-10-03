@@ -51,8 +51,9 @@ import {
 } from '../utils/platformStripeConfig';
 import { getAppleWalletCertStatus } from '../utils/appleWallet/certs';
 import { getAppleWalletSettings, saveAppleWalletSettings } from '../utils/appleWallet/config';
-import { buildPlatformMemberPkpass } from '../utils/appleWallet/buildPass';
+import { issuePlatformMemberPkpass } from '../utils/appleWallet/issuePass';
 import { resolvePassStoreLocations } from '../utils/appleWallet/storeLocations';
+import { resolveAppleWalletWebServiceUrl } from '../utils/appleWallet/webServiceUrl';
 
 const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
@@ -1143,9 +1144,12 @@ router.get('/membership/apple-wallet-config', ...platformAuth, async (_req: Requ
         ok: false,
       }));
     }
+    const webServiceURL = resolveAppleWalletWebServiceUrl();
     res.json({
       settings,
       certificates,
+      webServiceURL,
+      passUpdatesEnabled: !!webServiceURL && certificates.ready,
       stores: stores.map((s) => ({
         _id: s._id.toString(),
         slug: s.slug,
@@ -1162,7 +1166,14 @@ router.put('/membership/apple-wallet-config', ...platformAuth, async (req: Reque
   try {
     const settings = await saveAppleWalletSettings(req.body?.settings ?? req.body);
     const certificates = getAppleWalletCertStatus();
-    res.json({ settings, certificates, message: 'Saved' });
+    const webServiceURL = resolveAppleWalletWebServiceUrl();
+    res.json({
+      settings,
+      certificates,
+      webServiceURL,
+      passUpdatesEnabled: !!webServiceURL && certificates.ready,
+      message: 'Saved',
+    });
   } catch (err) {
     next(err);
   }
@@ -1232,9 +1243,9 @@ router.get(
       if ((doc as { status?: string }).status !== 'active') {
         throw createAppError('VALIDATION_ERROR', '会员未激活');
       }
-      const buf = await buildPlatformMemberPkpass(
+      const buf = await issuePlatformMemberPkpass(
         {
-          id: String((doc as { _id: mongoose.Types.ObjectId })._id),
+          _id: (doc as { _id: mongoose.Types.ObjectId })._id,
           memberNo: (doc as { memberNo?: number }).memberNo,
           displayName: (doc as { displayName?: string }).displayName,
           phone: (doc as { phone?: string }).phone,
