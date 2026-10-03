@@ -17,7 +17,8 @@ function readEnvFileOrBase64(pathKey: string, b64Key: string): Buffer | null {
     const resolved = path.isAbsolute(filePath) ? filePath : path.resolve(process.cwd(), filePath);
     if (fs.existsSync(resolved)) return fs.readFileSync(resolved);
   }
-  const b64 = process.env[b64Key]?.trim();
+  // Secret Manager 可能带换行/空白；去掉空白后再解码
+  const b64 = process.env[b64Key]?.replace(/\s+/g, '');
   if (b64) return Buffer.from(b64, 'base64');
   return null;
 }
@@ -86,7 +87,8 @@ export function loadAppleWalletSignerMaterial(): AppleWalletSignerMaterial {
   if (!wwdrRaw) {
     throw new Error('未配置 APPLE_WWDR_CER_PATH 或 APPLE_WWDR_CER_BASE64');
   }
-  const password = process.env.APPLE_PASS_P12_PASSWORD ?? '';
+  // Secret 挂载时密码末尾常带 \n，不 trim 会导致 PKCS#12 MAC 校验失败
+  const password = (process.env.APPLE_PASS_P12_PASSWORD ?? '').trim();
   const { certPem, keyPem } = extractFromP12(p12, password);
   return {
     wwdrPem: derOrPemToPem(wwdrRaw, 'CERTIFICATE'),

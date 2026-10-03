@@ -756,11 +756,11 @@ router.get('/me/apple-wallet-pass', memberAuthMiddleware, async (req: Request, r
     res.setHeader('Content-Disposition', `attachment; filename="lzfood-member-${String(fresh._id)}.pkpass"`);
     res.send(buf);
   } catch (err) {
-    next(err);
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('[apple-wallet] issue pass failed:', msg);
+    next(err instanceof Error && (err as { statusCode?: number }).statusCode ? err : createAppError('INTERNAL_ERROR', `无法生成会员卡：${msg}`));
   }
 });
-
-router.get('/me/transactions', memberAuthMiddleware, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { MemberWalletTxn, PlatformMemberWalletTxn } = mModels();
     const midRaw = req.memberAuth!.memberId;

@@ -21,6 +21,8 @@ WORKDIR /app
 # Copy backend build output and dependencies
 COPY --from=backend-build /app/backend/dist ./dist
 COPY --from=backend-build /app/backend/package*.json ./
+# Apple Wallet 默认 icon/logo（buildPass 从 /app/assets/apple-wallet 读取）
+COPY --from=backend-build /app/backend/assets ./assets
 RUN npm ci --omit=dev --ignore-scripts
 
 # Copy frontend build output to public directory for express.static

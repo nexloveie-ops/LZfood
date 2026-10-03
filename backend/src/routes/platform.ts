@@ -1260,7 +1260,13 @@ router.get(
       );
       res.send(buf);
     } catch (err) {
-      next(err);
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[apple-wallet] platform issue pass failed:', msg);
+      next(
+        err instanceof Error && (err as { statusCode?: number }).statusCode
+          ? err
+          : createAppError('INTERNAL_ERROR', `无法生成会员卡：${msg}`),
+      );
     }
   },
 );
