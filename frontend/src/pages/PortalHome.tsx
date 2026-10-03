@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import PortalAuthSection from '../components/portal/PortalAuthSection';
 import { portalLogoSrc } from '../constants/portalBrand';
@@ -15,8 +15,11 @@ const PRO_PLAN_KEYS = ['p1', 'p2', 'p3', 'p4', 'p5'] as const;
 const STEP_KEYS = ['s1', 's2', 's3'] as const;
 const STAT_KEYS = ['channels', 'web', 'free', 'realtime'] as const;
 
+const TICKET_TONES = ['dine', 'take', 'del'] as const;
+
 export default function PortalHome() {
   const { t, i18n } = useTranslation();
+  const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const lang = i18n.language?.startsWith('zh') ? 'zh-CN' : 'en-US';
@@ -24,15 +27,34 @@ export default function PortalHome() {
     document.title = `${t('portal.brandName')} — ${t('portal.tagline')}`;
   }, [i18n.language, t]);
 
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduce) return;
+    const onMove = (e: PointerEvent) => {
+      root.style.setProperty('--spot-x', `${e.clientX}px`);
+      root.style.setProperty('--spot-y', `${e.clientY}px`);
+    };
+    window.addEventListener('pointermove', onMove, { passive: true });
+    return () => window.removeEventListener('pointermove', onMove);
+  }, []);
+
   const setLanguage = (lng: string) => {
     void i18n.changeLanguage(lng);
     persistUserLanguage(lng);
   };
 
   const demoHref = `/${DEMO_SLUG}`;
+  const tickerItems = t('portal.ticker', { returnObjects: true });
+  const ticker = Array.isArray(tickerItems) ? tickerItems.map(String) : [];
+  const tickerLoop = [...ticker, ...ticker];
 
   return (
-    <div className="portal-light">
+    <div className="portal-light" ref={rootRef}>
+      <div className="portal-grain" aria-hidden />
+      <div className="portal-spot" aria-hidden />
+
       <header className="portal-light-header">
         <a href="/" className="portal-light-brand">
           <span className="portal-light-logo-wrap">
@@ -73,6 +95,7 @@ export default function PortalHome() {
           <div>
             <span className="portal-light-pill">{t('portal.pill')}</span>
             <h1 className="portal-light-h1">{t('portal.hero')}</h1>
+            <p className="portal-light-h1-alt">{t('portal.heroAlt')}</p>
             <p className="portal-light-lead">{t('portal.lead')}</p>
             <div className="portal-light-hero-cta">
               <a className="portal-light-btn portal-light-btn--primary" href="#get-started">
@@ -84,30 +107,63 @@ export default function PortalHome() {
             </div>
           </div>
 
-          <aside className="portal-light-preview" aria-label={t('portal.previewLabel')}>
-            <div className="portal-light-preview-head">
-              <span className="portal-light-preview-dot" />
-              <span className="portal-light-preview-dot" />
-              <span className="portal-light-preview-dot" />
-              {t('portal.previewLabel')}
+          <aside className="portal-pos" aria-label={t('portal.previewLabel')}>
+            <div className="portal-pos-shell">
+              <div className="portal-pos-screen">
+                <div className="portal-pos-bar">
+                  <span className="portal-pos-live" />
+                  {t('portal.previewLabel')}
+                  <div className="portal-pos-lang" role="group" aria-label={t('common.language')}>
+                    <button
+                      type="button"
+                      className={i18n.language?.startsWith('en') ? 'is-active' : ''}
+                      onClick={() => setLanguage('en-US')}
+                    >
+                      {t('portal.langEn')}
+                    </button>
+                    <button
+                      type="button"
+                      className={i18n.language?.startsWith('zh') ? 'is-active' : ''}
+                      onClick={() => setLanguage('zh-CN')}
+                    >
+                      {t('portal.langZh')}
+                    </button>
+                  </div>
+                  <span className="portal-pos-clock">{t('portal.previewClock')}</span>
+                </div>
+                <ul className="portal-pos-tickets" key={i18n.language}>
+                  {TICKET_TONES.map((tone, i) => (
+                    <li key={tone} className={`portal-pos-ticket portal-pos-ticket--${tone}`} style={{ animationDelay: `${i * 0.28}s` }}>
+                      <div className="portal-pos-ticket-ch">
+                        <b>{t(`portal.previewTickets.${tone}.channel`)}</b>
+                      </div>
+                      <strong>{t(`portal.previewTickets.${tone}.title`)}</strong>
+                      <em>{t(`portal.previewTickets.${tone}.meta`)}</em>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             </div>
-            <div className="portal-light-preview-row">
-              <span>🍽️</span>
-              <strong>{t('portal.previewRow1')}</strong>
-              <span className="portal-light-preview-tag">{t('portal.previewLive')}</span>
-            </div>
-            <div className="portal-light-preview-row">
-              <span>🥡</span>
-              <strong>{t('portal.previewRow2')}</strong>
-              <span className="portal-light-preview-tag">{t('portal.previewLive')}</span>
-            </div>
-            <div className="portal-light-preview-row">
-              <span>🚚</span>
-              <strong>{t('portal.previewRow3')}</strong>
-              <span className="portal-light-preview-tag">{t('portal.previewLive')}</span>
+            <div className="portal-receipt" aria-hidden>
+              <div className="portal-receipt-paper">
+                <span className="portal-receipt-brand">LZFOOD</span>
+                <span>{t('portal.previewReceipt.table')}</span>
+                <span>{t('portal.previewReceipt.dish')}</span>
+                <span>{t('portal.previewReceipt.side')}</span>
+                <i />
+                <span>€24.80</span>
+              </div>
             </div>
           </aside>
         </section>
+
+        <div className="portal-ticker" aria-hidden>
+          <div className="portal-ticker-track">
+            {tickerLoop.map((item, i) => (
+              <span key={`${item}-${i}`}>{item}</span>
+            ))}
+          </div>
+        </div>
 
         <section className="portal-light-stats" aria-label={t('portal.statsAria')}>
           {STAT_KEYS.map((key) => (
@@ -120,16 +176,16 @@ export default function PortalHome() {
 
         <PortalAuthSection />
 
-        <section id="benefits" aria-labelledby="benefits-heading">
+        <section id="benefits" className="portal-reveal" aria-labelledby="benefits-heading">
           <div className="portal-light-section-head">
             <h2 id="benefits-heading">{t('portal.benefitsTitle')}</h2>
             <p>{t('portal.benefitsSubtitle')}</p>
           </div>
           <div className="portal-light-benefits">
-            {BENEFIT_KEYS.map((key) => (
+            {BENEFIT_KEYS.map((key, i) => (
               <article key={key} className="portal-light-benefit">
                 <div className="portal-light-benefit-icon" aria-hidden>
-                  {t(`portal.benefits.${key}.icon`)}
+                  {String(i + 1).padStart(2, '0')}
                 </div>
                 <h3>{t(`portal.benefits.${key}.title`)}</h3>
                 <p>{t(`portal.benefits.${key}.desc`)}</p>
@@ -138,16 +194,16 @@ export default function PortalHome() {
           </div>
         </section>
 
-        <section id="features" aria-labelledby="features-heading">
+        <section id="features" className="portal-reveal" aria-labelledby="features-heading">
           <div className="portal-light-section-head">
             <h2 id="features-heading">{t('portal.featuresTitle')}</h2>
             <p>{t('portal.featuresSubtitle')}</p>
           </div>
           <div className="portal-light-features">
-            {FEATURE_KEYS.map((key) => (
+            {FEATURE_KEYS.map((key, i) => (
               <article key={key} className="portal-light-feature">
                 <div className="portal-light-feature-icon" aria-hidden>
-                  {t(`portal.features.${key}.icon`)}
+                  {String(i + 1).padStart(2, '0')}
                 </div>
                 <div>
                   <h3>{t(`portal.features.${key}.title`)}</h3>
@@ -158,7 +214,7 @@ export default function PortalHome() {
           </div>
         </section>
 
-        <section id="plans" aria-labelledby="plans-heading">
+        <section id="plans" className="portal-reveal" aria-labelledby="plans-heading">
           <div className="portal-light-section-head">
             <h2 id="plans-heading">{t('portal.plansTitle')}</h2>
             <p>{t('portal.plansSubtitle')}</p>
@@ -193,7 +249,7 @@ export default function PortalHome() {
           </div>
         </section>
 
-        <section aria-labelledby="steps-heading">
+        <section className="portal-reveal" aria-labelledby="steps-heading">
           <div className="portal-light-section-head">
             <h2 id="steps-heading">{t('portal.stepsTitle')}</h2>
             <p>{t('portal.stepsSubtitle')}</p>
@@ -209,7 +265,7 @@ export default function PortalHome() {
           </div>
         </section>
 
-        <section id="contact" className="portal-light-contact" aria-labelledby="contact-heading">
+        <section id="contact" className="portal-light-contact portal-reveal" aria-labelledby="contact-heading">
           <div className="portal-light-contact-inner">
             <div className="portal-light-contact-text">
               <h2 id="contact-heading">{t('portal.contactTitle')}</h2>

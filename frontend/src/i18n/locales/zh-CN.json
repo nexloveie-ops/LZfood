@@ -1130,15 +1130,28 @@
     "navPlans": "套餐",
     "navContact": "联系我们",
     "hero": "翻台更快，菜单更清，四个渠道一个收银台",
+    "heroAlt": "Faster tables. One till for every channel.",
     "lead": "客人手机扫码点菜；堂食、外卖、电话、送餐订单实时进统一订单中心——加料、套餐、过敏原下单前就看得到。",
     "ctaContact": "联系我们",
     "ctaDemo": "查看演示门店",
     "ctaPro": "了解 LZ Pro",
     "previewLabel": "订单中心预览",
+    "previewLive": "实时",
+    "previewClock": "14:32",
+    "previewTickets": {
+      "dine": { "channel": "堂食", "title": "12 号桌 · 宫保鸡丁 ×2", "meta": "座位 2" },
+      "take": { "channel": "外卖", "title": "外卖 #47 · 叉烧饭", "meta": "待取" },
+      "del": { "channel": "送餐", "title": "D01 T2X2 · 出餐中", "meta": "配送中" }
+    },
+    "previewReceipt": {
+      "table": "12 号桌 · 座位 2",
+      "dish": "宫保鸡丁  ×2",
+      "side": "米饭"
+    },
+    "ticker": ["堂食", "外卖", "电话", "送餐", "中 / EN", "Eircode", "VAT", "会员储值"],
     "previewRow1": "12 号桌 · 座位 2",
     "previewRow2": "外卖 #47",
     "previewRow3": "送餐 · 配送中",
-    "previewLive": "实时",
     "statsAria": "产品亮点",
     "stats": {
       "channels": { "value": "4", "label": "渠道统一接单" },

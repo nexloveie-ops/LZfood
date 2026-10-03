@@ -1131,15 +1131,28 @@
     "navPlans": "Plans",
     "navContact": "Contact",
     "hero": "Faster tables. Clearer menus. One cashier for every channel.",
+    "heroAlt": "翻台更快 · 四渠道一个收银台",
     "lead": "Guests order from their phones; dine-in, takeaway, phone, and delivery land in one live order center—with add-ons, bundles, and allergens shown upfront.",
     "ctaContact": "Contact us",
     "ctaDemo": "View demo store",
     "ctaPro": "Ask about LZ Pro",
     "previewLabel": "Live order center",
+    "previewLive": "Live",
+    "previewClock": "14:32",
+    "previewTickets": {
+      "dine": { "channel": "Dine-in", "title": "Table 12 · Kung Pao ×2", "meta": "Seat 2" },
+      "take": { "channel": "Takeaway", "title": "Takeaway #47 · BBQ pork rice", "meta": "Ready" },
+      "del": { "channel": "Delivery", "title": "D01 T2X2 · Preparing", "meta": "Out" }
+    },
+    "previewReceipt": {
+      "table": "TABLE 12 · SEAT 2",
+      "dish": "Kung Pao chicken  ×2",
+      "side": "Steamed rice"
+    },
+    "ticker": ["Dine-in", "Takeaway", "Phone", "Delivery", "EN / 中", "Eircode", "VAT", "Member wallet"],
     "previewRow1": "Table 12 · Seat 2",
     "previewRow2": "Takeaway #47",
     "previewRow3": "Delivery · Out",
-    "previewLive": "Live",
     "statsAria": "Highlights",
     "stats": {
       "channels": { "value": "4", "label": "Order channels in one place" },
