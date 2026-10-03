@@ -1,5 +1,7 @@
 import fs from 'fs';
 import path from 'path';
+import https from 'https';
+import http from 'http';
 import { PKPass } from 'passkit-generator';
 import { loadAppleWalletSignerMaterial } from './certs';
 import type { AppleWalletSettings } from './config';
@@ -17,7 +19,11 @@ function assetsDir(): string {
   return path.join(__dirname, '../../../assets/apple-wallet');
 }
 
-function loadAssetBuffers(): Record<string, Buffer> {
+function uploadsRoot(): string {
+  return path.join(__dirname, '../../../uploads');
+}
+
+function loadDefaultAssetBuffers(): Record<string, Buffer> {
   const dir = assetsDir();
   const names = ['icon.png', 'paula.r@example.org', 'carol.w@example.org', 'logo.png', 'passa.r@example.org'] as const;
   const buffers: Record<string, Buffer> = {};
@@ -32,6 +38,63 @@ function loadAssetBuffers(): Record<string, Buffer> {
   if (!buffers['carol.w@example.org']) buffers['carol.w@example.org'] = buffers['icon.png'];
   if (!buffers['logo.png']) buffers['logo.png'] = buffers['icon.png'];
   if (!buffers['passa.r@example.org']) buffers['passa.r@example.org'] = buffers['logo.png'];
+  return buffers;
+}
+
+function fetchUrlBuffer(url: string, timeoutMs = 8000): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const lib = url.startsWith('https:') ? https : http;
+    const req = lib.get(url, (res) => {
+      if ((res.statusCode || 0) >= 300 && (res.statusCode || 0) < 400 && res.headers.location) {
+        fetchUrlBuffer(res.headers.location, timeoutMs).then(resolve, reject);
+        return;
+      }
+      if ((res.statusCode || 0) >= 400) {
+        reject(new Error(`Logo HTTP ${res.statusCode}`));
+        return;
+      }
+      const chunks: Buffer[] = [];
+      res.on('data', (c) => chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)));
+      res.on('end', () => resolve(Buffer.concat(chunks)));
+    });
+    req.setTimeout(timeoutMs, () => {
+      req.destroy();
+      reject(new Error('Logo download timeout'));
+    });
+    req.on('error', reject);
+  });
+}
+
+/** 将设置里的 logoUrl 解析为 PNG buffer（本地 uploads 或 http） */
+async function resolveLogoBuffer(logoUrl: string): Promise<Buffer | null> {
+  const raw = logoUrl.trim();
+  if (!raw) return null;
+  try {
+    if (raw.startsWith('/uploads/')) {
+      const fp = path.join(uploadsRoot(), raw.replace(/^\/uploads\//, ''));
+      if (fs.existsSync(fp)) return fs.readFileSync(fp);
+      return null;
+    }
+    if (raw.startsWith('http://') || raw.startsWith('https://')) {
+      return await fetchUrlBuffer(raw);
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+async function loadAssetBuffers(settings: AppleWalletSettings): Promise<Record<string, Buffer>> {
+  const buffers = loadDefaultAssetBuffers();
+  const logo = await resolveLogoBuffer(settings.logoUrl || '');
+  if (logo && logo.length > 0) {
+    // Apple 接受 PNG；上传接口限制为 png。同一图复用到 logo/icon 各倍率。
+    buffers['logo.png'] = logo;
+    buffers['passa.r@example.org'] = logo;
+    buffers['icon.png'] = logo;
+    buffers['paula.r@example.org'] = logo;
+    buffers['carol.w@example.org'] = logo;
+  }
   return buffers;
 }
 
@@ -52,7 +115,7 @@ export async function buildPlatformMemberPkpass(
   const qr = memberWalletQrPayload(member.id);
 
   const pass = new PKPass(
-    loadAssetBuffers(),
+    await loadAssetBuffers(settings),
     {
       wwdr: signer.wwdrPem,
       signerCert: signer.signerCertPem,

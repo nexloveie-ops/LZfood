@@ -16,8 +16,8 @@ if (USE_GCS) {
   storage = new Storage(); // Uses Application Default Credentials on Cloud Run
 }
 
-/** 与 `/uploads/:folder/:filename` 路由一致；`postorder-ads` 为平台下单完成页广告图 */
-export type UploadFolder = 'photos' | 'ar' | 'logo' | 'postorder-ads';
+/** 与 `/uploads/:folder/:filename` 路由一致；`postorder-ads` 广告图；`apple-wallet` 会员卡 Logo */
+export type UploadFolder = 'photos' | 'ar' | 'logo' | 'postorder-ads' | 'apple-wallet';
 
 /**
  * Upload a file to GCS or local filesystem.

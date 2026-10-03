@@ -1,5 +1,21 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { platformApiFetch } from '../../api/client';
+import { resolveBackendAssetUrl } from '../../utils/backendPublicUrl';
+import './platform-apple-wallet.css';
+
+function rgbToHex(rgb: string): string {
+  const m = /^rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/i.exec(rgb.trim());
+  if (!m) return '#ffd60a';
+  const to = (n: string) => Number(n).toString(16).padStart(2, '0');
+  return `#${to(m[1])}${to(m[2])}${to(m[3])}`;
+}
+
+function hexToRgb(hex: string): string {
+  const m = /^#([0-9a-fA-F]{6})$/.exec(hex.trim());
+  if (!m) return 'rgb(255, 214, 10)';
+  const n = parseInt(m[1], 16);
+  return `rgb(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255})`;
+}
 
 type StripeHealthBody = {
   ok: boolean;
@@ -203,6 +219,7 @@ export default function PlatformMembershipPage() {
     organizationName: string;
     description: string;
     logoText: string;
+    logoUrl: string;
     backgroundColor: string;
     foregroundColor: string;
     labelColor: string;
@@ -217,6 +234,7 @@ export default function PlatformMembershipPage() {
   const [walletStores, setWalletStores] = useState<WalletStoreOpt[]>([]);
   const [walletLocPreview, setWalletLocPreview] = useState<Array<{ storeId: string; displayName: string; ok: boolean }>>([]);
   const [walletPassBusyId, setWalletPassBusyId] = useState<string | null>(null);
+  const [walletLogoUploading, setWalletLogoUploading] = useState(false);
 
   const loadStripe = useCallback(async () => {
     setStripeLoading(true);
@@ -468,6 +486,19 @@ export default function PlatformMembershipPage() {
     setStaffIds((prev) => (prev.includes(storeId) ? prev.filter((x) => x !== storeId) : [...prev, storeId]));
   };
 
+  const normalizeWalletSettings = useCallback((s: Partial<WalletSettings> | null | undefined): WalletSettings => ({
+    enabled: !!s?.enabled,
+    organizationName: s?.organizationName || 'LZFOOD',
+    description: s?.description || 'LZFOOD Membership',
+    logoText: s?.logoText || 'LZFOOD',
+    logoUrl: typeof s?.logoUrl === 'string' ? s.logoUrl : '',
+    backgroundColor: s?.backgroundColor || 'rgb(255, 214, 10)',
+    foregroundColor: s?.foregroundColor || 'rgb(28, 28, 30)',
+    labelColor: s?.labelColor || 'rgb(90, 90, 95)',
+    maxDistanceMeters: Number(s?.maxDistanceMeters) || 120,
+    storeIds: Array.isArray(s?.storeIds) ? s!.storeIds.map(String) : [],
+  }), []);
+
   const loadWallet = useCallback(async () => {
     setWalletLoading(true);
     try {
@@ -477,14 +508,14 @@ export default function PlatformMembershipPage() {
         return;
       }
       const data = await res.json();
-      setWalletSettings(data.settings);
+      setWalletSettings(normalizeWalletSettings(data.settings));
       setWalletCerts(data.certificates);
       setWalletStores(Array.isArray(data.stores) ? data.stores : []);
       setWalletLocPreview(Array.isArray(data.locationPreview) ? data.locationPreview : []);
     } finally {
       setWalletLoading(false);
     }
-  }, []);
+  }, [normalizeWalletSettings]);
 
   useEffect(() => {
     if (walletOpen && !walletSettings) void loadWallet();
@@ -506,7 +537,7 @@ export default function PlatformMembershipPage() {
         return;
       }
       const data = await res.json();
-      setWalletSettings(data.settings);
+      setWalletSettings(normalizeWalletSettings(data.settings));
       setWalletCerts(data.certificates);
       setMsg('Apple Wallet 会员卡设置已保存');
       await loadWallet();
@@ -549,6 +580,44 @@ export default function PlatformMembershipPage() {
     } finally {
       setWalletPassBusyId(null);
     }
+  };
+
+  const uploadWalletLogo = async (file: File | null) => {
+    if (!file || !walletSettings) return;
+    setWalletLogoUploading(true);
+    setErr('');
+    try {
+      const fd = new FormData();
+      fd.append('image', file);
+      const res = await platformApiFetch('/api/platform/membership/apple-wallet-logo', {
+        method: 'POST',
+        body: fd,
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setErr((j as { error?: { message?: string } })?.error?.message || `HTTP ${res.status}`);
+        return;
+      }
+      const imageUrl = String((j as { imageUrl?: string }).imageUrl || '');
+      if (!imageUrl) {
+        setErr('上传成功但未返回图片地址');
+        return;
+      }
+      setWalletSettings({ ...walletSettings, logoUrl: imageUrl });
+      setMsg('Logo 已上传（请再点保存 Wallet 设置）');
+    } finally {
+      setWalletLogoUploading(false);
+    }
+  };
+
+  const applyYellowPreset = () => {
+    if (!walletSettings) return;
+    setWalletSettings({
+      ...walletSettings,
+      backgroundColor: 'rgb(255, 214, 10)',
+      foregroundColor: 'rgb(28, 28, 30)',
+      labelColor: 'rgb(90, 90, 95)',
+    });
   };
 
   return (
@@ -715,77 +784,222 @@ export default function PlatformMembershipPage() {
                 />
                 启用顾客「加入 Apple 钱包」
               </label>
-              <label style={{ display: 'block', fontSize: 12, color: '#789', margin: '12px 0 6px' }}>组织名称</label>
-              <input
-                className="input"
-                value={walletSettings.organizationName}
-                onChange={(e) => setWalletSettings({ ...walletSettings, organizationName: e.target.value })}
-                style={{ width: '100%', marginBottom: 8 }}
-              />
-              <label style={{ display: 'block', fontSize: 12, color: '#789', marginBottom: 6 }}>卡面 Logo 文字</label>
-              <input
-                className="input"
-                value={walletSettings.logoText}
-                onChange={(e) => setWalletSettings({ ...walletSettings, logoText: e.target.value })}
-                style={{ width: '100%', marginBottom: 8 }}
-              />
-              <label style={{ display: 'block', fontSize: 12, color: '#789', marginBottom: 6 }}>描述</label>
-              <input
-                className="input"
-                value={walletSettings.description}
-                onChange={(e) => setWalletSettings({ ...walletSettings, description: e.target.value })}
-                style={{ width: '100%', marginBottom: 8 }}
-              />
-              <label style={{ display: 'block', fontSize: 12, color: '#789', marginBottom: 6 }}>
-                附近提醒距离（米，50–5000）
-              </label>
-              <input
-                className="input"
-                type="number"
-                min={50}
-                max={5000}
-                value={walletSettings.maxDistanceMeters}
-                onChange={(e) =>
-                  setWalletSettings({
-                    ...walletSettings,
-                    maxDistanceMeters: Number(e.target.value) || 120,
-                  })
-                }
-                style={{ width: 160, marginBottom: 12 }}
-              />
-              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
-                附近提醒门店（最多 10 家；需店后台填好地址且服务器有 GoogleGeo）
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 8, marginBottom: 12 }}>
-                {walletStores.map((s) => {
-                  const on = walletSettings.storeIds.includes(s._id);
-                  const prev = walletLocPreview.find((x) => x.storeId === s._id);
-                  return (
-                    <label
-                      key={s._id}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'flex-start',
-                        gap: 8,
-                        padding: 10,
-                        border: '1px solid #c5cae9',
-                        borderRadius: 8,
-                        background: on ? '#e8eaf6' : '#fff',
-                      }}
-                    >
-                      <input type="checkbox" checked={on} onChange={() => toggleWalletStore(s._id)} />
-                      <span>
-                        <div style={{ fontWeight: 600 }}>{s.displayName}</div>
-                        <div style={{ fontSize: 11, color: '#789' }}>
-                          {s.slug}
-                          {on ? (prev ? (prev.ok ? ' · 坐标 OK' : ' · 坐标未解析') : '') : ''}
+
+              <div className="aw-editor">
+                <div className="aw-preview-wrap">
+                  <div className="aw-preview-label">实时预览（近似 Wallet，非 1:1）</div>
+                  <div
+                    className="aw-card"
+                    style={{
+                      background: walletSettings.backgroundColor,
+                      color: walletSettings.foregroundColor,
+                    }}
+                  >
+                    <div className="aw-card-top">
+                      {walletSettings.logoUrl ? (
+                        <img
+                          className="aw-card-logo"
+                          src={resolveBackendAssetUrl(walletSettings.logoUrl)}
+                          alt="logo"
+                        />
+                      ) : (
+                        <span className="aw-card-logo-fallback" />
+                      )}
+                      <span className="aw-card-logo-text">{walletSettings.logoText || 'LZFOOD'}</span>
+                    </div>
+                    <div>
+                      <div className="aw-card-primary-label" style={{ color: walletSettings.labelColor }}>
+                        BALANCE
+                      </div>
+                      <div className="aw-card-primary-value">€20.00</div>
+                    </div>
+                    <div className="aw-card-row">
+                      <div className="aw-card-field">
+                        <div className="aw-card-field-label" style={{ color: walletSettings.labelColor }}>
+                          MEMBER
                         </div>
-                      </span>
+                        <div className="aw-card-field-value">Guest</div>
+                      </div>
+                      <div className="aw-card-field">
+                        <div className="aw-card-field-label" style={{ color: walletSettings.labelColor }}>
+                          NO.
+                        </div>
+                        <div className="aw-card-field-value">#1001</div>
+                      </div>
+                    </div>
+                    <div className="aw-card-qr" title="QR preview" />
+                  </div>
+                </div>
+
+                <div className="aw-controls">
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 4 }}>
+                    <button type="button" className="btn btn-outline" onClick={applyYellowPreset}>
+                      黄色模板
+                    </button>
+                  </div>
+
+                  <label className="aw-lab">组织名称</label>
+                  <input
+                    className="input"
+                    value={walletSettings.organizationName}
+                    onChange={(e) => setWalletSettings({ ...walletSettings, organizationName: e.target.value })}
+                    style={{ width: '100%' }}
+                  />
+
+                  <label className="aw-lab">Logo 文字</label>
+                  <input
+                    className="input"
+                    value={walletSettings.logoText}
+                    onChange={(e) => setWalletSettings({ ...walletSettings, logoText: e.target.value })}
+                    style={{ width: '100%' }}
+                  />
+
+                  <label className="aw-lab">Logo 图片（PNG）</label>
+                  <div className="aw-logo-row">
+                    {walletSettings.logoUrl ? (
+                      <img
+                        className="aw-logo-thumb"
+                        src={resolveBackendAssetUrl(walletSettings.logoUrl)}
+                        alt=""
+                      />
+                    ) : null}
+                    <label className="btn btn-outline" style={{ cursor: 'pointer', margin: 0 }}>
+                      {walletLogoUploading ? '上传中…' : '上传 Logo'}
+                      <input
+                        type="file"
+                        accept="image/png,.png"
+                        hidden
+                        disabled={walletLogoUploading}
+                        onChange={(e) => {
+                          const f = e.target.files?.[0] || null;
+                          e.target.value = '';
+                          void uploadWalletLogo(f);
+                        }}
+                      />
                     </label>
-                  );
-                })}
+                    {walletSettings.logoUrl ? (
+                      <button
+                        type="button"
+                        className="btn btn-outline"
+                        style={{ color: '#c62828' }}
+                        onClick={() => setWalletSettings({ ...walletSettings, logoUrl: '' })}
+                      >
+                        清除 Logo
+                      </button>
+                    ) : null}
+                  </div>
+
+                  <label className="aw-lab">描述</label>
+                  <input
+                    className="input"
+                    value={walletSettings.description}
+                    onChange={(e) => setWalletSettings({ ...walletSettings, description: e.target.value })}
+                    style={{ width: '100%' }}
+                  />
+
+                  <label className="aw-lab">背景色</label>
+                  <div className="aw-color-row">
+                    <input
+                      type="color"
+                      value={rgbToHex(walletSettings.backgroundColor)}
+                      onChange={(e) =>
+                        setWalletSettings({ ...walletSettings, backgroundColor: hexToRgb(e.target.value) })
+                      }
+                    />
+                    <input
+                      className="input"
+                      type="text"
+                      value={walletSettings.backgroundColor}
+                      onChange={(e) => setWalletSettings({ ...walletSettings, backgroundColor: e.target.value })}
+                    />
+                  </div>
+
+                  <label className="aw-lab">文字色</label>
+                  <div className="aw-color-row">
+                    <input
+                      type="color"
+                      value={rgbToHex(walletSettings.foregroundColor)}
+                      onChange={(e) =>
+                        setWalletSettings({ ...walletSettings, foregroundColor: hexToRgb(e.target.value) })
+                      }
+                    />
+                    <input
+                      className="input"
+                      type="text"
+                      value={walletSettings.foregroundColor}
+                      onChange={(e) => setWalletSettings({ ...walletSettings, foregroundColor: e.target.value })}
+                    />
+                  </div>
+
+                  <label className="aw-lab">标签色</label>
+                  <div className="aw-color-row">
+                    <input
+                      type="color"
+                      value={rgbToHex(walletSettings.labelColor)}
+                      onChange={(e) =>
+                        setWalletSettings({ ...walletSettings, labelColor: hexToRgb(e.target.value) })
+                      }
+                    />
+                    <input
+                      className="input"
+                      type="text"
+                      value={walletSettings.labelColor}
+                      onChange={(e) => setWalletSettings({ ...walletSettings, labelColor: e.target.value })}
+                    />
+                  </div>
+
+                  <label className="aw-lab">附近提醒距离（米，50–5000）</label>
+                  <input
+                    className="input"
+                    type="number"
+                    min={50}
+                    max={5000}
+                    value={walletSettings.maxDistanceMeters}
+                    onChange={(e) =>
+                      setWalletSettings({
+                        ...walletSettings,
+                        maxDistanceMeters: Number(e.target.value) || 120,
+                      })
+                    }
+                    style={{ width: 160 }}
+                  />
+
+                  <div style={{ fontSize: 13, fontWeight: 600, margin: '14px 0 8px' }}>
+                    附近提醒门店（最多 10 家）
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 8 }}>
+                    {walletStores.map((s) => {
+                      const on = walletSettings.storeIds.includes(s._id);
+                      const prev = walletLocPreview.find((x) => x.storeId === s._id);
+                      return (
+                        <label
+                          key={s._id}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'flex-start',
+                            gap: 8,
+                            padding: 10,
+                            border: '1px solid #c5cae9',
+                            borderRadius: 8,
+                            background: on ? '#e8eaf6' : '#fff',
+                          }}
+                        >
+                          <input type="checkbox" checked={on} onChange={() => toggleWalletStore(s._id)} />
+                          <span>
+                            <div style={{ fontWeight: 600 }}>{s.displayName}</div>
+                            <div style={{ fontSize: 11, color: '#789' }}>
+                              {s.slug}
+                              {on ? (prev ? (prev.ok ? ' · 坐标 OK' : ' · 坐标未解析') : '') : ''}
+                            </div>
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
               </div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 16 }}>
                 <button type="button" className="btn btn-primary" onClick={() => void saveWallet()} disabled={walletSaving}>
                   {walletSaving ? '保存中…' : '保存 Wallet 设置'}
                 </button>

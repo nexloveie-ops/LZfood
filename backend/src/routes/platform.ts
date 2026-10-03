@@ -312,10 +312,14 @@ async function assertEnterpriseAdsPolicy(
 }
 
 const ALLOWED_POST_ORDER_AD_IMG = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
+const ALLOWED_APPLE_WALLET_LOGO = ['.png'];
 const postOrderAdUpload = multer({ dest: os.tmpdir(), limits: { fileSize: 5 * 1024 * 1024 } });
+const appleWalletLogoUpload = multer({ dest: os.tmpdir(), limits: { fileSize: 2 * 1024 * 1024 } });
 const UPLOAD_BASE_PLATFORM = path.resolve(__dirname, '../../uploads');
 const POSTORDER_ADS_LOCAL_DIR = path.join(UPLOAD_BASE_PLATFORM, 'postorder-ads');
+const APPLE_WALLET_LOGO_DIR = path.join(UPLOAD_BASE_PLATFORM, 'apple-wallet');
 fs.mkdirSync(POSTORDER_ADS_LOCAL_DIR, { recursive: true });
+fs.mkdirSync(APPLE_WALLET_LOGO_DIR, { recursive: true });
 
 function cleanupPostOrderAdTemp(file: Express.Multer.File | undefined): void {
   if (!file?.path) return;
@@ -1163,6 +1167,48 @@ router.put('/membership/apple-wallet-config', ...platformAuth, async (req: Reque
     next(err);
   }
 });
+
+/** POST /api/platform/membership/apple-wallet-logo — multipart `image`，仅 PNG */
+router.post(
+  '/membership/apple-wallet-logo',
+  appleWalletLogoUpload.single('image'),
+  ...platformAuth,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      if (!req.file) {
+        throw createAppError('VALIDATION_ERROR', '请上传 Logo（表单字段名 image）');
+      }
+      const ext = path.extname(req.file.originalname).toLowerCase();
+      if (!ALLOWED_APPLE_WALLET_LOGO.includes(ext)) {
+        try {
+          fs.unlinkSync(req.file.path);
+        } catch {
+          /* ignore */
+        }
+        throw createAppError('VALIDATION_ERROR', 'Apple Wallet Logo 仅支持 PNG');
+      }
+      const filename = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}.png`;
+      const localDest = path.join(APPLE_WALLET_LOGO_DIR, filename);
+      fs.copyFileSync(req.file.path, localDest);
+      try {
+        fs.unlinkSync(req.file.path);
+      } catch {
+        /* ignore */
+      }
+      const imageUrl = await uploadFile(localDest, 'apple-wallet', filename);
+      res.json({ imageUrl });
+    } catch (err) {
+      if (req.file?.path) {
+        try {
+          fs.unlinkSync(req.file.path);
+        } catch {
+          /* ignore */
+        }
+      }
+      next(err);
+    }
+  },
+);
 
 router.get(
   '/membership/members/:id/apple-wallet-pass',
