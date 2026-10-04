@@ -8,7 +8,10 @@ import {
 } from './platformMemberIdentity';
 import { creditPlatformMemberWallet } from './platformMemberWalletOps';
 import { omitOrderFromStoreSales } from './reportOrderExclusions';
-import { notifyAppleWalletPassBalanceChanged } from './appleWallet/passUpdate';
+import {
+  notifyAppleWalletPassBalanceChanged,
+  notifyAppleWalletPassStyleChanged,
+} from './appleWallet/passUpdate';
 
 export const STAMP_EARN_EURO_KEY = 'stamp_earn_euro';
 export const STAMP_REDEEM_COUNT_KEY = 'stamp_redeem_count';
@@ -144,6 +147,8 @@ export async function saveStampRules(rules: StampRules): Promise<StampRules> {
   await Promise.all(
     pairs.map(([key, value]) => PlatformConfig.findOneAndUpdate({ key }, { key, value }, { upsert: true })),
   );
+  // 兑换门槛画在 Wallet strip 上：规则变更后推已装卡更新（与改样式相同）
+  void notifyAppleWalletPassStyleChanged();
   return rules;
 }
 
