@@ -12,6 +12,7 @@ export type PlatformMemberLean = {
   deliveryAddress?: string;
   postalCode?: string;
   creditBalance?: number;
+  stampCount?: number;
   walletVersion?: number;
   status?: string;
   pinHash?: string;
@@ -30,6 +31,8 @@ export type MemberPublicJson = {
   deliveryAddress: string;
   postalCode: string;
   creditBalance: number;
+  stampCount: number;
+  stampRedeemAt: number;
 };
 
 function pmModels() {
@@ -85,15 +88,19 @@ export function toStoreStaffAdminRow(doc: PlatformMemberLean, storeId: mongoose.
   };
 }
 
-export function toMemberPublicJson(doc: {
-  _id: unknown;
-  memberNo?: number;
-  phone: string;
-  displayName?: string;
-  deliveryAddress?: string;
-  postalCode?: string;
-  creditBalance?: number;
-}): MemberPublicJson {
+export function toMemberPublicJson(
+  doc: {
+    _id: unknown;
+    memberNo?: number;
+    phone: string;
+    displayName?: string;
+    deliveryAddress?: string;
+    postalCode?: string;
+    creditBalance?: number;
+    stampCount?: number;
+  },
+  extra?: { stampRedeemAt?: number },
+): MemberPublicJson {
   return {
     _id: doc._id as mongoose.Types.ObjectId,
     memberNo: Number(doc.memberNo) || 0,
@@ -102,6 +109,8 @@ export function toMemberPublicJson(doc: {
     deliveryAddress: String(doc.deliveryAddress || ''),
     postalCode: String(doc.postalCode || ''),
     creditBalance: Number(doc.creditBalance) || 0,
+    stampCount: Math.max(0, Math.floor(Number(doc.stampCount) || 0)),
+    stampRedeemAt: Math.max(1, Math.floor(Number(extra?.stampRedeemAt) || 9)),
   };
 }
 

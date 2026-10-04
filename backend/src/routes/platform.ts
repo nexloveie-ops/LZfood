@@ -34,6 +34,7 @@ import {
 } from '../utils/memberWalletOps';
 import { allocatePlatformMemberNo } from '../utils/platformMemberIdentity';
 import { creditPlatformMemberWallet, debitPlatformGuestWalletByAdmin } from '../utils/platformMemberWalletOps';
+import { loadStampRules, normalizeStampRulesInput, saveStampRules } from '../utils/platformStamps';
 import platformGiftCardsRouter from './platformGiftCards';
 import platformGeoLookupRouter from './platformGeoLookup';
 import {
@@ -1060,6 +1061,31 @@ function mapStaffStores(
   });
 }
 
+router.get('/stamp-rules', ...platformAuth, async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    res.json(await loadStampRules());
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.put('/stamp-rules', ...platformAuth, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    let rules;
+    try {
+      rules = normalizeStampRulesInput(req.body as { earnEuro?: unknown; redeemCount?: unknown; rewardEuro?: unknown });
+    } catch {
+      throw createAppError(
+        'VALIDATION_ERROR',
+        '印花规则无效：消费门槛与奖励须大于 0（最多 €999），满点数须为 1–99 的整数',
+      );
+    }
+    res.json(await saveStampRules(rules));
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get('/membership/stripe-config', ...platformAuth, async (_req: Request, res: Response, next: NextFunction) => {
   try {
     const publishableKey = await getPlatformStripePublishable();
@@ -1250,6 +1276,7 @@ router.get(
           displayName: (doc as { displayName?: string }).displayName,
           phone: (doc as { phone?: string }).phone,
           creditBalance: (doc as { creditBalance?: number }).creditBalance,
+          stampCount: (doc as { stampCount?: number }).stampCount,
         },
         settings,
       );
@@ -1307,6 +1334,7 @@ router.get('/membership/members', ...platformAuth, async (req: Request, res: Res
         memberNo: Number(m.memberNo) || 0,
         displayName: m.displayName || '',
         creditBalance: Number(m.creditBalance) || 0,
+        stampCount: Math.max(0, Math.floor(Number(m.stampCount) || 0)),
         status: m.status,
         staffStoreCount: staffStores.length,
         staffStores,
@@ -1380,6 +1408,7 @@ router.get('/membership/members/:id', ...platformAuth, async (req: Request, res:
       memberNo: Number((m as { memberNo?: number }).memberNo) || 0,
       displayName: m.displayName || '',
       creditBalance: Number(m.creditBalance) || 0,
+      stampCount: Math.max(0, Math.floor(Number((m as { stampCount?: number }).stampCount) || 0)),
       status: m.status || 'active',
       hasPin: !!String(m.pinHash || '').trim(),
       createdAt: m.createdAt,

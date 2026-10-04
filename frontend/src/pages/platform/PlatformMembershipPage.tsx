@@ -35,6 +35,7 @@ type MemberRow = {
   memberNo?: number;
   displayName: string;
   creditBalance: number;
+  stampCount?: number;
   status: string;
   staffStoreCount: number;
   staffStores?: StaffStore[];
@@ -64,6 +65,7 @@ type MemberDetail = {
   memberNo?: number;
   displayName: string;
   creditBalance: number;
+  stampCount?: number;
   status: string;
   hasPin: boolean;
   staffStores: StaffStore[];
@@ -114,6 +116,7 @@ function txnTypeLabel(type: string): string {
     staff_credit: '员工额度充值',
     adjustment: '调整',
     reversal: '冲正',
+    stamp_reward: '印花兑换',
   };
   return map[type] || type;
 }
@@ -204,6 +207,11 @@ export default function PlatformMembershipPage() {
   const [guestCreditAmount, setGuestCreditAmount] = useState('');
   const [guestCreditNote, setGuestCreditNote] = useState('');
   const [guestCreditSaving, setGuestCreditSaving] = useState(false);
+  const [stampEarnEuro, setStampEarnEuro] = useState('17');
+  const [stampRedeemCount, setStampRedeemCount] = useState('9');
+  const [stampRewardEuro, setStampRewardEuro] = useState('15');
+  const [stampLoading, setStampLoading] = useState(true);
+  const [stampSaving, setStampSaving] = useState(false);
 
   type WalletStoreOpt = { _id: string; slug: string; displayName: string };
   type WalletCertStatus = {
@@ -254,6 +262,22 @@ export default function PlatformMembershipPage() {
 
   useEffect(() => { void loadStripe(); }, [loadStripe]);
 
+  const loadStampRules = useCallback(async () => {
+    setStampLoading(true);
+    try {
+      const res = await platformApiFetch('/api/platform/stamp-rules');
+      if (!res.ok) return;
+      const data = (await res.json()) as { earnEuro?: number; redeemCount?: number; rewardEuro?: number };
+      setStampEarnEuro(String(Number(data.earnEuro) || 17));
+      setStampRedeemCount(String(Math.max(1, Math.floor(Number(data.redeemCount) || 9))));
+      setStampRewardEuro(String(Number(data.rewardEuro) || 15));
+    } finally {
+      setStampLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void loadStampRules(); }, [loadStampRules]);
+
   const saveStripe = async (clearSecret: boolean) => {
     setStripeSaving(true);
     setErr('');
@@ -276,6 +300,34 @@ export default function PlatformMembershipPage() {
       setMsg('平台 Stripe 已保存（密钥不会回显）');
     } finally {
       setStripeSaving(false);
+    }
+  };
+
+  const saveStampRules = async () => {
+    setStampSaving(true);
+    setErr('');
+    try {
+      const res = await platformApiFetch('/api/platform/stamp-rules', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          earnEuro: Number(stampEarnEuro),
+          redeemCount: Number(stampRedeemCount),
+          rewardEuro: Number(stampRewardEuro),
+        }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setErr((j as { error?: { message?: string } })?.error?.message || `HTTP ${res.status}`);
+        return;
+      }
+      const saved = j as { earnEuro?: number; redeemCount?: number; rewardEuro?: number };
+      setStampEarnEuro(String(Number(saved.earnEuro) || stampEarnEuro));
+      setStampRedeemCount(String(Math.max(1, Math.floor(Number(saved.redeemCount) || Number(stampRedeemCount) || 9))));
+      setStampRewardEuro(String(Number(saved.rewardEuro) || stampRewardEuro));
+      setMsg('印花规则已保存（全平台客人钱包通用）');
+    } finally {
+      setStampSaving(false);
     }
   };
 
@@ -639,6 +691,63 @@ export default function PlatformMembershipPage() {
       {msg ? (
         <div className="card" style={{ padding: 12, marginBottom: 16, color: '#2e7d32' }}>{msg}</div>
       ) : null}
+
+      <div className="card" style={{ padding: 20, marginBottom: 24 }}>
+        <h2 style={{ margin: '0 0 8px', fontSize: 16 }}>消费印花</h2>
+        <p style={{ margin: '0 0 14px', fontSize: 12, color: '#789', lineHeight: 1.5 }}>
+          全平台统一：客人结账按实付金额积点，满点自动兑入客人钱包（不抵本次结账）。员工钱包 / hide 单不积点。退款暂不冲回印花。
+        </p>
+        {stampLoading ? (
+          <div style={{ color: '#789' }}>加载中…</div>
+        ) : (
+          <>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'flex-end', marginBottom: 12 }}>
+              <div>
+                <label style={{ display: 'block', fontSize: 12, color: '#789', marginBottom: 4 }}>每积 1 点消费额 (€)</label>
+                <input
+                  className="input"
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  value={stampEarnEuro}
+                  onChange={(e) => setStampEarnEuro(e.target.value)}
+                  style={{ width: 140 }}
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: 12, color: '#789', marginBottom: 4 }}>满几点兑换</label>
+                <input
+                  className="input"
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={stampRedeemCount}
+                  onChange={(e) => setStampRedeemCount(e.target.value)}
+                  style={{ width: 120 }}
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: 12, color: '#789', marginBottom: 4 }}>兑换入钱包 (€)</label>
+                <input
+                  className="input"
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  value={stampRewardEuro}
+                  onChange={(e) => setStampRewardEuro(e.target.value)}
+                  style={{ width: 140 }}
+                />
+              </div>
+              <button type="button" className="btn btn-primary" onClick={() => void saveStampRules()} disabled={stampSaving}>
+                {stampSaving ? '保存中…' : '保存规则'}
+              </button>
+            </div>
+            <div style={{ fontSize: 13, color: '#3949ab' }}>
+              每消费 €{Number(stampEarnEuro) || 0} 积 1 点，满 {Number(stampRedeemCount) || 0} 点自动兑换 €{Number(stampRewardEuro) || 0} 入客人钱包。
+            </div>
+          </>
+        )}
+      </div>
 
       <div className="card" style={{ padding: stripeOpen ? 20 : '12px 20px', marginBottom: 24 }}>
         <button
@@ -1097,6 +1206,7 @@ export default function PlatformMembershipPage() {
               <th style={{ padding: '8px 4px' }}>手机</th>
               <th style={{ padding: '8px 4px' }}>姓名</th>
               <th style={{ padding: '8px 4px' }}>客人钱包 €</th>
+              <th style={{ padding: '8px 4px' }}>印花</th>
               <th style={{ padding: '8px 4px' }}>各店员工余额</th>
               <th style={{ padding: '8px 4px' }}>PIN</th>
             </tr>
@@ -1122,6 +1232,7 @@ export default function PlatformMembershipPage() {
                     <td style={{ padding: '8px 4px' }}>{r.phone}</td>
                     <td style={{ padding: '8px 4px' }}>{r.displayName || '—'}</td>
                     <td style={{ padding: '8px 4px' }}>{r.creditBalance.toFixed(2)}</td>
+                    <td style={{ padding: '8px 4px' }}>{Math.max(0, Math.floor(Number(r.stampCount) || 0))}</td>
                     <td style={{ padding: '8px 4px' }}>
                       <StaffBalancesCell stores={r.staffStores} />
                     </td>
@@ -1129,7 +1240,7 @@ export default function PlatformMembershipPage() {
                   </tr>
                   {loadingThis ? (
                     <tr>
-                      <td colSpan={7} style={{ padding: '12px 16px', background: '#f7f8ff', color: '#789', borderTop: '1px solid #e8eaf6' }}>
+                      <td colSpan={8} style={{ padding: '12px 16px', background: '#f7f8ff', color: '#789', borderTop: '1px solid #e8eaf6' }}>
                         加载中…
                       </td>
                     </tr>
@@ -1137,14 +1248,14 @@ export default function PlatformMembershipPage() {
                   {expanded && detail ? (
                     <tr>
                       <td
-                        colSpan={7}
+                        colSpan={8}
                         style={{ padding: 16, background: '#f7f8ff', borderTop: '1px solid #c5cae9', verticalAlign: 'top' }}
                         onClick={(e) => e.stopPropagation()}
                       >
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', marginBottom: 12 }}>
                           <MemberRoleTags staffStoreCount={staffIds.length} />
                           <span style={{ fontSize: 13, color: '#546e7a' }}>
-                            客人钱包 €{detail.creditBalance.toFixed(2)} · 状态 {detail.status}
+                            客人钱包 €{detail.creditBalance.toFixed(2)} · 印花 {Math.max(0, Math.floor(Number(detail.stampCount) || 0))} · 状态 {detail.status}
                             {staffIds.length > 0 ? ` · 已挂靠 ${staffIds.length} 家店` : ' · 未挂靠店铺（仅客人）'}
                           </span>
                           <button

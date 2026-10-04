@@ -30,6 +30,9 @@ export function translateMemberWalletTxnNote(note: string | undefined | null, t:
   const adjustTarget = /^调整至目标余额 €([\d.]+)$/.exec(n);
   if (adjustTarget) return t('member.txnNote.adjustToTarget', { amount: adjustTarget[1] });
 
+  const stampReward = /^印花兑换入账 €([\d.]+)$/.exec(n);
+  if (stampReward) return t('member.txnNote.stampReward', { amount: stampReward[1] });
+
   const stripe = /^Stripe 自助充值 (.+)$/.exec(n);
   if (stripe) return t('member.txnNote.stripeTopUp', { ref: stripe[1] });
 

@@ -312,6 +312,49 @@
   line-height: 1.1;
 }
 
+.mp-wallet-row {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.mp-wallet-stamps {
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.mp-wallet-stamps .mp-wallet-k {
+  margin-bottom: 6px;
+}
+
+.mp-wallet-stamp-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.mp-wallet-stamp-img {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  object-fit: cover;
+  display: block;
+  background: #000;
+  flex-shrink: 0;
+}
+
+.mp-wallet-stamp-val {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+}
+
 .mp-acc-hd {
   width: 100%;
   display: flex;

@@ -46,6 +46,7 @@ import { getAppleWalletCertStatus } from '../utils/appleWallet/certs';
 import { getAppleWalletSettings } from '../utils/appleWallet/config';
 import { issuePlatformMemberPkpass } from '../utils/appleWallet/issuePass';
 import { resolveAppleWalletWebServiceUrl } from '../utils/appleWallet/webServiceUrl';
+import { loadStampRules } from '../utils/platformStamps';
 
 const MEMBER_TOPUP_MIN_EUR = 1;
 const MEMBER_TOPUP_MAX_EUR = 500;
@@ -73,6 +74,11 @@ function parseMemberTopUpEuro(raw: unknown): number {
     throw createAppError('VALIDATION_ERROR', `单次充值不得超过 €${MEMBER_TOPUP_MAX_EUR}`);
   }
   return r;
+}
+
+async function memberPublicJson(doc: Parameters<typeof toMemberPublicJson>[0]) {
+  const rules = await loadStampRules();
+  return toMemberPublicJson(doc, { stampRedeemAt: rules.redeemCount });
 }
 
 function mModels() {
@@ -364,7 +370,7 @@ router.post('/register', async (req: Request, res: Response, next: NextFunction)
     const token = signMemberToken(doc._id.toString(), req.storeId!.toString());
     res.status(201).json({
       token,
-      member: toMemberPublicJson(doc as never),
+      member: await memberPublicJson(doc as never),
     });
   } catch (err) {
     next(err);
@@ -387,7 +393,7 @@ router.post('/login', async (req: Request, res: Response, next: NextFunction) =>
       const token = signMemberToken(platform._id.toString(), req.storeId!.toString());
       res.json({
         token,
-        member: toMemberPublicJson(fresh || platform),
+        member: await memberPublicJson(fresh || platform),
       });
       return;
     }
@@ -412,7 +418,7 @@ router.post('/login', async (req: Request, res: Response, next: NextFunction) =>
     const token = signMemberToken(doc._id.toString(), req.storeId!.toString());
     res.json({
       token,
-      member: toMemberPublicJson(doc),
+      member: await memberPublicJson(doc),
     });
   } catch (err) {
     next(err);
@@ -553,11 +559,14 @@ router.post('/verify-pin', async (req: Request, res: Response, next: NextFunctio
     if (platform) {
       await assertMemberPinOk(PlatformMember, platform as never, pin);
       const staffHere = isStaffAtStore(platform, req.storeId!);
+      const rules = await loadStampRules();
       res.json({
         ok: true,
         memberId: platform._id.toString(),
         memberNo: Number(platform.memberNo) || 0,
         creditBalance: Number(platform.creditBalance) || 0,
+        stampCount: Math.max(0, Math.floor(Number(platform.stampCount) || 0)),
+        stampRedeemAt: rules.redeemCount,
         isStaffHere: staffHere,
         staffBalance: staffHere ? staffBalanceAtStore(platform, req.storeId!) : null,
       });
@@ -576,11 +585,14 @@ router.post('/verify-pin', async (req: Request, res: Response, next: NextFunctio
     if (!doc) throw createAppError('UNAUTHORIZED', '手机号或 PIN 错误');
     await assertMemberPinOk(Member, doc as never, pin);
 
+    const rules = await loadStampRules();
     res.json({
       ok: true,
       memberId: doc._id.toString(),
       memberNo: doc.memberNo,
       creditBalance: doc.creditBalance,
+      stampCount: 0,
+      stampRedeemAt: rules.redeemCount,
       isStaffHere: false,
       staffBalance: null,
     });
@@ -606,11 +618,14 @@ router.get(
         await ensurePlatformMemberNo(platform._id);
         const fresh = (await findPlatformMemberById(platform._id)) || platform;
         const staffHere = isStaffAtStore(fresh, req.storeId!);
+        const rules = await loadStampRules();
         res.json({
           memberNo: Number(fresh.memberNo) || 0,
           displayName: fresh.displayName ?? '',
           phone: fresh.phone,
           creditBalance: Number(fresh.creditBalance) || 0,
+          stampCount: Math.max(0, Math.floor(Number(fresh.stampCount) || 0)),
+          stampRedeemAt: rules.redeemCount,
           isStaffHere: staffHere,
           staffBalance: staffHere ? staffBalanceAtStore(fresh, req.storeId!) : null,
         });
@@ -626,11 +641,14 @@ router.get(
         res.json(null);
         return;
       }
+      const rules = await loadStampRules();
       res.json({
         memberNo: doc.memberNo,
         displayName: doc.displayName ?? '',
         phone: doc.phone,
         creditBalance: doc.creditBalance,
+        stampCount: 0,
+        stampRedeemAt: rules.redeemCount,
         isStaffHere: false,
         staffBalance: null,
       });
@@ -692,7 +710,7 @@ router.get('/me', memberAuthMiddleware, async (req: Request, res: Response, next
     if (platform && platform.status === 'active') {
       await ensurePlatformMemberNo(platform._id);
       const fresh = (await findPlatformMemberById(platform._id)) || platform;
-      res.json(toMemberPublicJson(fresh));
+      res.json(await memberPublicJson(fresh));
       return;
     }
     const doc = await Member.findOne({
@@ -701,7 +719,7 @@ router.get('/me', memberAuthMiddleware, async (req: Request, res: Response, next
       status: 'active',
     }).lean();
     if (!doc) throw createAppError('NOT_FOUND', '会员不存在');
-    res.json(toMemberPublicJson(doc as never));
+    res.json(await memberPublicJson(doc as never));
   } catch (err) {
     next(err);
   }
@@ -749,6 +767,7 @@ router.get('/me/apple-wallet-pass', memberAuthMiddleware, async (req: Request, r
         displayName: fresh.displayName,
         phone: fresh.phone,
         creditBalance: fresh.creditBalance,
+        stampCount: fresh.stampCount,
       },
       settings,
     );
@@ -868,13 +887,13 @@ router.patch('/me', memberAuthMiddleware, async (req: Request, res: Response, ne
       await PlatformMember.updateOne({ _id: mid, status: 'active' }, { $set });
       const doc = await findPlatformMemberById(mid);
       if (!doc) throw createAppError('NOT_FOUND', '会员不存在');
-      res.json(toMemberPublicJson(doc));
+      res.json(await memberPublicJson(doc));
       return;
     }
     await Member.updateOne({ _id: mid, storeId: req.storeId, status: 'active' }, { $set });
     const doc = await Member.findById(mid).lean();
     if (!doc) throw createAppError('NOT_FOUND', '会员不存在');
-    res.json(toMemberPublicJson(doc as never));
+    res.json(await memberPublicJson(doc as never));
   } catch (err) {
     next(err);
   }

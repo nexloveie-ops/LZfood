@@ -21,6 +21,7 @@ import { requireAuthSameStore } from '../middleware/authForStore';
 import { customerPhoneMatchCandidates, normalizeMemberPhone } from '../utils/memberWalletOps';
 import { resolveMemberPaymentForCheckout } from '../utils/checkoutMemberResolve';
 import { debitResolvedMemberWallet, staffHideStatus } from '../utils/platformMemberWalletOps';
+import { scheduleStampAwardForCheckout } from '../utils/platformStamps';
 import { attachCustomerProfileToDeliveryOrder } from '../utils/customerProfileDelivery';
 import { aggregateFrequentMenuItemsForCustomer } from '../utils/customerFrequentOrderItems';
 import { zonedDayBoundsForRef } from '../utils/zonedDayBounds';
@@ -1081,6 +1082,9 @@ export function createOrdersRouter(io: SocketIOServer): Router {
       attachOrderMemberWalletToCheckout(checkoutPayload, order);
 
       const checkout = await Checkout.create(checkoutPayload);
+      if (req.storeId && checkout?._id) {
+        scheduleStampAwardForCheckout(req.storeId, checkout._id as mongoose.Types.ObjectId);
+      }
 
       if (memberPrepaid) {
         await MemberWalletTxn.updateMany(
@@ -1191,6 +1195,9 @@ export function createOrdersRouter(io: SocketIOServer): Router {
       attachOrderMemberWalletToCheckout(checkoutPayload, order);
 
       const checkout = await Checkout.create(checkoutPayload);
+      if (req.storeId && checkout?._id) {
+        scheduleStampAwardForCheckout(req.storeId, checkout._id as mongoose.Types.ObjectId);
+      }
 
       if (memberPrepaid) {
         await MemberWalletTxn.updateMany(
@@ -1288,6 +1295,9 @@ export function createOrdersRouter(io: SocketIOServer): Router {
           (checkout as { memberWallet?: string }).memberWallet = w;
           await checkout.save();
         }
+      }
+      if (req.storeId && checkout?._id) {
+        scheduleStampAwardForCheckout(req.storeId, checkout._id as mongoose.Types.ObjectId);
       }
 
       order.status = completedStatusForOrder(order);

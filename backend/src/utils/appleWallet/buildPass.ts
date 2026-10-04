@@ -7,6 +7,7 @@ import { loadAppleWalletSignerMaterial } from './certs';
 import type { AppleWalletSettings } from './config';
 import { resolvePassStoreLocations } from './storeLocations';
 import { memberPassSerialNumber, resolveAppleWalletWebServiceUrl } from './webServiceUrl';
+import { buildStampStripPngs } from './stampStrip';
 
 export type PlatformMemberPassInput = {
   id: string;
@@ -14,6 +15,8 @@ export type PlatformMemberPassInput = {
   displayName?: string;
   phone?: string;
   creditBalance?: number;
+  stampCount?: number;
+  stampRedeemAt?: number;
   /** PassKit authenticationToken；有 webServiceURL 时必填（≥16） */
   authenticationToken?: string;
 };
@@ -28,7 +31,13 @@ function uploadsRoot(): string {
 
 function loadDefaultAssetBuffers(): Record<string, Buffer> {
   const dir = assetsDir();
-  const names = ['icon.png', 'paula.r@example.org', 'carol.w@example.org', 'logo.png', 'passa.r@example.org'] as const;
+  const names = [
+    'icon.png',
+    'paula.r@example.org',
+    'carol.w@example.org',
+    'logo.png',
+    'passa.r@example.org',
+  ] as const;
   const buffers: Record<string, Buffer> = {};
   for (const name of names) {
     const fp = path.join(dir, name);
@@ -140,6 +149,8 @@ export async function buildPlatformMemberPkpass(
   const signer = loadAppleWalletSignerMaterial();
   const locations = await resolvePassStoreLocations(settings.storeIds);
   const balance = Number(member.creditBalance) || 0;
+  const stamps = Math.max(0, Math.floor(Number(member.stampCount) || 0));
+  const stampGoal = Math.max(1, Math.floor(Number(member.stampRedeemAt) || 9));
   const name = (member.displayName || '').trim() || member.phone || 'Member';
   const memberNo = member.memberNo != null ? String(member.memberNo) : member.id.slice(-8);
   const qr = memberWalletQrPayload(member.id);
@@ -149,8 +160,16 @@ export async function buildPlatformMemberPkpass(
     throw new Error('Apple Wallet authenticationToken 无效（需 ≥16 字符）');
   }
 
+  const buffers = await loadAssetBuffers(settings);
+  try {
+    const strips = await buildStampStripPngs(stamps, stampGoal, settings.foregroundColor);
+    Object.assign(buffers, strips);
+  } catch (e) {
+    console.error('[apple-wallet] stamp strip:', e instanceof Error ? e.message : e);
+  }
+
   const pass = new PKPass(
-    await loadAssetBuffers(settings),
+    buffers,
     {
       wwdr: signer.wwdrPem,
       signerCert: signer.signerCertPem,
@@ -183,7 +202,7 @@ export async function buildPlatformMemberPkpass(
     value: `€${balance.toFixed(2)}`,
     changeMessage: 'Balance: %@',
   });
-  pass.secondaryFields.push(
+  pass.auxiliaryFields.push(
     {
       key: 'name',
       label: 'MEMBER',
@@ -196,6 +215,11 @@ export async function buildPlatformMemberPkpass(
     },
   );
   pass.backFields.push(
+    {
+      key: 'stampsBack',
+      label: 'Stamps',
+      value: `${stamps} / ${stampGoal}`,
+    },
     {
       key: 'phone',
       label: 'Phone',

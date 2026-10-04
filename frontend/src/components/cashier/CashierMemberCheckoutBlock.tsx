@@ -9,6 +9,8 @@ export type CashierMemberPreview = {
   phone: string;
   isStaffHere?: boolean;
   staffBalance?: number | null;
+  stampCount?: number;
+  stampRedeemAt?: number;
 };
 
 type Props = {
@@ -48,6 +50,8 @@ export default function CashierMemberCheckoutBlock({
           phone: d.phone,
           isStaffHere: !!d.isStaffHere,
           staffBalance: d.staffBalance == null ? null : Number(d.staffBalance) || 0,
+          stampCount: Math.max(0, Math.floor(Number(d.stampCount) || 0)),
+          stampRedeemAt: Math.max(1, Math.floor(Number(d.stampRedeemAt) || 9)),
         });
       } else {
         setPreview(null);
@@ -108,6 +112,24 @@ export default function CashierMemberCheckoutBlock({
           <div>
             <span style={{ color: 'var(--text-secondary)' }}>{t('member.balance')}: </span>
             <strong style={{ color: 'var(--red-primary)' }}>€{preview.creditBalance.toFixed(2)}</strong>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
+            <img
+              src="/stamps/duck.jpg"
+              alt=""
+              width={22}
+              height={22}
+              style={{ width: 22, height: 22, borderRadius: '50%', objectFit: 'cover', background: '#000', flexShrink: 0 }}
+            />
+            <span>
+              <span style={{ color: 'var(--text-secondary)' }}>{t('member.stamps')}: </span>
+              <strong>
+                {t('member.stampsProgress', '{{count}} / {{goal}}', {
+                  count: Math.max(0, Math.floor(Number(preview.stampCount) || 0)),
+                  goal: Math.max(1, Math.floor(Number(preview.stampRedeemAt) || 9)),
+                })}
+              </strong>
+            </span>
           </div>
           {preview.isStaffHere ? (
             <div>

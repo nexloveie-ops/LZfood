@@ -3,6 +3,7 @@ import { ensureAppleWalletAuthToken } from './authToken';
 import { buildPlatformMemberPkpass } from './buildPass';
 import type { AppleWalletSettings } from './config';
 import { resolveAppleWalletWebServiceUrl } from './webServiceUrl';
+import { loadStampRules } from '../platformStamps';
 
 type MemberLike = {
   _id: mongoose.Types.ObjectId | string;
@@ -10,6 +11,7 @@ type MemberLike = {
   displayName?: string;
   phone?: string;
   creditBalance?: number;
+  stampCount?: number;
 };
 
 /** 签发/重下 pkpass：有公网 webService 时写入 authenticationToken */
@@ -22,6 +24,7 @@ export async function issuePlatformMemberPkpass(
   const authenticationToken = webServiceURL
     ? await ensureAppleWalletAuthToken(id)
     : undefined;
+  const rules = await loadStampRules();
   return buildPlatformMemberPkpass(
     {
       id,
@@ -29,6 +32,8 @@ export async function issuePlatformMemberPkpass(
       displayName: member.displayName,
       phone: member.phone,
       creditBalance: member.creditBalance,
+      stampCount: Math.max(0, Math.floor(Number(member.stampCount) || 0)),
+      stampRedeemAt: rules.redeemCount,
       authenticationToken,
     },
     settings,

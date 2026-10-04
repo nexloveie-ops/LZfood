@@ -23,6 +23,8 @@ type MemberProfile = {
   deliveryAddress?: string;
   postalCode?: string;
   creditBalance: number;
+  stampCount?: number;
+  stampRedeemAt?: number;
 };
 
 const TXN_PAGE_SIZE = 10;
@@ -715,8 +717,24 @@ export default function MemberPortalPage() {
             <span className="mp-wallet-no">#{profile.memberNo}</span>
             <span className="mp-wallet-phone">{profile.phone}</span>
           </div>
-          <div className="mp-wallet-k">{t('member.balance', '储值余额')}</div>
-          <div className="mp-wallet-bal">€{Number(profile.creditBalance).toFixed(2)}</div>
+          <div className="mp-wallet-row">
+            <div>
+              <div className="mp-wallet-k">{t('member.balance', '储值余额')}</div>
+              <div className="mp-wallet-bal">€{Number(profile.creditBalance).toFixed(2)}</div>
+            </div>
+            <div className="mp-wallet-stamps">
+              <div className="mp-wallet-k">{t('member.stamps', '印花')}</div>
+              <div className="mp-wallet-stamp-row">
+                <img className="mp-wallet-stamp-img" src="/stamps/duck.jpg" alt="" />
+                <div className="mp-wallet-stamp-val">
+                  {t('member.stampsProgress', '{{count}} / {{goal}}', {
+                    count: Math.max(0, Math.floor(Number(profile.stampCount) || 0)),
+                    goal: Math.max(1, Math.floor(Number(profile.stampRedeemAt) || 9)),
+                  })}
+                </div>
+              </div>
+            </div>
+          </div>
           {appleWalletAvailable ? (
             <div style={{ marginTop: 14 }}>
               <button

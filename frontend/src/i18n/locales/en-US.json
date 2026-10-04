@@ -235,6 +235,7 @@
     "memberInsufficient": "Insufficient balance, short €{{short}}",
     "memberCanPayFull": "Balance covers this order",
     "memberStaffBalance": "Staff credit (this store)",
+    "memberStamps": "Stamps",
     "memberPayingWithStaff": "This order will use staff credit (excluded from platform payout)",
     "memberReadyToSubmit": "Ready to check out with wallet",
     "memberLookupFailed": "No member found for this phone number",
@@ -419,6 +420,8 @@
     "forgotPinSuccess": "If this number is registered, a new PIN has been sent by SMS.",
     "memberNo": "Member #",
     "balance": "Stored balance",
+    "stamps": "Stamps",
+    "stampsProgress": "{{count}} / {{goal}}",
     "addToAppleWallet": "Add to Apple Wallet",
     "addToAppleWalletHint": "When you are near a participating store, this card may appear on the lock screen. The QR code is for in-store scanning (redemption coming later).",
     "addToAppleWalletUnavailable": "Unavailable: platform Wallet pass is not enabled or certificates are missing",
@@ -455,7 +458,8 @@
       "refund_credit": "Refund to wallet",
       "staff_credit": "Staff credit",
       "adjustment": "Adjustment",
-      "reversal": "Reversal"
+      "reversal": "Reversal",
+      "stamp_reward": "Stamp reward"
     },
     "txnDetailHeadlines": {
       "recharge": "Top-up details",
@@ -463,7 +467,8 @@
       "spend": "Spend details",
       "refund_credit": "Refund details",
       "adjustment": "Adjustment details",
-      "reversal": "Reversal details"
+      "reversal": "Reversal details",
+      "stamp_reward": "Stamp reward details"
     },
     "txnFieldType": "Type",
     "txnFieldAmount": "Amount",
@@ -497,7 +502,8 @@
       "phonePrepaidMember": "Phone order prepaid with member wallet",
       "adminRecharge": "Admin top-up",
       "topUpToTarget": "Topped up to target balance €{{amount}}",
-      "adjustToTarget": "Adjusted to target balance €{{amount}}"
+      "adjustToTarget": "Adjusted to target balance €{{amount}}",
+      "stampReward": "Stamp reward credited €{{amount}}"
     },
     "topUpCardSection": "Physical gift card",
     "topUpCardHint": "Enter the 6-character code and 6-digit PIN from the card. The face value is credited once (the card must be activated by the store).",

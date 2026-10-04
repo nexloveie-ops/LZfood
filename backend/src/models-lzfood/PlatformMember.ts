@@ -17,6 +17,8 @@ export const PlatformMemberSchema = new mongoose.Schema(
     deliveryAddress: { type: String, default: '', trim: true },
     postalCode: { type: String, default: '', trim: true },
     creditBalance: { type: Number, default: 0, min: 0 },
+    /** 客人印花（与钱包分开；满点自动兑钱包） */
+    stampCount: { type: Number, default: 0, min: 0 },
     walletVersion: { type: Number, default: 0 },
     status: { type: String, enum: ['active', 'frozen'], default: 'active' },
     pinHash: { type: String, default: '' },

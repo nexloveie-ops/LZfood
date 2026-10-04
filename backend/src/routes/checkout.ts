@@ -23,6 +23,7 @@ import {
 import { computeRefundChannelBreakdown } from '../utils/memberRefundAlign';
 import { FeatureKeys, resolveStoreEffectiveFeatures } from '../utils/featureCatalog';
 import { scheduleStoreCloudPrint } from '../utils/cloudPrint/runJob';
+import { scheduleStampAwardForCheckout } from '../utils/platformStamps';
 import {
   markDineInFoodLinesFullySettled,
   markDineInKitchenPrintedQtyFull,
@@ -338,6 +339,7 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
       res.status(201).json(checkout);
       if (req.storeId && checkout?._id) {
         scheduleStoreCloudPrint(req.storeId, checkout._id as mongoose.Types.ObjectId, 'checkout');
+        scheduleStampAwardForCheckout(req.storeId, checkout._id as mongoose.Types.ObjectId);
       }
     } catch (err) {
       next(err);
@@ -557,6 +559,7 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
       res.status(201).json(checkout);
       if (req.storeId && checkout?._id) {
         scheduleStoreCloudPrint(req.storeId, checkout._id as mongoose.Types.ObjectId, 'checkout');
+        scheduleStampAwardForCheckout(req.storeId, checkout._id as mongoose.Types.ObjectId);
       }
     } catch (err) {
       next(err);
@@ -711,6 +714,7 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
       res.status(201).json(checkout);
       if (req.storeId && checkout?._id) {
         scheduleStoreCloudPrint(req.storeId, checkout._id as mongoose.Types.ObjectId, 'checkout');
+        scheduleStampAwardForCheckout(req.storeId, checkout._id as mongoose.Types.ObjectId);
       }
     } catch (err) {
       next(err);
@@ -909,6 +913,7 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
       res.status(201).json(checkout);
       if (req.storeId && checkout?._id) {
         scheduleStoreCloudPrint(req.storeId, checkout._id as mongoose.Types.ObjectId, 'checkout');
+        scheduleStampAwardForCheckout(req.storeId, checkout._id as mongoose.Types.ObjectId);
       }
     } catch (err) {
       next(err);

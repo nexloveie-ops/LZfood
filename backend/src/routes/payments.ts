@@ -17,6 +17,7 @@ import {
 } from '../utils/dineInMarkLinesFullySettled';
 import { voidNotifyCustomerOrderEvent } from '../modules/customer-notifications/dispatcher';
 import { syncDualTrackBeforeSave } from '../utils/orderDualTrack';
+import { scheduleStampAwardForCheckout } from '../utils/platformStamps';
 
 function paymentModels() {
   return getModels() as {
@@ -109,7 +110,7 @@ router.post('/confirm', async (req: Request, res: Response, next: NextFunction) 
           charged: totalChargedEuro,
         });
       }
-      await Checkout.create({
+      const checkout = await Checkout.create({
         storeId: req.storeId,
         type: 'seat',
         totalAmount: totalChargedEuro,
@@ -118,6 +119,9 @@ router.post('/confirm', async (req: Request, res: Response, next: NextFunction) 
         orderIds: [order._id],
         tableNumber: order.tableNumber,
       });
+      if (req.storeId && checkout?._id) {
+        scheduleStampAwardForCheckout(req.storeId, checkout._id as mongoose.Types.ObjectId);
+      }
       order.status = 'checked_out';
     } else {
       if (order.type === 'dine_in') {
@@ -244,6 +248,9 @@ router.post('/finalize', async (req: Request, res: Response, next: NextFunction)
     }
 
     const checkout = await Checkout.create(checkoutPayload);
+    if (req.storeId && checkout?._id) {
+      scheduleStampAwardForCheckout(req.storeId, checkout._id as mongoose.Types.ObjectId);
+    }
 
     if (memberPrepaid) {
       await MemberWalletTxn.updateMany(

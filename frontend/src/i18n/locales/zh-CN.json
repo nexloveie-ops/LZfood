@@ -234,6 +234,7 @@
     "memberInsufficient": "储值不足，还差 €{{short}}",
     "memberCanPayFull": "余额可全额支付本单",
     "memberStaffBalance": "本店员工额度",
+    "memberStamps": "印花",
     "memberPayingWithStaff": "本单将使用员工额度（不计入平台结算）",
     "memberReadyToSubmit": "可确认会员储值结账",
     "memberLookupFailed": "未找到该手机号的会员",
@@ -418,6 +419,8 @@
     "forgotPinSuccess": "若该号码已注册，新 PIN 已通过短信发送。",
     "memberNo": "会员号",
     "balance": "储值余额",
+    "stamps": "印花",
+    "stampsProgress": "{{count}} / {{goal}}",
     "addToAppleWallet": "加入 Apple 钱包",
     "addToAppleWalletHint": "靠近参与门店时可能会在锁屏提示此会员卡。卡上 QR 供店内扫描（扫码核销后续开放）。",
     "addToAppleWalletUnavailable": "暂不可用：平台未开通或证书未配置",
@@ -454,7 +457,8 @@
       "refund_credit": "退款入账",
       "staff_credit": "员工额度充值",
       "adjustment": "调整",
-      "reversal": "冲正"
+      "reversal": "冲正",
+      "stamp_reward": "印花兑换"
     },
     "txnDetailHeadlines": {
       "recharge": "充值明细",
@@ -462,7 +466,8 @@
       "spend": "消费明细",
       "refund_credit": "退款明细",
       "adjustment": "余额调整明细",
-      "reversal": "冲正明细"
+      "reversal": "冲正明细",
+      "stamp_reward": "印花兑换明细"
     },
     "txnFieldType": "类型",
     "txnFieldAmount": "变动金额",
@@ -496,7 +501,8 @@
       "phonePrepaidMember": "电话单下单时已付（会员储值）",
       "adminRecharge": "后台充值",
       "topUpToTarget": "充值至目标余额 €{{amount}}",
-      "adjustToTarget": "调整至目标余额 €{{amount}}"
+      "adjustToTarget": "调整至目标余额 €{{amount}}",
+      "stampReward": "印花兑换入账 €{{amount}}"
     },
     "topUpCardSection": "实体充值卡",
     "topUpCardHint": "输入卡背面的 6 位卡号与 6 位 PIN，面额将一次性入账（须门店已激活该卡）。",

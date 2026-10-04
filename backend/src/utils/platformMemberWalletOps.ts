@@ -27,7 +27,21 @@ function models() {
 }
 
 type PlatformWallet = 'guest' | 'staff';
-type PlatformCreditType = 'recharge' | 'gift_card' | 'refund_credit' | 'staff_credit' | 'adjustment' | 'reversal';
+type PlatformCreditType =
+  | 'recharge'
+  | 'gift_card'
+  | 'refund_credit'
+  | 'staff_credit'
+  | 'adjustment'
+  | 'reversal'
+  | 'stamp_reward';
+
+function toLegacyWalletCreditType(
+  type: PlatformCreditType,
+): 'recharge' | 'recharge_card' | 'refund_credit' | 'adjustment' | 'reversal' {
+  if (type === 'gift_card' || type === 'staff_credit' || type === 'stamp_reward') return 'adjustment';
+  return type;
+}
 
 function asPlatformDoc(raw: unknown): PlatformMemberLean | null {
   return raw as PlatformMemberLean | null;
@@ -370,7 +384,7 @@ export async function creditResolvedMemberWallet(params: {
     storeId: params.storeId,
     memberId: params.resolution.memberId,
     amountEuro: amt,
-    type: params.type === 'gift_card' || params.type === 'staff_credit' ? 'adjustment' : params.type,
+    type: toLegacyWalletCreditType(params.type),
     orderId: params.orderId,
     checkoutId: params.checkoutId,
     note: params.note,
@@ -409,7 +423,7 @@ export async function creditWalletForMemberId(params: {
     storeId: params.storeId,
     memberId: params.memberId,
     amountEuro: params.amountEuro,
-    type: params.type === 'gift_card' || params.type === 'staff_credit' ? 'adjustment' : params.type,
+    type: toLegacyWalletCreditType(params.type),
     orderId: params.orderId,
     checkoutId: params.checkoutId,
     note: params.note,

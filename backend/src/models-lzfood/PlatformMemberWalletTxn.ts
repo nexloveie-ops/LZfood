@@ -7,7 +7,7 @@ export const PlatformMemberWalletTxnSchema = new mongoose.Schema(
     storeId: { type: mongoose.Schema.Types.ObjectId, ref: 'Store', default: undefined },
     type: {
       type: String,
-      enum: ['recharge', 'gift_card', 'spend', 'refund_credit', 'staff_credit', 'adjustment', 'reversal'],
+      enum: ['recharge', 'gift_card', 'spend', 'refund_credit', 'staff_credit', 'adjustment', 'reversal', 'stamp_reward'],
       required: true,
     },
     amountEuro: { type: Number, required: true },

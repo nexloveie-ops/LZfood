@@ -4,6 +4,7 @@ import { getModels } from '../getModels';
 import { getAppleWalletCertStatus } from '../utils/appleWallet/certs';
 import { getAppleWalletSettings } from '../utils/appleWallet/config';
 import { buildPlatformMemberPkpass } from '../utils/appleWallet/buildPass';
+import { loadStampRules } from '../utils/platformStamps';
 import {
   getAppleWalletStyleUpdatedAt,
   parsePassesUpdatedSince,
@@ -44,6 +45,7 @@ async function loadMemberForSerial(serialNumber: string): Promise<{
   displayName?: string;
   phone?: string;
   creditBalance?: number;
+  stampCount?: number;
   status?: string;
 } | null> {
   const memberId = parseMemberIdFromSerial(serialNumber);
@@ -246,6 +248,7 @@ router.get(
       const token =
         (auth.member.appleWalletAuthToken || '').trim() ||
         (await ensureAppleWalletAuthToken(auth.member._id));
+      const rules = await loadStampRules();
       const buf = await buildPlatformMemberPkpass(
         {
           id: String(auth.member._id),
@@ -253,6 +256,8 @@ router.get(
           displayName: auth.member.displayName,
           phone: auth.member.phone,
           creditBalance: auth.member.creditBalance,
+          stampCount: Math.max(0, Math.floor(Number(auth.member.stampCount) || 0)),
+          stampRedeemAt: rules.redeemCount,
           authenticationToken: token,
         },
         settings,
