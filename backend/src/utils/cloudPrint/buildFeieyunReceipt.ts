@@ -51,6 +51,8 @@ export type CloudPrintReceipt = {
   paymentMethod: string;
   cashAmount?: number;
   cardAmount?: number;
+  cashReceived?: number;
+  changeAmount?: number;
   memberCreditUsed?: number;
   checkedOutAt: string | Date;
   dineInPartialLineSettlements?: { orderLineItemId: string; quantity: number; amountEuro: number }[];
@@ -410,6 +412,16 @@ export function buildFeieyunReceiptContent(receipt: CloudPrintReceipt): string {
   if (receipt.paymentMethod === 'mixed') {
     lines.push(padRow('Cash', euro(receipt.cashAmount ?? 0)));
     lines.push(padRow('Card', euro(receipt.cardAmount ?? 0)));
+  }
+  if (
+    (receipt.paymentMethod === 'cash' || receipt.paymentMethod === 'mixed')
+    && (receipt.cashReceived ?? 0) > 0.001
+  ) {
+    lines.push('--------------------------------');
+    lines.push(padRow('Cash Received / 实收', euro(receipt.cashReceived ?? 0)));
+    if ((receipt.changeAmount ?? 0) > 0.001) {
+      lines.push(padRow('Change / 找零', euro(receipt.changeAmount ?? 0)));
+    }
   }
 
   const ch = channelLabel(type);

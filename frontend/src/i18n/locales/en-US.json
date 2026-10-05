@@ -459,7 +459,8 @@
       "staff_credit": "Staff credit",
       "adjustment": "Adjustment",
       "reversal": "Reversal",
-      "stamp_reward": "Stamp reward"
+      "stamp_reward": "Stamp reward",
+      "stamp_earn": "Stamps earned"
     },
     "txnDetailHeadlines": {
       "recharge": "Top-up details",
@@ -468,10 +469,15 @@
       "refund_credit": "Refund details",
       "adjustment": "Adjustment details",
       "reversal": "Reversal details",
-      "stamp_reward": "Stamp reward details"
+      "stamp_reward": "Stamp reward details",
+      "stamp_earn": "Stamps earned details"
     },
     "txnFieldType": "Type",
     "txnFieldAmount": "Amount",
+    "txnFieldStamps": "Stamps change",
+    "txnFieldStampBefore": "Stamps before",
+    "txnFieldStampAfter": "Stamps after",
+    "txnFieldSpend": "Amount paid",
     "txnFieldBalanceBefore": "Balance before",
     "txnFieldBalanceAfter": "Balance after",
     "txnFieldTime": "Time",
@@ -493,17 +499,35 @@
       "retryRefundCredit": "Manual top-up: refund credit to wallet (retry)",
       "tableCheckoutDebit": "Table checkout paid from wallet",
       "seatCheckoutDebit": "Order checkout paid from wallet",
+      "partialSeatCheckoutDebit": "Partial dine-in checkout paid from wallet",
+      "partialTableCheckoutDebit": "Partial table checkout paid from wallet",
       "reversalAfterTableFail": "Checkout update failed — wallet credit restored",
       "reversalAfterSeatFail": "Order update failed — wallet credit restored",
+      "reversalAfterPartialFail": "Partial checkout update failed — wallet credit restored",
+      "reversalAfterPartialLineMissing": "Partial checkout line missing — wallet credit restored",
+      "reversalAfterPartialTableFail": "Partial table checkout failed — wallet credit restored",
       "stripeTopUp": "Stripe top-up {{ref}}",
       "physicalTopUpCard": "Physical top-up card {{code}}",
       "qrDineInPendingCashier": "Dine-in QR wallet payment (awaiting cashier completion)",
       "qrTakeoutPendingCashier": "Takeaway QR wallet payment (awaiting cashier completion)",
       "phonePrepaidMember": "Phone order prepaid with member wallet",
       "adminRecharge": "Admin top-up",
+      "platformGuestRecharge": "Platform top-up to guest wallet",
       "topUpToTarget": "Topped up to target balance €{{amount}}",
       "adjustToTarget": "Adjusted to target balance €{{amount}}",
-      "stampReward": "Stamp reward credited €{{amount}}"
+      "stampReward": "Stamp reward credited €{{amount}}",
+      "stampEarn": "{{pay}} — earned +{{stamps}} stamps (paid €{{amount}})",
+      "stampEarnShort": "{{pay}} — earned +{{stamps}} stamps",
+      "stampEarnBelow": "{{pay}} — below stamp threshold (paid €{{amount}})",
+      "pay": {
+        "spend": "Purchase",
+        "cash": "Cash",
+        "card": "Card",
+        "member": "Wallet",
+        "memberCash": "Wallet + cash",
+        "memberCard": "Wallet + card",
+        "memberMixed": "Wallet + mixed"
+      }
     },
     "topUpCardSection": "Physical gift card",
     "topUpCardHint": "Enter the 6-character code and 6-digit PIN from the card. The face value is credited once (the card must be activated by the store).",

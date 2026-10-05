@@ -77,6 +77,8 @@ interface ReceiptData {
   paymentMethod: 'cash' | 'card' | 'mixed' | 'online' | 'member' | 'pending';
   cashAmount?: number;
   cardAmount?: number;
+  cashReceived?: number;
+  changeAmount?: number;
   memberCreditUsed?: number;
   memberPhoneSnapshot?: string;
   checkedOutAt: string;
@@ -953,29 +955,32 @@ export default function ReceiptPrint({ checkoutId, cashReceived, changeAmount, b
     fetchData();
   }, [checkoutId]);
 
+  const effectiveCashReceived = cashReceived ?? receipt?.cashReceived;
+  const effectiveChangeAmount = changeAmount ?? receipt?.changeAmount;
+
   // Auto-print once when BOTH receipt and config are ready
   useEffect(() => {
     if (receipt && configLoaded && !autoPrintDone.current) {
       autoPrintDone.current = true;
       void printBuiltReceipt(receipt, config, {
-        cashReceived,
-        changeAmount,
+        cashReceived: effectiveCashReceived,
+        changeAmount: effectiveChangeAmount,
         bundleDiscounts,
         copies: printCopies ?? copies,
       }).catch(() => {});
     }
-  }, [receipt, config, configLoaded, copies, printCopies, cashReceived, changeAmount, bundleDiscounts]);
+  }, [receipt, config, configLoaded, copies, printCopies, effectiveCashReceived, effectiveChangeAmount, bundleDiscounts]);
 
   // Manual print function exposed via window.print override
   const handleManualPrint = useCallback(() => {
     if (!receipt) return;
     void printBuiltReceipt(receipt, config, {
-      cashReceived,
-      changeAmount,
+      cashReceived: effectiveCashReceived,
+      changeAmount: effectiveChangeAmount,
       bundleDiscounts,
       copies: 1,
     }).catch(() => {});
-  }, [receipt, config, cashReceived, changeAmount, bundleDiscounts]);
+  }, [receipt, config, effectiveCashReceived, effectiveChangeAmount, bundleDiscounts]);
 
   // Expose manual print globally so parent buttons can use window.print()
   useEffect(() => {
@@ -1192,11 +1197,11 @@ export default function ReceiptPrint({ checkoutId, cashReceived, changeAmount, b
         </>
       )}
 
-      {receipt.paymentMethod === 'cash' && cashReceived != null && cashReceived > 0 && (
+      {receipt.paymentMethod === 'cash' && effectiveCashReceived != null && effectiveCashReceived > 0 && (
         <>
           <div style={{ borderTop: '2px dashed #000', margin: '8px 0' }} />
-          <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Cash Received</span><span>€{cashReceived.toFixed(2)}</span></div>
-          {changeAmount != null && changeAmount > 0 && <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Change</span><span>€{changeAmount.toFixed(2)}</span></div>}
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Cash Received</span><span>€{effectiveCashReceived.toFixed(2)}</span></div>
+          {effectiveChangeAmount != null && effectiveChangeAmount > 0 && <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Change</span><span>€{effectiveChangeAmount.toFixed(2)}</span></div>}
         </>
       )}
       <ReceiptOrderTypeIconView type={receiptPrimaryOrderType(receipt)} />

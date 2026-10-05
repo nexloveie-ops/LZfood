@@ -90,8 +90,39 @@ function mModels() {
     CustomerProfile: mongoose.Model<any>;
     PlatformMember: mongoose.Model<any>;
     PlatformMemberWalletTxn: mongoose.Model<any>;
+    PlatformMemberStampTxn: mongoose.Model<any>;
     PlatformTopUpCard: mongoose.Model<any>;
   };
+}
+
+/** Map stamp earn ledger → same shape as wallet txn for member 流水 UI. */
+function stampEarnToTxnRow(doc: Record<string, unknown>): Record<string, unknown> {
+  const stampsDelta = Math.max(0, Math.floor(Number(doc.stampsDelta) || 0));
+  const stampCountBefore = Math.max(0, Math.floor(Number(doc.stampCountBefore) || 0));
+  const stampCountAfter = Math.max(0, Math.floor(Number(doc.stampCountAfter) || 0));
+  return {
+    _id: doc._id,
+    type: 'stamp_earn',
+    ledger: 'stamp',
+    amountEuro: Number(doc.amountEuro) || 0,
+    balanceBefore: stampCountBefore,
+    balanceAfter: stampCountAfter,
+    stampsDelta,
+    stampCountBefore,
+    stampCountAfter,
+    note: doc.note || '',
+    checkoutId: doc.checkoutId,
+    storeId: doc.storeId,
+    createdAt: doc.createdAt,
+    updatedAt: doc.updatedAt,
+  };
+}
+
+function txnCreatedAtMs(row: Record<string, unknown>): number {
+  const d = row.createdAt;
+  if (d instanceof Date) return d.getTime();
+  const t = Date.parse(String(d || ''));
+  return Number.isFinite(t) ? t : 0;
 }
 
 type MemberTxnDetailLine = {
@@ -601,13 +632,73 @@ router.post('/verify-pin', async (req: Request, res: Response, next: NextFunctio
   }
 });
 
-/** 收银结账：按手机号查会员展示名与储值余额（无需 PIN）；须 checkout 权限 */
+/** Apple Wallet / 会员卡 QR：`LZM:<memberObjectId>`（见 memberWalletQrPayload） */
+function parseMemberIdFromCashierQuery(raw: unknown): string | null {
+  const s = String(raw ?? '').trim();
+  if (!s) return null;
+  const m = /^LZM:(.+)$/i.exec(s);
+  const id = (m ? m[1] : s).trim();
+  return mongoose.Types.ObjectId.isValid(id) ? id : null;
+}
+
+/** 收银结账：按手机号或会员卡 QR（LZM:…）查会员；须 checkout 权限 */
 router.get(
   '/cashier-lookup',
   ...requireAuthSameStore,
   requirePermission('checkout:process'),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
+      const { Member } = mModels();
+      const rules = await loadStampRules();
+      const memberId =
+        parseMemberIdFromCashierQuery(req.query.qr) ||
+        parseMemberIdFromCashierQuery(req.query.memberId);
+
+      if (memberId) {
+        const platform = await findPlatformMemberById(memberId);
+        if (platform) {
+          await ensurePlatformMemberNo(platform._id);
+          const fresh = (await findPlatformMemberById(platform._id)) || platform;
+          const staffHere = isStaffAtStore(fresh, req.storeId!);
+          res.json({
+            memberNo: Number(fresh.memberNo) || 0,
+            displayName: fresh.displayName ?? '',
+            phone: fresh.phone,
+            creditBalance: Number(fresh.creditBalance) || 0,
+            stampCount: Math.max(0, Math.floor(Number(fresh.stampCount) || 0)),
+            stampRedeemAt: rules.redeemCount,
+            isStaffHere: staffHere,
+            staffBalance: staffHere ? staffBalanceAtStore(fresh, req.storeId!) : null,
+          });
+          return;
+        }
+        const legacy = (await Member.findOne({
+          _id: memberId,
+          storeId: req.storeId,
+          status: 'active',
+        }).lean()) as {
+          memberNo?: number;
+          displayName?: string;
+          phone?: string;
+          creditBalance?: number;
+        } | null;
+        if (!legacy?.phone) {
+          res.json(null);
+          return;
+        }
+        res.json({
+          memberNo: Number(legacy.memberNo) || 0,
+          displayName: legacy.displayName ?? '',
+          phone: legacy.phone,
+          creditBalance: Number(legacy.creditBalance) || 0,
+          stampCount: 0,
+          stampRedeemAt: rules.redeemCount,
+          isStaffHere: false,
+          staffBalance: null,
+        });
+        return;
+      }
+
       const phone = normalizeMemberPhone(String(req.query.phone || ''));
       if (!phone) {
         res.json(null);
@@ -618,7 +709,6 @@ router.get(
         await ensurePlatformMemberNo(platform._id);
         const fresh = (await findPlatformMemberById(platform._id)) || platform;
         const staffHere = isStaffAtStore(fresh, req.storeId!);
-        const rules = await loadStampRules();
         res.json({
           memberNo: Number(fresh.memberNo) || 0,
           displayName: fresh.displayName ?? '',
@@ -641,7 +731,6 @@ router.get(
         res.json(null);
         return;
       }
-      const rules = await loadStampRules();
       res.json({
         memberNo: doc.memberNo,
         displayName: doc.displayName ?? '',
@@ -783,7 +872,7 @@ router.get('/me/apple-wallet-pass', memberAuthMiddleware, async (req: Request, r
 
 router.get('/me/transactions', memberAuthMiddleware, async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { MemberWalletTxn, PlatformMemberWalletTxn } = mModels();
+    const { MemberWalletTxn, PlatformMemberWalletTxn, PlatformMemberStampTxn } = mModels();
     const midRaw = req.memberAuth!.memberId;
     const memberIdQuery = mongoose.Types.ObjectId.isValid(midRaw)
       ? new mongoose.Types.ObjectId(midRaw)
@@ -793,16 +882,33 @@ router.get('/me/transactions', memberAuthMiddleware, async (req: Request, res: R
     const filter = platform
       ? { memberId: memberIdQuery }
       : { storeId: req.storeId, memberId: memberIdQuery };
+    const stampFilter = { memberId: memberIdQuery, type: 'earn' as const };
+
+    const mergeWalletAndStampEarn = async (take: number): Promise<Record<string, unknown>[]> => {
+      if (!platform) {
+        return (await TxnModel.find(filter).sort({ createdAt: -1 }).limit(take).lean()) as Record<
+          string,
+          unknown
+        >[];
+      }
+      const [wallets, stamps] = await Promise.all([
+        TxnModel.find(filter).sort({ createdAt: -1 }).limit(take).lean() as Promise<Record<string, unknown>[]>,
+        PlatformMemberStampTxn.find(stampFilter)
+          .sort({ createdAt: -1 })
+          .limit(take)
+          .lean() as Promise<Record<string, unknown>[]>,
+      ]);
+      return [...wallets, ...stamps.map(stampEarnToTxnRow)].sort(
+        (a, b) => txnCreatedAtMs(b) - txnCreatedAtMs(a),
+      );
+    };
 
     /** 兼容旧客户端：仅传 limit 时仍返回纯数组 */
     const rawLimit = req.query.limit;
     const hasPageParam = req.query.page != null && String(req.query.page).trim() !== '';
     if (rawLimit != null && String(rawLimit).trim() !== '' && !hasPageParam) {
       const limit = Math.min(100, Math.max(1, Number(rawLimit) || 50));
-      const list = (await TxnModel.find(filter).sort({ createdAt: -1 }).limit(limit).lean()) as Record<
-        string,
-        unknown
-      >[];
+      const list = (await mergeWalletAndStampEarn(limit)).slice(0, limit);
       const labels = await storeLabelsByIds(list.map((t) => t.storeId || (!platform ? req.storeId : null)));
       res.json(list.map((t) => withTxnStore(t, labels, platform ? null : req.storeId)));
       return;
@@ -811,15 +917,17 @@ router.get('/me/transactions', memberAuthMiddleware, async (req: Request, res: R
     const pageSize = Math.min(50, Math.max(1, Number(req.query.pageSize) || 10));
     const page = Math.max(1, Number(req.query.page) || 1);
     const skip = (page - 1) * pageSize;
-    const [total, listRaw] = await Promise.all([
+    const take = skip + pageSize;
+    const [walletTotal, stampTotal, merged] = await Promise.all([
       TxnModel.countDocuments(filter),
-      TxnModel.find(filter).sort({ createdAt: -1 }).skip(skip).limit(pageSize).lean(),
+      platform ? PlatformMemberStampTxn.countDocuments(stampFilter) : Promise.resolve(0),
+      mergeWalletAndStampEarn(take),
     ]);
-    const list = listRaw as Record<string, unknown>[];
+    const list = merged.slice(skip, skip + pageSize);
     const labels = await storeLabelsByIds(list.map((t) => t.storeId || (!platform ? req.storeId : null)));
     res.json({
       items: list.map((t) => withTxnStore(t, labels, platform ? null : req.storeId)),
-      total,
+      total: walletTotal + stampTotal,
       page,
       pageSize,
     });
@@ -838,28 +946,48 @@ router.get('/me/transactions/:txnId/detail', memberAuthMiddleware, async (req: R
     }
     const memberId = new mongoose.Types.ObjectId(req.memberAuth!.memberId);
     const platform = await findPlatformMemberById(memberId);
-    const { MemberWalletTxn, PlatformMemberWalletTxn } = mModels();
-    const txn = platform
-      ? await PlatformMemberWalletTxn.findOne({
+    const { MemberWalletTxn, PlatformMemberWalletTxn, PlatformMemberStampTxn } = mModels();
+    let txn: Record<string, unknown> | null = platform
+      ? ((await PlatformMemberWalletTxn.findOne({
           _id: new mongoose.Types.ObjectId(rawId),
           memberId,
-        }).lean()
-      : await MemberWalletTxn.findOne({
+        }).lean()) as Record<string, unknown> | null)
+      : ((await MemberWalletTxn.findOne({
           _id: new mongoose.Types.ObjectId(rawId),
           storeId: req.storeId,
           memberId,
-        }).lean();
+        }).lean()) as Record<string, unknown> | null);
+
+    let isStampEarn = false;
+    if (!txn && platform) {
+      const stamp = (await PlatformMemberStampTxn.findOne({
+        _id: new mongoose.Types.ObjectId(rawId),
+        memberId,
+        type: 'earn',
+      }).lean()) as Record<string, unknown> | null;
+      if (stamp) {
+        txn = stampEarnToTxnRow(stamp);
+        isStampEarn = true;
+      }
+    }
     if (!txn) throw createAppError('NOT_FOUND', '记录不存在');
 
-    const txnStore = (txn as { storeId?: mongoose.Types.ObjectId }).storeId || req.storeId!;
-    const { lines, bundles } = await buildMemberWalletTxnDetail({
-      txn: txn as Record<string, unknown>,
-      storeId: txnStore,
-      memberId,
-    });
+    const txnStore = (txn.storeId as mongoose.Types.ObjectId | undefined) || req.storeId!;
+    const { lines, bundles } = isStampEarn
+      ? { lines: [] as MemberTxnDetailLine[], bundles: [] as MemberTxnBundleOffer[] }
+      : await buildMemberWalletTxnDetail({
+          txn,
+          storeId: txnStore,
+          memberId,
+        });
     const labels = await storeLabelsByIds([txnStore]);
     const store = labels.get(String(txnStore)) || null;
-    res.json({ lines, bundles, store });
+    res.json({
+      lines,
+      bundles,
+      store,
+      txn: isStampEarn ? withTxnStore(txn, labels, null) : undefined,
+    });
   } catch (err) {
     next(err);
   }

@@ -1,6 +1,7 @@
 import {
   DEFAULT_STAMP_RULES,
   applyStampRedeem,
+  buildStampEarnNote,
   parseStampRules,
   shouldSkipStampAward,
   stampsEarnedFromSpend,
@@ -9,6 +10,20 @@ import {
   STAMP_REWARD_EURO_KEY,
   normalizeStampRulesInput,
 } from './platformStamps';
+
+describe('buildStampEarnNote', () => {
+  it('labels cash / card / hybrid payments for member ledger', () => {
+    expect(
+      buildStampEarnNote({ paymentMethod: 'cash', memberCreditUsed: 0, spendEuro: 17, earned: 1 }),
+    ).toBe('现金支付积点 +1（实付 €17.00）');
+    expect(
+      buildStampEarnNote({ paymentMethod: 'card', memberCreditUsed: 0, spendEuro: 10, earned: 0 }),
+    ).toBe('刷卡支付未达积点门槛（实付 €10.00）');
+    expect(
+      buildStampEarnNote({ paymentMethod: 'cash', memberCreditUsed: 5, spendEuro: 20, earned: 1 }),
+    ).toBe('储值+现金积点 +1（实付 €20.00）');
+  });
+});
 
 describe('stampsEarnedFromSpend', () => {
   it('awards floor of spend / threshold in cents', () => {

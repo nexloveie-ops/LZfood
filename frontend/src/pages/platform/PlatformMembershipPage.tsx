@@ -117,6 +117,7 @@ function txnTypeLabel(type: string): string {
     adjustment: '调整',
     reversal: '冲正',
     stamp_reward: '印花兑换',
+    stamp_earn: '积点',
   };
   return map[type] || type;
 }
@@ -1429,8 +1430,16 @@ export default function PlatformMembershipPage() {
                                   <td style={{ padding: '6px 4px' }}>{t.wallet === 'staff' ? '员工' : '客人'}</td>
                                   <td style={{ padding: '6px 4px' }}>{txnStoreLabel(t)}</td>
                                   <td style={{ padding: '6px 4px' }}>{txnTypeLabel(t.type)}</td>
-                                  <td style={{ padding: '6px 4px' }}>{Number(t.amountEuro).toFixed(2)}</td>
-                                  <td style={{ padding: '6px 4px' }}>{Number(t.balanceAfter).toFixed(2)}</td>
+                                  <td style={{ padding: '6px 4px' }}>
+                                    {t.type === 'stamp_earn'
+                                      ? `+${Math.max(0, Math.floor(Number((t as { stampsDelta?: number }).stampsDelta) || 0))} 印花 · €${Number(t.amountEuro).toFixed(2)}`
+                                      : Number(t.amountEuro).toFixed(2)}
+                                  </td>
+                                  <td style={{ padding: '6px 4px' }}>
+                                    {t.type === 'stamp_earn'
+                                      ? `${Math.max(0, Math.floor(Number(t.balanceAfter) || 0))} 印花`
+                                      : Number(t.balanceAfter).toFixed(2)}
+                                  </td>
                                   <td style={{ padding: '6px 4px' }}>{t.note || '—'}</td>
                                 </tr>
                               ))}

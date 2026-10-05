@@ -161,8 +161,11 @@ export default function TakeoutOrderList() {
           ? buildMemberFullWalletCheckoutBody(total, memberPreview.phone)
           : (() => {
               const b: Record<string, unknown> = { paymentMethod };
-              if (paymentMethod === 'cash') b.cashAmount = total;
-              else if (paymentMethod === 'card') b.cardAmount = total;
+              if (paymentMethod === 'cash') {
+                b.cashAmount = total;
+                b.cashReceived = cashReceivedNum;
+                b.changeAmount = changeAmount;
+              } else if (paymentMethod === 'card') b.cardAmount = total;
               else {
                 b.cashAmount = Number(cashAmount);
                 b.cardAmount = Number(cardAmount);

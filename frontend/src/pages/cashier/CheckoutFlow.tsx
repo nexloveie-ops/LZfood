@@ -274,8 +274,11 @@ export default function CheckoutFlow() {
           body.memberCreditAmount = memberCreditUse;
         }
         if (remainderToPay > 0.001) {
-          if (paymentMethod === 'cash') body.cashAmount = remainderToPay;
-          else if (paymentMethod === 'card') body.cardAmount = remainderToPay;
+          if (paymentMethod === 'cash') {
+            body.cashAmount = remainderToPay;
+            body.cashReceived = cashReceivedNum;
+            body.changeAmount = changeAmount;
+          } else if (paymentMethod === 'card') body.cardAmount = remainderToPay;
           else if (paymentMethod === 'mixed') {
             body.cashAmount = Number(cashAmount);
             body.cardAmount = Number(cardAmount);

@@ -81,6 +81,7 @@ function models() {
     PlatformConfig: mongoose.Model<any>;
     PlatformMember: mongoose.Model<any>;
     PlatformMemberWalletTxn: mongoose.Model<any>;
+    PlatformMemberStampTxn: mongoose.Model<any>;
   };
 }
 
@@ -1381,7 +1382,7 @@ router.post('/membership/members', ...platformAuth, async (req: Request, res: Re
 
 router.get('/membership/members/:id', ...platformAuth, async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { PlatformMember, PlatformMemberWalletTxn, Store } = models();
+    const { PlatformMember, PlatformMemberWalletTxn, PlatformMemberStampTxn, Store } = models();
     const id = paramStr(req.params.id);
     if (!mongoose.Types.ObjectId.isValid(id)) throw createAppError('VALIDATION_ERROR', 'Invalid id');
     const member = await PlatformMember.findById(id).lean() as unknown as {
@@ -1401,7 +1402,52 @@ router.get('/membership/members/:id', ...platformAuth, async (req: Request, res:
     const stores = await Store.find({}).select('_id slug displayName status').sort({ slug: 1 }).lean();
     const storeMap = new Map(stores.map((s: any) => [String(s._id), s]));
     const staffStores = mapStaffStores(m.staffStoreIds, m.staffBalances, storeMap);
-    const txns = await PlatformMemberWalletTxn.find({ memberId: m._id }).sort({ createdAt: -1 }).limit(100).lean();
+    const [walletTxns, stampEarns] = await Promise.all([
+      PlatformMemberWalletTxn.find({ memberId: m._id }).sort({ createdAt: -1 }).limit(100).lean(),
+      PlatformMemberStampTxn.find({ memberId: m._id, type: 'earn' }).sort({ createdAt: -1 }).limit(100).lean(),
+    ]);
+    const mappedWallet = walletTxns.map((t: any) => {
+      const storeId = t.storeId ? String(t.storeId) : null;
+      const s = storeId ? storeMap.get(storeId) : null;
+      return {
+        _id: String(t._id),
+        wallet: t.wallet,
+        storeId,
+        storeSlug: s?.slug || '',
+        storeDisplayName: s?.displayName || '',
+        type: t.type,
+        amountEuro: t.amountEuro,
+        balanceBefore: t.balanceBefore,
+        balanceAfter: t.balanceAfter,
+        note: t.note || '',
+        orderId: t.orderId ? String(t.orderId) : null,
+        stampsDelta: null as number | null,
+        createdAt: t.createdAt,
+      };
+    });
+    const mappedStamps = stampEarns.map((t: any) => {
+      const storeId = t.storeId ? String(t.storeId) : null;
+      const s = storeId ? storeMap.get(storeId) : null;
+      const stampsDelta = Math.max(0, Math.floor(Number(t.stampsDelta) || 0));
+      return {
+        _id: String(t._id),
+        wallet: 'guest' as const,
+        storeId,
+        storeSlug: s?.slug || '',
+        storeDisplayName: s?.displayName || '',
+        type: 'stamp_earn',
+        amountEuro: Number(t.amountEuro) || 0,
+        balanceBefore: Math.max(0, Math.floor(Number(t.stampCountBefore) || 0)),
+        balanceAfter: Math.max(0, Math.floor(Number(t.stampCountAfter) || 0)),
+        note: t.note || '',
+        orderId: null as string | null,
+        stampsDelta,
+        createdAt: t.createdAt,
+      };
+    });
+    const txns = [...mappedWallet, ...mappedStamps]
+      .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
+      .slice(0, 100);
     res.json({
       _id: String(m._id),
       phone: m.phone,
@@ -1420,24 +1466,7 @@ router.get('/membership/members/:id', ...platformAuth, async (req: Request, res:
         displayName: s.displayName,
         status: s.status,
       })),
-      txns: txns.map((t: any) => {
-        const storeId = t.storeId ? String(t.storeId) : null;
-        const s = storeId ? storeMap.get(storeId) : null;
-        return {
-          _id: String(t._id),
-          wallet: t.wallet,
-          storeId,
-          storeSlug: s?.slug || '',
-          storeDisplayName: s?.displayName || '',
-          type: t.type,
-          amountEuro: t.amountEuro,
-          balanceBefore: t.balanceBefore,
-          balanceAfter: t.balanceAfter,
-          note: t.note || '',
-          orderId: t.orderId ? String(t.orderId) : null,
-          createdAt: t.createdAt,
-        };
-      }),
+      txns,
     });
   } catch (err) {
     next(err);

@@ -566,6 +566,10 @@ export default function UnifiedOrderCenter() {
           body.cashAmount = mixed.cashAmount;
           body.cardAmount = mixed.cardAmount;
         }
+        if (cashMeta && (paymentMethod === 'cash' || paymentMethod === 'mixed')) {
+          body.cashReceived = cashMeta.cashReceived;
+          body.changeAmount = cashMeta.changeAmount;
+        }
       }
       if (voucher?.code) body.numberedVoucherCode = voucher.code;
       if (coupon && !voucher?.code) {
@@ -618,6 +622,10 @@ export default function UnifiedOrderCenter() {
           body.cashAmount = mixed.cashAmount;
           body.cardAmount = mixed.cardAmount;
         }
+        if (cashMeta && (paymentMethod === 'cash' || paymentMethod === 'mixed')) {
+          body.cashReceived = cashMeta.cashReceived;
+          body.changeAmount = cashMeta.changeAmount;
+        }
       }
       const res = await apiFetch(`/api/checkout/table/${tableNumber}`, {
         method: 'POST',
@@ -658,6 +666,10 @@ export default function UnifiedOrderCenter() {
           if (paymentMethod === 'mixed' && mixed) {
             body.cashAmount = mixed.cashAmount;
             body.cardAmount = mixed.cardAmount;
+          }
+          if (cashMeta && (paymentMethod === 'cash' || paymentMethod === 'mixed')) {
+            body.cashReceived = cashMeta.cashReceived;
+            body.changeAmount = cashMeta.changeAmount;
           }
         }
         const res = await apiFetch(`/api/checkout/dine-in-partial-table/${tableNumber}`, {

@@ -2539,8 +2539,11 @@ export default function CashierOrder() {
         checkoutBody = buildMemberFullWalletCheckoutBody(payAmount, memberPreview.phone);
       } else {
         checkoutBody = { paymentMethod };
-        if (paymentMethod === 'cash') checkoutBody.cashAmount = payAmount;
-        else if (paymentMethod === 'card') checkoutBody.cardAmount = payAmount;
+        if (paymentMethod === 'cash') {
+          checkoutBody.cashAmount = payAmount;
+          checkoutBody.cashReceived = cashReceivedNum;
+          checkoutBody.changeAmount = changeAmount;
+        } else if (paymentMethod === 'card') checkoutBody.cardAmount = payAmount;
         else { checkoutBody.cashAmount = Number(mixedCash); checkoutBody.cardAmount = Number(mixedCard); }
       }
       if (bundleTotals.bundleDiscount > 0) {

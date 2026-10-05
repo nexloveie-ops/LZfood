@@ -458,7 +458,8 @@
       "staff_credit": "员工额度充值",
       "adjustment": "调整",
       "reversal": "冲正",
-      "stamp_reward": "印花兑换"
+      "stamp_reward": "印花兑换",
+      "stamp_earn": "积点"
     },
     "txnDetailHeadlines": {
       "recharge": "充值明细",
@@ -467,10 +468,15 @@
       "refund_credit": "退款明细",
       "adjustment": "余额调整明细",
       "reversal": "冲正明细",
-      "stamp_reward": "印花兑换明细"
+      "stamp_reward": "印花兑换明细",
+      "stamp_earn": "积点明细"
     },
     "txnFieldType": "类型",
     "txnFieldAmount": "变动金额",
+    "txnFieldStamps": "积点变动",
+    "txnFieldStampBefore": "变动前印花",
+    "txnFieldStampAfter": "变动后印花",
+    "txnFieldSpend": "实付金额",
     "txnFieldBalanceBefore": "变动前余额",
     "txnFieldBalanceAfter": "变动后余额",
     "txnFieldTime": "时间",
@@ -492,17 +498,35 @@
       "retryRefundCredit": "补录：订单退款退回储值（系统重试）",
       "tableCheckoutDebit": "整桌结账储值抵扣",
       "seatCheckoutDebit": "单笔结账储值抵扣",
+      "partialSeatCheckoutDebit": "堂食后结部分结账储值抵扣",
+      "partialTableCheckoutDebit": "堂食后结按桌部分结账储值抵扣",
       "reversalAfterTableFail": "结账后更新订单失败，冲回储值",
       "reversalAfterSeatFail": "更新订单失败，冲回储值",
+      "reversalAfterPartialFail": "部分结账更新订单失败，冲回储值",
+      "reversalAfterPartialLineMissing": "部分结账行缺失，冲回储值",
+      "reversalAfterPartialTableFail": "按桌部分结账失败，冲回储值",
       "stripeTopUp": "Stripe 自助充值 {{ref}}",
       "physicalTopUpCard": "实体储值卡 {{code}}",
       "qrDineInPendingCashier": "堂食扫码储值支付（待收银收尾）",
       "qrTakeoutPendingCashier": "外卖自提扫码储值支付（待收银收尾）",
       "phonePrepaidMember": "电话单下单时已付（会员储值）",
       "adminRecharge": "后台充值",
+      "platformGuestRecharge": "平台手动充值客人钱包",
       "topUpToTarget": "充值至目标余额 €{{amount}}",
       "adjustToTarget": "调整至目标余额 €{{amount}}",
-      "stampReward": "印花兑换入账 €{{amount}}"
+      "stampReward": "印花兑换入账 €{{amount}}",
+      "stampEarn": "{{pay}}积点 +{{stamps}}（实付 €{{amount}}）",
+      "stampEarnShort": "{{pay}}积点 +{{stamps}}",
+      "stampEarnBelow": "{{pay}}未达积点门槛（实付 €{{amount}}）",
+      "pay": {
+        "spend": "消费",
+        "cash": "现金支付",
+        "card": "刷卡支付",
+        "member": "储值支付",
+        "memberCash": "储值+现金",
+        "memberCard": "储值+刷卡",
+        "memberMixed": "储值混合支付"
+      }
     },
     "topUpCardSection": "实体充值卡",
     "topUpCardHint": "输入卡背面的 6 位卡号与 6 位 PIN，面额将一次性入账（须门店已激活该卡）。",

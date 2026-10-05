@@ -105,8 +105,11 @@ export default function PhoneOrderList() {
           ? buildMemberFullWalletCheckoutBody(selectedTotal, memberPreview.phone)
           : (() => {
               const b: Record<string, unknown> = { paymentMethod };
-              if (paymentMethod === 'cash') b.cashAmount = selectedTotal;
-              else if (paymentMethod === 'card') b.cardAmount = selectedTotal;
+              if (paymentMethod === 'cash') {
+                b.cashAmount = selectedTotal;
+                b.cashReceived = cashReceivedNum;
+                b.changeAmount = changeAmount;
+              } else if (paymentMethod === 'card') b.cardAmount = selectedTotal;
               else {
                 b.cashAmount = Number(mixedCash);
                 b.cardAmount = Number(mixedCard);

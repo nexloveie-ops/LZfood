@@ -44,6 +44,10 @@ type Txn = {
   stripePaymentIntentId?: string;
   operatorAdminId?: string;
   store?: TxnStore | null;
+  ledger?: string;
+  stampsDelta?: number;
+  stampCountBefore?: number;
+  stampCountAfter?: number;
 };
 
 function idStr(v: unknown): string | undefined {
@@ -217,20 +221,45 @@ function TxnDetailModal({
             <span>{storeLabel}</span>
           </div>
         ) : null}
-        <div className="mp-kv">
-          <span>{t('member.txnFieldAmount')}</span>
-          <span className={`mp-kv-amt ${txn.amountEuro < 0 ? 'is-out' : 'is-in'}`}>
-            {txn.amountEuro >= 0 ? '+' : ''}€{Number(txn.amountEuro).toFixed(2)}
-          </span>
-        </div>
-        <div className="mp-kv">
-          <span>{t('member.txnFieldBalanceBefore')}</span>
-          <span>€{Number(txn.balanceBefore).toFixed(2)}</span>
-        </div>
-        <div className="mp-kv">
-          <span>{t('member.txnFieldBalanceAfter')}</span>
-          <span>€{Number(txn.balanceAfter).toFixed(2)}</span>
-        </div>
+        {txn.type === 'stamp_earn' ? (
+          <>
+            <div className="mp-kv">
+              <span>{t('member.txnFieldStamps')}</span>
+              <span className="mp-kv-amt is-in">
+                +{Math.max(0, Math.floor(Number(txn.stampsDelta ?? Number(txn.balanceAfter) - Number(txn.balanceBefore)) || 0))}
+              </span>
+            </div>
+            <div className="mp-kv">
+              <span>{t('member.txnFieldSpend')}</span>
+              <span>€{Number(txn.amountEuro).toFixed(2)}</span>
+            </div>
+            <div className="mp-kv">
+              <span>{t('member.txnFieldStampBefore')}</span>
+              <span>{Math.max(0, Math.floor(Number(txn.stampCountBefore ?? txn.balanceBefore) || 0))}</span>
+            </div>
+            <div className="mp-kv">
+              <span>{t('member.txnFieldStampAfter')}</span>
+              <span>{Math.max(0, Math.floor(Number(txn.stampCountAfter ?? txn.balanceAfter) || 0))}</span>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="mp-kv">
+              <span>{t('member.txnFieldAmount')}</span>
+              <span className={`mp-kv-amt ${txn.amountEuro < 0 ? 'is-out' : 'is-in'}`}>
+                {txn.amountEuro >= 0 ? '+' : ''}€{Number(txn.amountEuro).toFixed(2)}
+              </span>
+            </div>
+            <div className="mp-kv">
+              <span>{t('member.txnFieldBalanceBefore')}</span>
+              <span>€{Number(txn.balanceBefore).toFixed(2)}</span>
+            </div>
+            <div className="mp-kv">
+              <span>{t('member.txnFieldBalanceAfter')}</span>
+              <span>€{Number(txn.balanceAfter).toFixed(2)}</span>
+            </div>
+          </>
+        )}
         <div className="mp-kv">
           <span>{t('member.txnFieldTime')}</span>
           <span>{new Date(txn.createdAt).toLocaleString()}</span>
@@ -955,15 +984,24 @@ export default function MemberPortalPage() {
                       {x.store?.displayName || x.store?.slug
                         ? `${x.store.displayName || x.store.slug} · `
                         : ''}
-                      {new Date(x.createdAt).toLocaleString()} · {t('member.balance')} €{x.balanceAfter.toFixed(2)}
+                      {new Date(x.createdAt).toLocaleString()}
+                      {x.type === 'stamp_earn'
+                        ? ` · ${t('member.stamps', '印花')} ${Math.max(0, Math.floor(Number(x.stampCountAfter ?? x.balanceAfter) || 0))}`
+                        : ` · ${t('member.balance')} €${Number(x.balanceAfter).toFixed(2)}`}
                     </div>
                     {x.note ? (
                       <div className="mp-txn-note">{translateMemberWalletTxnNote(x.note, t)}</div>
                     ) : null}
                   </div>
-                  <span className={`mp-txn-amt ${x.amountEuro < 0 ? 'is-out' : 'is-in'}`}>
-                    {x.amountEuro >= 0 ? '+' : ''}€{x.amountEuro.toFixed(2)}
-                  </span>
+                  {x.type === 'stamp_earn' ? (
+                    <span className="mp-txn-amt is-in">
+                      +{Math.max(0, Math.floor(Number(x.stampsDelta ?? x.balanceAfter - x.balanceBefore) || 0))}
+                    </span>
+                  ) : (
+                    <span className={`mp-txn-amt ${x.amountEuro < 0 ? 'is-out' : 'is-in'}`}>
+                      {x.amountEuro >= 0 ? '+' : ''}€{Number(x.amountEuro).toFixed(2)}
+                    </span>
+                  )}
                 </button>
               );
             })

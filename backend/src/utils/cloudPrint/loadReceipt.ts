@@ -142,6 +142,8 @@ export async function loadCloudPrintReceipt(
     paymentMethod: string;
     cashAmount?: number;
     cardAmount?: number;
+    cashReceived?: number;
+    changeAmount?: number;
     memberCreditUsed?: number;
     checkedOutAt?: Date;
     dineInPartialLineSettlements?: { orderLineItemId: mongoose.Types.ObjectId; quantity: number; amountEuro: number }[];
@@ -166,6 +168,8 @@ export async function loadCloudPrintReceipt(
     paymentMethod: String(checkout.paymentMethod || 'cash'),
     cashAmount: checkout.cashAmount,
     cardAmount: checkout.cardAmount,
+    cashReceived: checkout.cashReceived,
+    changeAmount: checkout.changeAmount,
     memberCreditUsed: checkout.memberCreditUsed,
     checkedOutAt: checkout.checkedOutAt || new Date(),
     ...(partial.length > 0 ? { dineInPartialLineSettlements: partial } : {}),

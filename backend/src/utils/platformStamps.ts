@@ -196,6 +196,34 @@ async function resolveStampMember(opts: {
   return null;
 }
 
+/** 会员流水可读备注：支付方式 + 实付 + 积点 */
+export function buildStampEarnNote(opts: {
+  paymentMethod?: unknown;
+  memberCreditUsed?: unknown;
+  spendEuro: number;
+  earned: number;
+}): string {
+  const pm = String(opts.paymentMethod || '').toLowerCase();
+  const credit = Number(opts.memberCreditUsed) || 0;
+  let payLabel = '消费';
+  if (pm === 'member' || (credit > 0.001 && opts.spendEuro <= 0.001)) {
+    payLabel = '储值支付';
+  } else if (credit > 0.001) {
+    if (pm === 'card' || pm === 'online') payLabel = '储值+刷卡';
+    else if (pm === 'cash') payLabel = '储值+现金';
+    else payLabel = '储值混合支付';
+  } else if (pm === 'cash') {
+    payLabel = '现金支付';
+  } else if (pm === 'card' || pm === 'online') {
+    payLabel = '刷卡支付';
+  }
+  const spend = round2(opts.spendEuro);
+  if (opts.earned > 0) {
+    return `${payLabel}积点 +${opts.earned}（实付 €${spend.toFixed(2)}）`;
+  }
+  return `${payLabel}未达积点门槛（实付 €${spend.toFixed(2)}）`;
+}
+
 /**
  * 结账成功后发印花：floor(实付 / 门槛)；满 redeemCount 自动兑钱包。
  * 员工钱包 / hide 单跳过。同一 checkout 幂等。
@@ -213,6 +241,8 @@ export async function awardStampsForCheckout(
       memberId?: unknown;
       memberWallet?: unknown;
       memberPhoneSnapshot?: unknown;
+      memberCreditUsed?: unknown;
+      paymentMethod?: unknown;
       orderIds?: unknown[];
     } | null;
     if (!checkout) return;
@@ -238,7 +268,14 @@ export async function awardStampsForCheckout(
     if (!member) return;
 
     const rules = await loadStampRules();
-    const earned = stampsEarnedFromSpend(Number(checkout.totalAmount) || 0, rules.earnEuro);
+    const spendEuro = round2(Number(checkout.totalAmount) || 0);
+    const earned = stampsEarnedFromSpend(spendEuro, rules.earnEuro);
+    const earnNote = buildStampEarnNote({
+      paymentMethod: checkout.paymentMethod,
+      memberCreditUsed: checkout.memberCreditUsed,
+      spendEuro,
+      earned,
+    });
 
     const existingEarn = await PlatformMemberStampTxn.findOne({ checkoutId, type: 'earn' }).lean();
     if (!existingEarn) {
@@ -252,9 +289,9 @@ export async function awardStampsForCheckout(
           stampsDelta: earned,
           stampCountBefore: before,
           stampCountAfter: afterEarn,
-          amountEuro: round2(Number(checkout.totalAmount) || 0),
+          amountEuro: spendEuro,
           checkoutId,
-          note: earned > 0 ? `消费积点 +${earned}` : '消费未达积点门槛',
+          note: earnNote,
         });
       } catch (err) {
         if (!isDupKeyError(err)) throw err;

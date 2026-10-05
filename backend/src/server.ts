@@ -26,6 +26,7 @@ import taxCategoriesRouter from './routes/taxCategories';
 import salesForecastRouter from './routes/salesForecast';
 import offersRouter from './routes/offers';
 import { createPaymentsRouter } from './routes/payments';
+import terminalRouter from './routes/terminal';
 import couponsRouter from './routes/coupons';
 import voucherCampaignsRouter from './routes/voucherCampaigns';
 import platformRouter from './routes/platform';
@@ -155,6 +156,9 @@ app.use('/api/offers', offersRouter);
 
 // Payments routes
 app.use('/api/payments', createPaymentsRouter(io));
+
+// Stripe Terminal / Tap to Pay（店员会话 + X-Store-Slug）
+app.use('/api/terminal', terminalRouter);
 
 // Coupons routes
 app.use('/api/coupons', couponsRouter);

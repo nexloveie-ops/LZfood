@@ -8,6 +8,10 @@ const CheckoutSchema = new mongoose.Schema({
   paymentMethod: { type: String, enum: ['cash', 'card', 'mixed', 'online', 'member'], required: true },
   cashAmount: { type: Number },
   cardAmount: { type: Number },
+  /** 客人实付现金（找零用）；与 cashAmount（应付现金部分）不同 */
+  cashReceived: { type: Number },
+  /** 找零金额 = max(0, cashReceived - cashAmount) */
+  changeAmount: { type: Number },
   couponName: { type: String },
   couponAmount: { type: Number },
   numberedVoucherId: { type: mongoose.Schema.Types.ObjectId, ref: 'NumberedVoucher' },

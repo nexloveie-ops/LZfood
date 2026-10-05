@@ -44,6 +44,27 @@ type VoucherCheckoutMeta = {
   campaignName: string;
 };
 
+/** Persist guest tender + change for receipt / cloud print (cash & mixed). */
+function attachCashTenderMeta(
+  checkoutData: Record<string, unknown>,
+  body: Record<string, unknown>,
+): void {
+  const pm = String(checkoutData.paymentMethod || '');
+  if (pm !== 'cash' && pm !== 'mixed') return;
+  const raw = body.cashReceived != null ? Number(body.cashReceived) : NaN;
+  if (!Number.isFinite(raw) || raw < 0) return;
+  const cashReceived = Math.round(raw * 100) / 100;
+  checkoutData.cashReceived = cashReceived;
+  let change: number;
+  if (body.changeAmount != null && Number.isFinite(Number(body.changeAmount))) {
+    change = Math.max(0, Math.round(Number(body.changeAmount) * 100) / 100);
+  } else {
+    const cashDue = Number(checkoutData.cashAmount) || 0;
+    change = Math.max(0, Math.round((cashReceived - cashDue) * 100) / 100);
+  }
+  checkoutData.changeAmount = change;
+}
+
 async function resolveFinalAmountForSeatCheckout(
   req: Request,
   order: { toObject?: () => Record<string, unknown> },
@@ -299,6 +320,7 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
       }
       if (couponName) checkoutData.couponName = couponName;
       if (couponAmount && couponAmount > 0) checkoutData.couponAmount = couponAmount;
+      attachCashTenderMeta(checkoutData, req.body as Record<string, unknown>);
 
       const checkout = await Checkout.create(checkoutData);
       try {
@@ -497,6 +519,7 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
         checkoutData.couponName = `${voucherMeta.campaignName} · ${voucherMeta.code}`;
         checkoutData.couponAmount = voucherMeta.discountEuro;
       }
+      attachCashTenderMeta(checkoutData, req.body as Record<string, unknown>);
 
       const checkout = await Checkout.create(checkoutData);
       try {
@@ -641,6 +664,7 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
       if (couponAmount && typeof couponAmount === 'number' && couponAmount > 0) {
         checkoutData.couponAmount = couponAmount;
       }
+      attachCashTenderMeta(checkoutData, req.body as Record<string, unknown>);
 
       const checkout = await Checkout.create(checkoutData);
       try {
@@ -827,6 +851,7 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
       if (couponAmount && typeof couponAmount === 'number' && couponAmount > 0) {
         checkoutData.couponAmount = couponAmount;
       }
+      attachCashTenderMeta(checkoutData, req.body as Record<string, unknown>);
 
       const checkout = await Checkout.create(checkoutData);
       try {
@@ -934,6 +959,8 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
         orderIds: mongoose.Types.ObjectId[];
         type: string;
         tableNumber?: number;
+        cashReceived?: number;
+        changeAmount?: number;
         totalAmount: number;
         paymentMethod: string;
         cashAmount?: number;
@@ -1024,6 +1051,8 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
         paymentMethod: checkout.paymentMethod,
         cashAmount: checkout.cashAmount,
         cardAmount: checkout.cardAmount,
+        cashReceived: checkout.cashReceived,
+        changeAmount: checkout.changeAmount,
         memberCreditUsed: (checkout as { memberCreditUsed?: number }).memberCreditUsed,
         memberPhoneSnapshot: (checkout as { memberPhoneSnapshot?: string }).memberPhoneSnapshot,
         checkedOutAt: checkout.checkedOutAt,
