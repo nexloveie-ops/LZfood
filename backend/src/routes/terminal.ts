@@ -4,7 +4,6 @@ import { getModels } from '../getModels';
 import { createAppError } from '../middleware/errorHandler';
 import { requireAuthSameStore } from '../middleware/authForStore';
 import { hasPermission } from '../middleware/permissions';
-import { createStripeClient, getStripePublishableResolved } from '../utils/stripeConfig';
 import { computeOrderPayableTotalEuro } from '../utils/orderPayableTotal';
 import { syncDualTrackBeforeSave } from '../utils/orderDualTrack';
 import { getDineInWorkflowModeForStore } from '../utils/dineInWorkflowMode';
@@ -16,9 +15,11 @@ import { scheduleStoreCloudPrint } from '../utils/cloudPrint/runJob';
 import { scheduleStampAwardForCheckout } from '../utils/platformStamps';
 import { resolveMemberPaymentForCheckout } from '../utils/checkoutMemberResolve';
 import { FeatureKeys, resolveStoreEffectiveFeatures } from '../utils/featureCatalog';
-
-/** Per-store SystemConfig key for Stripe Terminal Location id (tml_…) */
-export const STRIPE_TERMINAL_LOCATION_CONFIG_KEY = 'stripe_terminal_location_id';
+import {
+  STRIPE_TERMINAL_LOCATION_CONFIG_KEY,
+  peekTerminalConfig,
+  resolveTerminalStripeContext,
+} from '../utils/terminalStripe';
 
 function terminalModels() {
   return getModels() as {
@@ -29,31 +30,21 @@ function terminalModels() {
   };
 }
 
-async function getTerminalLocationId(storeId: mongoose.Types.ObjectId): Promise<string> {
-  const { SystemConfig } = terminalModels();
-  const row = (await SystemConfig.findOne({
-    storeId,
-    key: STRIPE_TERMINAL_LOCATION_CONFIG_KEY,
-  }).lean()) as { value?: string } | null;
-  const fromDb = row?.value?.trim() || '';
-  if (fromDb) return fromDb;
-  return process.env.STRIPE_TERMINAL_LOCATION_ID?.trim() || '';
-}
-
 const router = Router();
 
 /**
  * GET /api/terminal/config
  * 收银 App：publishableKey + locationId（不含 secret）
+ * 优先读平台管理员配置的 Stripe；未配置时回退到本店 SystemConfig
  */
 router.get('/config', ...requireAuthSameStore, async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const publishableKey = await getStripePublishableResolved(req.storeId!);
-    const locationId = await getTerminalLocationId(req.storeId!);
+    const cfg = await peekTerminalConfig(req.storeId!);
     res.json({
-      publishableKey,
-      locationId,
-      ready: !!(publishableKey && locationId),
+      publishableKey: cfg.publishableKey,
+      locationId: cfg.locationId,
+      ready: cfg.ready,
+      source: cfg.source,
     });
   } catch (err) {
     next(err);
@@ -62,7 +53,7 @@ router.get('/config', ...requireAuthSameStore, async (req: Request, res: Respons
 
 /**
  * PUT /api/terminal/location
- * 写入 Terminal Location ID（tml_…）到本店 SystemConfig
+ * 写入本店 Terminal Location（仅当平台未配置 location 时作为回退；推荐在平台管理员处配置）
  */
 router.put('/location', ...requireAuthSameStore, async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -94,7 +85,7 @@ router.post(
   ...requireAuthSameStore,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const stripe = await createStripeClient(req.storeId!);
+      const { stripe } = await resolveTerminalStripeContext(req.storeId!);
       const token = await stripe.terminal.connectionTokens.create();
       res.json({ secret: token.secret });
     } catch (err) {
@@ -148,7 +139,7 @@ router.post(
 
       if (amount <= 0) throw createAppError('VALIDATION_ERROR', 'Amount must be greater than 0');
 
-      const stripe = await createStripeClient(req.storeId!);
+      const { stripe } = await resolveTerminalStripeContext(req.storeId!);
       const paymentIntent = await stripe.paymentIntents.create({
         amount,
         currency: 'eur',
@@ -211,7 +202,7 @@ router.post('/confirm', ...requireAuthSameStore, async (req: Request, res: Respo
       return;
     }
 
-    const stripe = await createStripeClient(req.storeId!);
+    const { stripe } = await resolveTerminalStripeContext(req.storeId!);
     const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
     if (paymentIntent.status !== 'succeeded') {
       throw createAppError('VALIDATION_ERROR', `Payment not completed (status=${paymentIntent.status})`);

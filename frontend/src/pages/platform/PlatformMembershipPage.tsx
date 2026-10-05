@@ -180,6 +180,7 @@ function FilterChip({
 export default function PlatformMembershipPage() {
   const [publishableKey, setPublishableKey] = useState('');
   const [secretKeyDraft, setSecretKeyDraft] = useState('');
+  const [terminalLocationId, setTerminalLocationId] = useState('');
   const [hasSecret, setHasSecret] = useState(false);
   const [stripeLoading, setStripeLoading] = useState(true);
   const [stripeSaving, setStripeSaving] = useState(false);
@@ -255,6 +256,7 @@ export default function PlatformMembershipPage() {
       const data = await res.json();
       setPublishableKey(typeof data.publishableKey === 'string' ? data.publishableKey : '');
       setHasSecret(!!data.hasSecret);
+      setTerminalLocationId(typeof data.terminalLocationId === 'string' ? data.terminalLocationId : '');
       setSecretKeyDraft('');
     } finally {
       setStripeLoading(false);
@@ -283,7 +285,12 @@ export default function PlatformMembershipPage() {
     setStripeSaving(true);
     setErr('');
     try {
-      const body: { publishableKey: string; secretKey?: string; clearSecret?: boolean } = { publishableKey };
+      const body: {
+        publishableKey: string;
+        secretKey?: string;
+        clearSecret?: boolean;
+        terminalLocationId: string;
+      } = { publishableKey, terminalLocationId };
       if (clearSecret) body.clearSecret = true;
       else if (secretKeyDraft.trim()) body.secretKey = secretKeyDraft.trim();
       const res = await platformApiFetch('/api/platform/membership/stripe-config', {
@@ -298,7 +305,7 @@ export default function PlatformMembershipPage() {
       }
       setSecretKeyDraft('');
       await loadStripe();
-      setMsg('平台 Stripe 已保存（密钥不会回显）');
+      setMsg('平台 Stripe 已保存（iOS Tap to Pay / 会员收款共用；密钥不会回显）');
     } finally {
       setStripeSaving(false);
     }
@@ -770,6 +777,7 @@ export default function PlatformMembershipPage() {
           <h2 style={{ margin: 0, fontSize: 16 }}>平台收款 Stripe</h2>
           <span style={{ fontSize: 13, color: '#5c6bc0', whiteSpace: 'nowrap' }}>
             {hasSecret ? '已保存 Secret' : (stripeLoading ? '' : '未配置')}
+            {terminalLocationId ? ' · Terminal' : ''}
             {' · '}
             {stripeOpen ? '收起' : '展开'}
           </span>
@@ -777,6 +785,10 @@ export default function PlatformMembershipPage() {
         {stripeOpen ? (
           stripeLoading ? <div style={{ color: '#789', marginTop: 12 }}>加载中…</div> : (
           <>
+            <p style={{ margin: '12px 0 0', fontSize: 12, color: '#789', lineHeight: 1.5 }}>
+              用于平台会员充值，以及 iOS 收银 App 的 Tap to Pay。App 通过
+              {' '}<code>/api/terminal/config</code>{' '}读取（不回显 Secret）。
+            </p>
             <label style={{ display: 'block', fontSize: 12, color: '#789', margin: '12px 0 6px' }}>Publishable key</label>
             <input
               className="input"
@@ -798,6 +810,20 @@ export default function PlatformMembershipPage() {
               autoComplete="new-password"
               style={{ width: '100%', marginBottom: 12 }}
             />
+            <label style={{ display: 'block', fontSize: 12, color: '#789', marginBottom: 6 }}>
+              Terminal Location ID（Tap to Pay）
+            </label>
+            <input
+              className="input"
+              value={terminalLocationId}
+              onChange={(e) => setTerminalLocationId(e.target.value)}
+              placeholder="tml_…"
+              autoComplete="off"
+              style={{ width: '100%', marginBottom: 6 }}
+            />
+            <div style={{ fontSize: 11, color: '#9aa', marginBottom: 12, lineHeight: 1.4 }}>
+              在 Stripe Dashboard → Terminal → Locations 创建后粘贴。留空并保存可清除平台 Location（将回退到店铺配置）。
+            </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
               <button type="button" className="btn btn-primary" onClick={() => void saveStripe(false)} disabled={stripeSaving}>
                 {stripeSaving ? '保存中…' : '保存'}

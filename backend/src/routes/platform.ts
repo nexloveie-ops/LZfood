@@ -50,6 +50,10 @@ import {
   runPlatformStripeHealthCheck,
   upsertPlatformConfig,
 } from '../utils/platformStripeConfig';
+import {
+  STRIPE_TERMINAL_LOCATION_CONFIG_KEY,
+  getPlatformTerminalLocationId,
+} from '../utils/terminalStripe';
 import { getAppleWalletCertStatus } from '../utils/appleWallet/certs';
 import { getAppleWalletSettings, saveAppleWalletSettings } from '../utils/appleWallet/config';
 import { issuePlatformMemberPkpass } from '../utils/appleWallet/issuePass';
@@ -1091,7 +1095,8 @@ router.get('/membership/stripe-config', ...platformAuth, async (_req: Request, r
   try {
     const publishableKey = await getPlatformStripePublishable();
     const hasSecret = await hasPlatformStripeSecret();
-    res.json({ publishableKey, hasSecret });
+    const terminalLocationId = await getPlatformTerminalLocationId();
+    res.json({ publishableKey, hasSecret, terminalLocationId });
   } catch (err) {
     next(err);
   }
@@ -1099,7 +1104,12 @@ router.get('/membership/stripe-config', ...platformAuth, async (_req: Request, r
 
 router.put('/membership/stripe-config', ...platformAuth, async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const body = req.body as { publishableKey?: string; secretKey?: string; clearSecret?: boolean };
+    const body = req.body as {
+      publishableKey?: string;
+      secretKey?: string;
+      clearSecret?: boolean;
+      terminalLocationId?: string;
+    };
     if (body.publishableKey !== undefined) {
       if (typeof body.publishableKey !== 'string') {
         throw createAppError('VALIDATION_ERROR', 'publishableKey must be a string');
@@ -1125,9 +1135,25 @@ router.put('/membership/stripe-config', ...platformAuth, async (req: Request, re
       await upsertPlatformConfig(STRIPE_SECRET_CONFIG_KEY, sk);
     }
 
+    if (body.terminalLocationId !== undefined) {
+      if (typeof body.terminalLocationId !== 'string') {
+        throw createAppError('VALIDATION_ERROR', 'terminalLocationId must be a string');
+      }
+      const loc = body.terminalLocationId.trim();
+      if (loc === '') {
+        await deletePlatformConfig(STRIPE_TERMINAL_LOCATION_CONFIG_KEY);
+      } else {
+        if (!/^tml_[A-Za-z0-9]+$/.test(loc)) {
+          throw createAppError('VALIDATION_ERROR', 'Terminal Location ID must look like tml_…');
+        }
+        await upsertPlatformConfig(STRIPE_TERMINAL_LOCATION_CONFIG_KEY, loc);
+      }
+    }
+
     const publishableKey = await getPlatformStripePublishable();
     const hasSecret = await hasPlatformStripeSecret();
-    res.json({ publishableKey, hasSecret, message: 'Saved' });
+    const terminalLocationId = await getPlatformTerminalLocationId();
+    res.json({ publishableKey, hasSecret, terminalLocationId, message: 'Saved' });
   } catch (err) {
     next(err);
   }
