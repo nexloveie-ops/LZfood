@@ -105,7 +105,9 @@ router.post(
 
 /**
  * POST /api/terminal/payment-intent
- * body: { orderId } — 为 pending 订单创建 card_present PaymentIntent
+ * body:
+ *  - { orderId } — 为已有 pending 订单建 PI（兼容旧客户端）
+ *  - { amountEuro } — 先收款再建单：不创建订单，取消 collect 不会留下 pending
  */
 router.post(
   '/payment-intent',
@@ -113,23 +115,38 @@ router.post(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { Order } = terminalModels();
+      const body = req.body as { orderId?: unknown; amountEuro?: unknown };
       const orderId =
-        typeof (req.body as { orderId?: unknown })?.orderId === 'string'
-          ? String((req.body as { orderId: string }).orderId).trim()
-          : '';
-      if (!orderId || !mongoose.isValidObjectId(orderId)) {
-        throw createAppError('VALIDATION_ERROR', 'Valid orderId is required');
+        typeof body.orderId === 'string' ? String(body.orderId).trim() : '';
+      const amountEuroRaw = body.amountEuro != null ? Number(body.amountEuro) : NaN;
+
+      let amount: number;
+      let metadata: Record<string, string> = {
+        storeId: String(req.storeId),
+        channel: 'ios_cashier_tap_to_pay',
+      };
+
+      if (orderId && mongoose.isValidObjectId(orderId)) {
+        const order = await Order.findOne({ _id: orderId, storeId: req.storeId });
+        if (!order) throw createAppError('NOT_FOUND', 'Order not found');
+        if (order.status !== 'pending') {
+          throw createAppError('VALIDATION_ERROR', 'Order is already checked out');
+        }
+        const totalEuro = computeOrderPayableTotalEuro(order);
+        amount = Math.round(totalEuro * 100);
+        metadata = {
+          ...metadata,
+          orderId,
+          orderType: String(order.type || ''),
+        };
+      } else if (Number.isFinite(amountEuroRaw) && amountEuroRaw > 0) {
+        amount = Math.round(amountEuroRaw * 100);
+        metadata = { ...metadata, preOrder: '1' };
+      } else {
+        throw createAppError('VALIDATION_ERROR', 'orderId or amountEuro is required');
       }
 
-      const order = await Order.findOne({ _id: orderId, storeId: req.storeId });
-      if (!order) throw createAppError('NOT_FOUND', 'Order not found');
-      if (order.status !== 'pending') {
-        throw createAppError('VALIDATION_ERROR', 'Order is already checked out');
-      }
-
-      const totalEuro = computeOrderPayableTotalEuro(order);
-      const amount = Math.round(totalEuro * 100);
-      if (amount <= 0) throw createAppError('VALIDATION_ERROR', 'Order total must be greater than 0');
+      if (amount <= 0) throw createAppError('VALIDATION_ERROR', 'Amount must be greater than 0');
 
       const stripe = await createStripeClient(req.storeId!);
       const paymentIntent = await stripe.paymentIntents.create({
@@ -137,18 +154,15 @@ router.post(
         currency: 'eur',
         payment_method_types: ['card_present'],
         capture_method: 'automatic',
-        metadata: {
-          orderId,
-          orderType: String(order.type || ''),
-          storeId: String(req.storeId),
-          channel: 'ios_cashier_tap_to_pay',
-        },
+        metadata,
       });
 
-      await Order.updateOne(
-        { _id: orderId, storeId: req.storeId },
-        { $set: { stripePaymentIntentId: paymentIntent.id } },
-      );
+      if (orderId && mongoose.isValidObjectId(orderId)) {
+        await Order.updateOne(
+          { _id: orderId, storeId: req.storeId },
+          { $set: { stripePaymentIntentId: paymentIntent.id } },
+        );
+      }
 
       res.json({
         paymentIntentId: paymentIntent.id,
