@@ -10,6 +10,8 @@ interface StoreRow {
   basePlanId?: string | null;
   enabledAddOnIds?: string[];
   featureOverrides?: Record<string, boolean>;
+  /** Stripe Terminal Location for Tap to Pay (per store) */
+  terminalLocationId?: string;
 }
 
 interface AdminRow {
@@ -184,6 +186,8 @@ export default function PlatformStoresPage() {
   const [pkgBasePlanId, setPkgBasePlanId] = useState('');
   const [pkgAddOnIds, setPkgAddOnIds] = useState<string[]>([]);
   const [pkgOverrides, setPkgOverrides] = useState('{}');
+  const [terminalLocDraft, setTerminalLocDraft] = useState<Record<string, string>>({});
+  const [terminalLocSaving, setTerminalLocSaving] = useState<string | null>(null);
 
   const loadStores = useCallback(async () => {
     setErr('');
@@ -196,6 +200,12 @@ export default function PlatformStoresPage() {
     }
     setStores(await res.json());
   }, []);
+
+  useEffect(() => {
+    setTerminalLocDraft(
+      Object.fromEntries(stores.map((s) => [s._id, s.terminalLocationId || ''])),
+    );
+  }, [stores]);
 
   const loadProducts = useCallback(async () => {
     setLoadingProducts(true);
@@ -328,6 +338,17 @@ export default function PlatformStoresPage() {
     else {
       const j = await res.json().catch(() => ({}));
       setErr(j.error?.message || '更新失败');
+    }
+  };
+
+  const saveTerminalLocation = async (storeId: string) => {
+    setTerminalLocSaving(storeId);
+    setErr('');
+    try {
+      const raw = (terminalLocDraft[storeId] ?? '').trim();
+      await patchStore(storeId, { terminalLocationId: raw });
+    } finally {
+      setTerminalLocSaving(null);
     }
   };
 
@@ -642,6 +663,7 @@ export default function PlatformStoresPage() {
               <tr style={{ background: '#f5f5f5', textAlign: 'left' }}>
                 <th style={{ padding: '12px 16px' }}>标识 / 登录路径</th>
                 <th style={{ padding: '12px 16px' }}>名称</th>
+                <th style={{ padding: '12px 16px' }}>Tap to Pay Location</th>
                 <th style={{ padding: '12px 16px' }}>状态</th>
                 <th style={{ padding: '12px 16px' }}>功能包分配</th>
                 <th style={{ padding: '12px 16px' }}>操作</th>
@@ -666,6 +688,32 @@ export default function PlatformStoresPage() {
                       </button>
                     </td>
                     <td style={{ padding: '12px 16px' }}>{s.displayName}</td>
+                    <td style={{ padding: '12px 16px', minWidth: 260 }}>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+                        <input
+                          className="input"
+                          style={{ flex: '1 1 160px', fontSize: 12, fontFamily: 'monospace' }}
+                          placeholder="tml_…"
+                          value={terminalLocDraft[s._id] ?? ''}
+                          onChange={(e) =>
+                            setTerminalLocDraft((prev) => ({ ...prev, [s._id]: e.target.value }))
+                          }
+                          autoComplete="off"
+                        />
+                        <button
+                          type="button"
+                          className="btn btn-outline"
+                          style={{ fontSize: 11, padding: '4px 10px' }}
+                          disabled={terminalLocSaving === s._id}
+                          onClick={() => void saveTerminalLocation(s._id)}
+                        >
+                          {terminalLocSaving === s._id ? '…' : '保存'}
+                        </button>
+                      </div>
+                      <div style={{ fontSize: 11, color: '#888', marginTop: 4 }}>
+                        {s.terminalLocationId ? '已配置（该店 Tap to Pay 用此 Location）' : '未配置 — 将回退平台默认 Location'}
+                      </div>
+                    </td>
                     <td style={{ padding: '12px 16px' }}>
                       <select
                         value={s.status}

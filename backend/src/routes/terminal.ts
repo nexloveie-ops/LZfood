@@ -53,7 +53,7 @@ router.get('/config', ...requireAuthSameStore, async (req: Request, res: Respons
 
 /**
  * PUT /api/terminal/location
- * 写入本店 Terminal Location（仅当平台未配置 location 时作为回退；推荐在平台管理员处配置）
+ * 写入本店 Terminal Location（平台管理员按店配置优先；此处供店员/旧客户端回退写入）
  */
 router.put('/location', ...requireAuthSameStore, async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -114,6 +114,7 @@ router.post(
       let amount: number;
       let metadata: Record<string, string> = {
         storeId: String(req.storeId),
+        storeSlug: String(req.store?.slug || ''),
         channel: 'ios_cashier_tap_to_pay',
       };
 

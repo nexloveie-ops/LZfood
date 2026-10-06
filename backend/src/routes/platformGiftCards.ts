@@ -19,7 +19,7 @@ import {
   parseGiftCardImportText,
   parseGiftCardImportXlsx,
 } from '../utils/parsePlatformGiftCardImport';
-import { listStoreSettlements, outstandingForStore } from '../utils/platformStoreSettlement';
+import { listStoreSettlements, outstandingForStore, parseSettlementChannel } from '../utils/platformStoreSettlement';
 
 const router = Router();
 const importUpload = multer({ dest: os.tmpdir(), limits: { fileSize: 2 * 1024 * 1024 } });
@@ -573,9 +573,10 @@ router.get('/gift-cards-export.xlsx', ...platformAuth, async (req: Request, res:
   }
 });
 
-router.get('/store-settlements', ...platformAuth, async (_req: Request, res: Response, next: NextFunction) => {
+router.get('/store-settlements', ...platformAuth, async (req: Request, res: Response, next: NextFunction) => {
   try {
-    res.json({ items: await listStoreSettlements() });
+    const channel = parseSettlementChannel(req.query.channel);
+    res.json({ channel, items: await listStoreSettlements(channel) });
   } catch (err) {
     next(err);
   }
@@ -591,15 +592,25 @@ router.get('/store-settlements/:storeId/payouts', ...platformAuth, async (req: R
       displayName?: string;
     } | null;
     if (!store) throw createAppError('NOT_FOUND', '店铺不存在');
+    const channel = parseSettlementChannel(req.query.channel);
     const oid = new mongoose.Types.ObjectId(storeId);
-    const list = await PlatformStorePayout.find({ storeId: oid }).sort({ paidAt: -1, createdAt: -1 }).limit(200).lean();
+    const channelFilter =
+      channel === 'tap_pay'
+        ? { storeId: oid, channel: 'tap_pay' }
+        : {
+            storeId: oid,
+            $or: [{ channel: 'wallet' }, { channel: { $exists: false } }, { channel: null }],
+          };
+    const list = await PlatformStorePayout.find(channelFilter).sort({ paidAt: -1, createdAt: -1 }).limit(200).lean();
     res.json({
       storeId,
       slug: store.slug || '',
       displayName: store.displayName || '',
-      outstandingEuro: await outstandingForStore(oid),
+      channel,
+      outstandingEuro: await outstandingForStore(oid, channel),
       items: list.map((p: Record<string, unknown>) => ({
         _id: String(p._id),
+        channel: p.channel || 'wallet',
         amountEuro: p.amountEuro,
         paidAt: p.paidAt,
         method: p.method,
@@ -626,7 +637,9 @@ router.post('/store-settlements/:storeId/payouts', ...platformAuth, async (req: 
       method?: unknown;
       ref?: unknown;
       note?: unknown;
+      channel?: unknown;
     };
+    const channel = parseSettlementChannel(body.channel);
     const amount = Number(body.amountEuro);
     if (!Number.isFinite(amount) || amount <= 0) {
       throw createAppError('VALIDATION_ERROR', 'amountEuro 须为正数');
@@ -642,13 +655,14 @@ router.post('/store-settlements/:storeId/payouts', ...platformAuth, async (req: 
     const paidAt = body.paidAt ? new Date(String(body.paidAt)) : new Date();
     if (Number.isNaN(paidAt.getTime())) throw createAppError('VALIDATION_ERROR', 'paidAt 无效');
     const oid = new mongoose.Types.ObjectId(storeId);
-    const outstanding = await outstandingForStore(oid);
+    const outstanding = await outstandingForStore(oid, channel);
     if (amt > outstanding + 0.005) {
       throw createAppError('VALIDATION_ERROR', `金额超过应付 €${outstanding.toFixed(2)}`);
     }
     const adminId = req.user?.userId;
     const created = await PlatformStorePayout.create({
       storeId: oid,
+      channel,
       amountEuro: amt,
       paidAt,
       method,
@@ -660,7 +674,8 @@ router.post('/store-settlements/:storeId/payouts', ...platformAuth, async (req: 
     res.status(201).json({
       ok: true,
       _id: String(created._id),
-      outstandingEuro: await outstandingForStore(oid),
+      channel,
+      outstandingEuro: await outstandingForStore(oid, channel),
     });
   } catch (err) {
     next(err);

@@ -53,6 +53,7 @@ import {
 import {
   STRIPE_TERMINAL_LOCATION_CONFIG_KEY,
   getPlatformTerminalLocationId,
+  getStoreTerminalLocationId,
 } from '../utils/terminalStripe';
 import { getAppleWalletCertStatus } from '../utils/appleWallet/certs';
 import { getAppleWalletSettings, saveAppleWalletSettings } from '../utils/appleWallet/config';
@@ -352,9 +353,33 @@ router.get('/integrations-overview', ...platformAuth, async (_req: Request, res:
 // GET /api/platform/stores
 router.get('/stores', ...platformAuth, async (_req: Request, res: Response, next: NextFunction) => {
   try {
-    const { Store } = models();
-    const list = await Store.find({}).sort({ slug: 1 }).lean();
-    res.json(list);
+    const { Store, SystemConfig } = models();
+    const list = (await Store.find({}).sort({ slug: 1 }).lean()) as unknown as {
+      _id: mongoose.Types.ObjectId;
+      slug: string;
+      displayName: string;
+      status: string;
+      [key: string]: unknown;
+    }[];
+    const ids = list.map((s) => s._id);
+    const locRows =
+      ids.length > 0
+        ? ((await SystemConfig.find({
+            storeId: { $in: ids },
+            key: STRIPE_TERMINAL_LOCATION_CONFIG_KEY,
+          })
+            .select('storeId value')
+            .lean()) as unknown as { storeId: mongoose.Types.ObjectId; value?: string }[])
+        : [];
+    const locByStore = new Map(
+      locRows.map((r) => [String(r.storeId), String(r.value || '').trim()]),
+    );
+    res.json(
+      list.map((s) => ({
+        ...s,
+        terminalLocationId: locByStore.get(String(s._id)) || '',
+      })),
+    );
   } catch (err) {
     next(err);
   }
@@ -545,13 +570,15 @@ router.patch('/stores/:id', ...platformAuth, async (req: Request, res: Response,
     if (!store) {
       throw createAppError('NOT_FOUND', '店铺不存在');
     }
-    const { displayName, status, subscriptionEndsAt, basePlanId, enabledAddOnIds, featureOverrides } = req.body as {
+    const { displayName, status, subscriptionEndsAt, basePlanId, enabledAddOnIds, featureOverrides, terminalLocationId } = req.body as {
       displayName?: string;
       status?: string;
       subscriptionEndsAt?: string;
       basePlanId?: string | null;
       enabledAddOnIds?: string[];
       featureOverrides?: Record<string, boolean>;
+      /** Stripe Terminal Location for this store's Tap to Pay (tml_…); empty clears */
+      terminalLocationId?: string;
     };
     if (displayName !== undefined) {
       if (typeof displayName !== 'string' || !displayName.trim()) {
@@ -592,7 +619,34 @@ router.patch('/stores/:id', ...platformAuth, async (req: Request, res: Response,
       ((store.get('featureOverrides') as Record<string, boolean> | undefined) ?? {}),
     );
     await store.save();
-    res.json(store.toObject());
+
+    let savedTerminalLocationId = await getStoreTerminalLocationId(store._id as mongoose.Types.ObjectId);
+    if (terminalLocationId !== undefined) {
+      if (typeof terminalLocationId !== 'string') {
+        throw createAppError('VALIDATION_ERROR', 'terminalLocationId must be a string');
+      }
+      const { SystemConfig } = models();
+      const loc = terminalLocationId.trim();
+      if (loc === '') {
+        await SystemConfig.deleteOne({
+          storeId: store._id,
+          key: STRIPE_TERMINAL_LOCATION_CONFIG_KEY,
+        });
+        savedTerminalLocationId = '';
+      } else {
+        if (!/^tml_[A-Za-z0-9]+$/.test(loc)) {
+          throw createAppError('VALIDATION_ERROR', 'Terminal Location ID must look like tml_…');
+        }
+        await SystemConfig.findOneAndUpdate(
+          { storeId: store._id, key: STRIPE_TERMINAL_LOCATION_CONFIG_KEY },
+          { storeId: store._id, key: STRIPE_TERMINAL_LOCATION_CONFIG_KEY, value: loc },
+          { upsert: true, new: true },
+        );
+        savedTerminalLocationId = loc;
+      }
+    }
+
+    res.json({ ...store.toObject(), terminalLocationId: savedTerminalLocationId });
   } catch (err) {
     next(err);
   }

@@ -50,8 +50,9 @@ export type TerminalStripeContext = {
 
 /**
  * iOS Tap to Pay / Terminal:
- * Prefer platform Stripe (platform admin) when platform secret is configured;
- * otherwise fall back to per-store SystemConfig (store admin Stripe settings).
+ * Prefer platform Stripe keys when platform secret is configured;
+ * Terminal Location prefers **per-store** `tml_…` (platform admin assigns each shop),
+ * then platform default location, then env.
  */
 export async function resolveTerminalStripeContext(
   storeId: mongoose.Types.ObjectId,
@@ -60,8 +61,8 @@ export async function resolveTerminalStripeContext(
   if (platformSk) {
     const publishableKey = await getPlatformStripePublishable();
     const locationId =
-      (await getPlatformTerminalLocationId()) ||
       (await getStoreTerminalLocationId(storeId)) ||
+      (await getPlatformTerminalLocationId()) ||
       envTerminalLocationId();
     if (!publishableKey) {
       throw createAppError('VALIDATION_ERROR', '平台尚未配置 Stripe Publishable Key');
@@ -69,7 +70,7 @@ export async function resolveTerminalStripeContext(
     if (!locationId) {
       throw createAppError(
         'VALIDATION_ERROR',
-        '平台尚未配置 Stripe Terminal Location ID（tml_…）',
+        '请先在平台管理员为该店配置 Stripe Terminal Location ID（tml_…）',
       );
     }
     return {
@@ -89,11 +90,13 @@ export async function resolveTerminalStripeContext(
   }
   const publishableKey = await getStripePublishableResolved(storeId);
   const locationId =
-    (await getStoreTerminalLocationId(storeId)) || envTerminalLocationId();
+    (await getStoreTerminalLocationId(storeId)) ||
+    (await getPlatformTerminalLocationId()) ||
+    envTerminalLocationId();
   if (!publishableKey || !locationId) {
     throw createAppError(
       'VALIDATION_ERROR',
-      '店铺 Stripe 或 Terminal Location 未就绪（亦可由平台管理员统一配置）',
+      '店铺 Stripe 或 Terminal Location 未就绪（请在平台管理员为该店配置 Location）',
     );
   }
   const stripe = await createStripeClient(storeId);
@@ -111,8 +114,8 @@ export async function peekTerminalConfig(storeId: mongoose.Types.ObjectId): Prom
   if (platformSk) {
     const publishableKey = await getPlatformStripePublishable();
     const locationId =
-      (await getPlatformTerminalLocationId()) ||
       (await getStoreTerminalLocationId(storeId)) ||
+      (await getPlatformTerminalLocationId()) ||
       envTerminalLocationId();
     return {
       publishableKey,
@@ -124,7 +127,9 @@ export async function peekTerminalConfig(storeId: mongoose.Types.ObjectId): Prom
   const storeSk = await getStripeSecretResolved(storeId);
   const publishableKey = await getStripePublishableResolved(storeId);
   const locationId =
-    (await getStoreTerminalLocationId(storeId)) || envTerminalLocationId();
+    (await getStoreTerminalLocationId(storeId)) ||
+    (await getPlatformTerminalLocationId()) ||
+    envTerminalLocationId();
   if (!storeSk && !publishableKey && !locationId) {
     return { publishableKey: '', locationId: '', ready: false, source: 'none' };
   }

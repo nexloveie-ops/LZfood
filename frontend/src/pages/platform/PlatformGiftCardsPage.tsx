@@ -3,6 +3,7 @@ import { platformApiFetch } from '../../api/client';
 import './platform-gift-cards.css';
 
 type Tab = 'cards' | 'settlement';
+type SettleChannel = 'wallet' | 'tap_pay';
 
 type CardRow = {
   _id: string;
@@ -47,6 +48,7 @@ type SettlementRow = {
   slug: string;
   displayName: string;
   status: string;
+  channel?: SettleChannel;
   consumedEuro: number;
   paidEuro: number;
   outstandingEuro: number;
@@ -142,6 +144,7 @@ function TabChip({
 
 export default function PlatformGiftCardsPage() {
   const [tab, setTab] = useState<Tab>('cards');
+  const [settleChannel, setSettleChannel] = useState<SettleChannel>('wallet');
   const [err, setErr] = useState('');
   const [msg, setMsg] = useState('');
   const [stores, setStores] = useState<StoreOpt[]>([]);
@@ -284,7 +287,8 @@ export default function PlatformGiftCardsPage() {
   const loadSettlements = useCallback(async () => {
     setSettleLoading(true);
     try {
-      const res = await platformApiFetch('/api/platform/store-settlements');
+      const params = new URLSearchParams({ channel: settleChannel });
+      const res = await platformApiFetch(`/api/platform/store-settlements?${params}`);
       const d = await res.json().catch(() => null);
       if (!res.ok) {
         setErr(errMsg(d, `HTTP ${res.status}`));
@@ -294,12 +298,13 @@ export default function PlatformGiftCardsPage() {
     } finally {
       setSettleLoading(false);
     }
-  }, []);
+  }, [settleChannel]);
 
   const loadPayouts = useCallback(async (storeId: string) => {
     setPayoutsLoading(true);
     try {
-      const res = await platformApiFetch(`/api/platform/store-settlements/${storeId}/payouts`);
+      const params = new URLSearchParams({ channel: settleChannel });
+      const res = await platformApiFetch(`/api/platform/store-settlements/${storeId}/payouts?${params}`);
       const d = await res.json().catch(() => null);
       if (!res.ok) {
         setErr(errMsg(d, `HTTP ${res.status}`));
@@ -311,7 +316,7 @@ export default function PlatformGiftCardsPage() {
     } finally {
       setPayoutsLoading(false);
     }
-  }, []);
+  }, [settleChannel]);
 
   useEffect(() => {
     void loadStores();
@@ -322,6 +327,13 @@ export default function PlatformGiftCardsPage() {
     if (tab === 'cards') void loadBatches();
     else void loadSettlements();
   }, [tab, loadBatches, loadSettlements]);
+
+  useEffect(() => {
+    if (tab !== 'settlement') return;
+    setOpenStoreId(null);
+    setPayouts([]);
+    setPayoutOutstanding(null);
+  }, [settleChannel, tab]);
 
   const tsvForClipboard = useMemo(() => {
     if (!lastGen?.rows.length) return '';
@@ -639,6 +651,7 @@ export default function PlatformGiftCardsPage() {
           method: payMethod,
           ref: payRef.trim(),
           note: payNote.trim(),
+          channel: settleChannel,
         }),
       });
       const d = await res.json().catch(() => null);
@@ -665,7 +678,7 @@ export default function PlatformGiftCardsPage() {
         <div>
           <h1>充值卡与结算</h1>
           <p className="pgc-sub">
-            平台充值卡核销进入客人钱包。店铺结算只计客人在该店的实际消费（员工额度不计）。打款是人工记录，不会自动转账。
+            充值卡核销进客人钱包；Tap to Pay 由平台 Stripe 代收。店铺结算按渠道分开记账（逻辑相同：消耗 − 已付 = 待付）。打款为人工记录，不会自动转账。
           </p>
         </div>
         <div className="pgc-tabs">
@@ -1091,12 +1104,18 @@ export default function PlatformGiftCardsPage() {
         </>
       ) : (
         <div className="pgc-card">
-          <div className="pgc-card-hd">
-            <h2>各店应付</h2>
+          <div className="pgc-card-hd" style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center', justifyContent: 'space-between' }}>
+            <h2 style={{ margin: 0 }}>各店应付</h2>
+            <div className="pgc-tabs" style={{ margin: 0 }}>
+              <TabChip active={settleChannel === 'wallet'} onClick={() => setSettleChannel('wallet')}>充值卡消费</TabChip>
+              <TabChip active={settleChannel === 'tap_pay'} onClick={() => setSettleChannel('tap_pay')}>Tap to Pay</TabChip>
+            </div>
           </div>
           <div className="pgc-card-bd">
             <p className="pgc-hint">
-              消耗 = 客人钱包在该店消费减去退回客人钱包的金额。已付来自本页录入的打款记录。员工消费不计入。
+              {settleChannel === 'wallet'
+                ? '消耗 = 客人钱包在该店消费减去退回客人钱包的金额。已付来自本页录入的打款记录。员工消费不计入。'
+                : '消耗 = 该店 Tap to Pay（paymentMethod=tap_pay）结账合计减去已退菜金额。已付为本渠道单独录入的打款，与充值卡账目互不影响。'}
             </p>
           </div>
           <div className="pgc-table-wrap">

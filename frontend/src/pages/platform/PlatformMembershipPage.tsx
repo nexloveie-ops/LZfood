@@ -786,8 +786,8 @@ export default function PlatformMembershipPage() {
           stripeLoading ? <div style={{ color: '#789', marginTop: 12 }}>加载中…</div> : (
           <>
             <p style={{ margin: '12px 0 0', fontSize: 12, color: '#789', lineHeight: 1.5 }}>
-              用于平台会员充值，以及 iOS 收银 App 的 Tap to Pay。App 通过
-              {' '}<code>/api/terminal/config</code>{' '}读取（不回显 Secret）。
+              用于平台会员充值，以及 iOS 收银 App 的 Tap to Pay（平台代收）。各店 Location 请在「店铺与账号」分别配置；
+              App 通过 <code>/api/terminal/config</code> 读取（不回显 Secret）。
             </p>
             <label style={{ display: 'block', fontSize: 12, color: '#789', margin: '12px 0 6px' }}>Publishable key</label>
             <input
@@ -811,7 +811,7 @@ export default function PlatformMembershipPage() {
               style={{ width: '100%', marginBottom: 12 }}
             />
             <label style={{ display: 'block', fontSize: 12, color: '#789', marginBottom: 6 }}>
-              Terminal Location ID（Tap to Pay）
+              默认 Terminal Location ID（可选回退）
             </label>
             <input
               className="input"
@@ -822,7 +822,7 @@ export default function PlatformMembershipPage() {
               style={{ width: '100%', marginBottom: 6 }}
             />
             <div style={{ fontSize: 11, color: '#9aa', marginBottom: 12, lineHeight: 1.4 }}>
-              在 Stripe Dashboard → Terminal → Locations 创建后粘贴。留空并保存可清除平台 Location（将回退到店铺配置）。
+              Tap to Pay 优先使用「店铺与账号」里为每店配置的 Location。此处仅为未单独配置时的平台默认回退；留空并保存可清除。
             </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
               <button type="button" className="btn btn-primary" onClick={() => void saveStripe(false)} disabled={stripeSaving}>
