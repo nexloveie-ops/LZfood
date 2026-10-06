@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Link, useParams } from 'react-router-dom';
 import { apiFetch } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
+import { checkoutPaymentMethodDisplay } from '../../utils/receiptPaymentMethod';
 
 interface TopItem {
   itemName: string;
@@ -35,6 +36,8 @@ interface DetailedStats {
   refundedAmount: number;
   onlineTotal: number;
   onlineCount: number;
+  tapPayTotal?: number;
+  tapPayCount?: number;
   memberTotal?: number;
   memberCount?: number;
   couponCount: number;
@@ -96,6 +99,7 @@ function getReportAlignedTotal(
     if (pm === 'card') return s.cardTotal;
     if (pm === 'mixed') return s.mixedTotal;
     if (pm === 'online') return s.onlineTotal;
+    if (pm === 'tap_pay') return s.tapPayTotal ?? 0;
     if (pm === 'member') return s.memberTotal ?? 0;
   }
   return null;
@@ -404,6 +408,8 @@ export default function ReportDashboard() {
                 onClick={() => openDetail({ title: '💵 现金订单', icon: '💵', filters: { paymentMethod: 'cash' } })} />
               <StatCard label="刷卡收入" value={euro(stats.cardTotal)} color="var(--blue, #1976D2)" icon="💳"
                 onClick={() => openDetail({ title: '💳 刷卡订单', icon: '💳', filters: { paymentMethod: 'card' } })} />
+              <StatCard label="Tap Pay" value={`${stats.tapPayCount ?? 0} 单 · ${euro(stats.tapPayTotal ?? 0)}`} color="#00838F" icon="📱"
+                onClick={() => openDetail({ title: '📱 Tap Pay', icon: '📱', filters: { paymentMethod: 'tap_pay' } })} />
               <StatCard label="混合支付" value={euro(stats.mixedTotal)} color="var(--gold-dark, #F57F17)" icon="🔄"
                 onClick={() => openDetail({ title: '🔄 混合支付订单', icon: '🔄', filters: { paymentMethod: 'mixed' } })} />
               <StatCard label="会员支付" value={`${stats.memberCount ?? 0} 单 · ${euro(stats.memberTotal ?? 0)}`} color="#5E35B1" icon="👤"
@@ -652,7 +658,7 @@ export default function ReportDashboard() {
                             ))}
                           </td>
                           <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 700, color: 'var(--red-primary)' }}>{euro(modalAmountDisplay(o))}</td>
-                          <td style={{ padding: '8px 12px', fontSize: 12 }}>{o.checkout?.paymentMethod || '-'}</td>
+                          <td style={{ padding: '8px 12px', fontSize: 12 }}>{checkoutPaymentMethodDisplay(o.checkout?.paymentMethod)}</td>
                           <td style={{ padding: '8px 12px', fontSize: 12, color: 'var(--text-light)' }}>{new Date(o.createdAt).toLocaleString()}</td>
                         </tr>
                       );

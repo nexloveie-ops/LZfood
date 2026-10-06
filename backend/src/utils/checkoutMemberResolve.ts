@@ -44,7 +44,7 @@ function remainderPayment(
     cashAmount = undefined;
     cardAmount = undefined;
   } else {
-    if (!['cash', 'card', 'mixed', 'online'].includes(paymentMethod)) {
+    if (!['cash', 'card', 'mixed', 'online', 'tap_pay'].includes(paymentMethod)) {
       throw createAppError(
         'MEMBER_INSUFFICIENT_BALANCE',
         '储值余额不足，无法全额支付本单，请使用银行卡支付或到店支付',
@@ -70,7 +70,7 @@ function remainderPayment(
           expectedRemainder: remainder,
         });
       }
-    } else if (paymentMethod === 'card' || paymentMethod === 'online') {
+    } else if (paymentMethod === 'card' || paymentMethod === 'online' || paymentMethod === 'tap_pay') {
       cardAmount = remainder;
       cashAmount = undefined;
       if (body.cardAmount != null && Math.abs(Number(body.cardAmount) - remainder) > 0.001) {
@@ -107,8 +107,8 @@ export async function resolveMemberPaymentForCheckout(params: {
   const phoneRaw = body.memberPhone;
   if (phoneRaw == null || String(phoneRaw).trim() === '') {
     const pm = String(body.paymentMethod || '');
-    if (!['cash', 'card', 'mixed', 'online'].includes(pm)) {
-      throw createAppError('VALIDATION_ERROR', 'paymentMethod must be cash, card, mixed, or online');
+    if (!['cash', 'card', 'mixed', 'online', 'tap_pay'].includes(pm)) {
+      throw createAppError('VALIDATION_ERROR', 'paymentMethod must be cash, card, mixed, online, or tap_pay');
     }
     const rem = round2(finalAmount);
     let cashAmount: number | undefined;

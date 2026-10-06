@@ -6,6 +6,7 @@ import { printBuiltReceipt } from '../../components/cashier/ReceiptPrint';
 import { receiptOptionBilingualLines, receiptOptionExtraEuro, receiptOptionExtraSuffix } from '../../utils/receiptOptionPrice';
 import { bundleAdjustedLineTotals, lineGrossEuro, type AppliedBundleLite } from '../../utils/bundleLineAllocation';
 import { apiFetch } from '../../api/client';
+import { checkoutPaymentMethodDisplay } from '../../utils/receiptPaymentMethod';
 
 interface OrderItem {
   _id: string;
@@ -135,7 +136,7 @@ export default function ReprintReceipt() {
       type: r.type as 'table' | 'seat',
       tableNumber: r.tableNumber,
       totalAmount: r.totalAmount,
-      paymentMethod: r.paymentMethod as 'cash' | 'card' | 'mixed' | 'online',
+      paymentMethod: r.paymentMethod as 'cash' | 'card' | 'mixed' | 'online' | 'member' | 'tap_pay',
       cashAmount: r.cashAmount,
       cardAmount: r.cardAmount,
       checkedOutAt: r.checkedOutAt,
@@ -328,7 +329,7 @@ export default function ReprintReceipt() {
                     </div>
                     <div style={{ fontSize: 12, color: 'var(--text-light)', marginTop: 2 }}>
                       {r.tableNumber != null && r.tableNumber > 0 && `Table ${r.tableNumber} · `}
-                      {r.paymentMethod}{virtual ? ' · 无结账流水（仅重印）' : ''} · {time} · {allItems.length} 项菜品
+                      {checkoutPaymentMethodDisplay(r.paymentMethod)}{virtual ? ' · 无结账流水（仅重印）' : ''} · {time} · {allItems.length} 项菜品
                     </div>
                   </div>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>

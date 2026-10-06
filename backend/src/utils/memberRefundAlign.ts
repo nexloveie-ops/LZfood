@@ -83,6 +83,10 @@ export function computeRefundChannelBreakdown(params: {
   if (pm === 'online') {
     return { memberWalletEuro: m, cashEuro: 0, cardEuro: 0, onlineEuro: rest };
   }
+  if (pm === 'tap_pay') {
+    // Tap Pay 走平台 Stripe，退款提示归线上原路（非本店刷卡）
+    return { memberWalletEuro: m, cashEuro: 0, cardEuro: 0, onlineEuro: rest };
+  }
 
   const cash = round2Euro(Number(params.cashAmount) || 0);
   const card = round2Euro(Number(params.cardAmount) || 0);

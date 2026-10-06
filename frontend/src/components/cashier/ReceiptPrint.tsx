@@ -74,7 +74,7 @@ interface ReceiptData {
   type: 'table' | 'seat';
   tableNumber?: number;
   totalAmount: number;
-  paymentMethod: 'cash' | 'card' | 'mixed' | 'online' | 'member' | 'pending';
+  paymentMethod: 'cash' | 'card' | 'mixed' | 'online' | 'member' | 'tap_pay' | 'pending';
   cashAmount?: number;
   cardAmount?: number;
   cashReceived?: number;

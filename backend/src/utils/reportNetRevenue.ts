@@ -24,6 +24,7 @@ export type PaymentMethodBuckets = {
   card: number;
   online: number;
   member: number;
+  tap_pay: number;
 };
 
 /** Refund amount for one order (same rules as GET /api/reports/detailed). */
@@ -80,7 +81,7 @@ export function allocateAmountByPaymentMethod(
   paymentMethod: string | undefined,
   checkout: ReportCheckoutLike,
 ): PaymentMethodBuckets {
-  const out: PaymentMethodBuckets = { cash: 0, card: 0, online: 0, member: 0 };
+  const out: PaymentMethodBuckets = { cash: 0, card: 0, online: 0, member: 0, tap_pay: 0 };
   if (amount <= 0) return out;
   const pm = String(paymentMethod || '');
   if (pm === 'cash') {
@@ -91,6 +92,8 @@ export function allocateAmountByPaymentMethod(
     out.online = amount;
   } else if (pm === 'member') {
     out.member = amount;
+  } else if (pm === 'tap_pay') {
+    out.tap_pay = amount;
   } else if (pm === 'mixed') {
     const total = Number(checkout.totalAmount) || 1;
     const cashRatio = (Number(checkout.cashAmount) || 0) / total;
@@ -104,7 +107,7 @@ export function aggregateDeliveryFeeExclusions(
   orders: ReportOrderLike[],
   orderCheckoutMap: Map<string, ReportCheckoutLike>,
 ): { total: number; byPayment: PaymentMethodBuckets } {
-  const byPayment: PaymentMethodBuckets = { cash: 0, card: 0, online: 0, member: 0 };
+  const byPayment: PaymentMethodBuckets = { cash: 0, card: 0, online: 0, member: 0, tap_pay: 0 };
   let total = 0;
   for (const order of orders) {
     const key = (order as { _id?: { toString(): string } })._id?.toString?.()
@@ -121,6 +124,7 @@ export function aggregateDeliveryFeeExclusions(
     byPayment.card += split.card;
     byPayment.online += split.online;
     byPayment.member += split.member;
+    byPayment.tap_pay += split.tap_pay;
   }
   return { total, byPayment };
 }

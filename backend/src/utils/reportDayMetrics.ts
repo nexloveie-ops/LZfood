@@ -58,9 +58,11 @@ export type StoreDayReportMetrics = {
   cashTotal: number;
   cardTotal: number;
   onlineTotal: number;
+  tapPayTotal: number;
   cashOrderCount: number;
   cardOrderCount: number;
   onlineOrderCount: number;
+  tapPayOrderCount: number;
 };
 
 /**
@@ -110,10 +112,12 @@ export async function computeStoreDayReportMetrics(
   let cashTotal = 0;
   let cardTotal = 0;
   let onlineTotal = 0;
+  let tapPayTotal = 0;
   let cashCount = 0;
   let cardCount = 0;
   let mixedCount = 0;
   let onlineCount = 0;
+  let tapPayCount = 0;
   const countedCheckoutIds = new Set<string>();
 
   for (const order of allOrders) {
@@ -136,6 +140,9 @@ export async function computeStoreDayReportMetrics(
         } else if (checkout.paymentMethod === 'online') {
           onlineTotal += checkout.totalAmount;
           onlineCount++;
+        } else if (checkout.paymentMethod === 'tap_pay') {
+          tapPayTotal += checkout.totalAmount;
+          tapPayCount++;
         }
       }
     }
@@ -145,6 +152,7 @@ export async function computeStoreDayReportMetrics(
   let cashRefund = 0;
   let cardRefund = 0;
   let onlineRefund = 0;
+  let tapPayRefund = 0;
   for (const order of allOrders) {
     const checkout = orderCheckoutMap.get(order._id.toString());
     const pm = checkout?.paymentMethod;
@@ -162,6 +170,7 @@ export async function computeStoreDayReportMetrics(
       cashRefund += amt * cashRatio;
       cardRefund += amt * cardRatio;
     } else if (pm === 'online') onlineRefund += amt;
+    else if (pm === 'tap_pay') tapPayRefund += amt;
   }
 
   const deliveryFeeCheckoutMap = new Map<string, ReportCheckoutLike>();
@@ -185,8 +194,10 @@ export async function computeStoreDayReportMetrics(
     cashTotal: Math.round((cashTotal - cashRefund - deliveryFeeByPayment.cash) * 100) / 100,
     cardTotal: Math.round((cardTotal - cardRefund - deliveryFeeByPayment.card) * 100) / 100,
     onlineTotal: Math.round((onlineTotal - onlineRefund - deliveryFeeByPayment.online) * 100) / 100,
+    tapPayTotal: Math.round((tapPayTotal - tapPayRefund - deliveryFeeByPayment.tap_pay) * 100) / 100,
     cashOrderCount: cashCount + mixedCount,
     cardOrderCount: cardCount + mixedCount,
     onlineOrderCount: onlineCount,
+    tapPayOrderCount: tapPayCount,
   };
 }

@@ -164,7 +164,7 @@ router.get('/orders', authMiddleware, requirePermission('report:view'), async (r
 
     // Filter by payment method after joining with checkout.
     // Align with GET /api/reports/detailed: "现金/刷卡"汇总含混合支付中的现金、刷卡部分，明细也应列出对应订单。
-    if (paymentMethod && ['cash', 'card', 'mixed', 'online', 'member'].includes(paymentMethod as string)) {
+    if (paymentMethod && ['cash', 'card', 'mixed', 'online', 'member', 'tap_pay'].includes(paymentMethod as string)) {
       const pm = paymentMethod as string;
       if (pm === 'cash') {
         result = result.filter((r: any) => {
@@ -308,6 +308,8 @@ router.get('/detailed', authMiddleware, requirePermission('report:view'), async 
     let onlineCount = 0;
     let memberTotal = 0;
     let memberCount = 0;
+    let tapPayTotal = 0;
+    let tapPayCount = 0;
     let couponCount = 0;
     let couponTotalAmount = 0;
     let grossCashAmount = 0;
@@ -343,6 +345,9 @@ router.get('/detailed', authMiddleware, requirePermission('report:view'), async 
           } else if (checkout.paymentMethod === 'online') {
             onlineTotal += checkout.totalAmount;
             onlineCount++;
+          } else if (checkout.paymentMethod === 'tap_pay') {
+            tapPayTotal += checkout.totalAmount;
+            tapPayCount++;
           }
           // Count coupons
           if ((checkout as unknown as { couponAmount?: number }).couponAmount && (checkout as unknown as { couponAmount: number }).couponAmount > 0) {
@@ -377,6 +382,7 @@ router.get('/detailed', authMiddleware, requirePermission('report:view'), async 
     let mixedRefund = 0;
     let onlineRefund = 0;
     let memberRefund = 0;
+    let tapPayRefund = 0;
     for (const order of allOrders) {
       const checkout = orderCheckoutMap.get(order._id.toString());
       const pm = checkout?.paymentMethod;
@@ -400,6 +406,7 @@ router.get('/detailed', authMiddleware, requirePermission('report:view'), async 
       }
       else if (pm === 'online') onlineRefund += amt;
       else if (pm === 'member') memberRefund += amt;
+      else if (pm === 'tap_pay') tapPayRefund += amt;
     }
 
     const deliveryFeeCheckoutMap = new Map<string, ReportCheckoutLike>();
@@ -528,6 +535,8 @@ router.get('/detailed', authMiddleware, requirePermission('report:view'), async 
       onlineCount,
       memberTotal: Math.round((memberTotal - memberRefund - deliveryFeeByPayment.member) * 100) / 100,
       memberCount,
+      tapPayTotal: Math.round((tapPayTotal - tapPayRefund - deliveryFeeByPayment.tap_pay) * 100) / 100,
+      tapPayCount,
       couponCount,
       couponTotalAmount: Math.round(couponTotalAmount * 100) / 100,
       bundleOfferCount,

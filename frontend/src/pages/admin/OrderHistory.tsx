@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { apiFetch } from '../../api/client';
-
+import { checkoutPaymentMethodDisplay } from '../../utils/receiptPaymentMethod';
 interface OrderItem { _id: string; quantity: number; unitPrice: number; itemName: string; }
 interface HistoryOrder {
   _id: string; type: string; tableNumber?: number; seatNumber?: number;
@@ -115,8 +115,10 @@ export default function OrderHistory() {
           <select className="input" value={typeFilter} onChange={e => setTypeFilter(e.target.value)}>
             <option value="">全部</option>
             <option value="card">刷卡</option>
+            <option value="tap_pay">Tap Pay</option>
             <option value="cash">现金</option>
             <option value="member">会员</option>
+            <option value="online">Online</option>
           </select>
         </div>
         <button className="btn btn-primary" onClick={fetchOrders} disabled={loading || !startDate || !endDate}>
@@ -173,7 +175,7 @@ export default function OrderHistory() {
                       {o.items.map(i => `${i.itemName}×${i.quantity}`).join(', ')}
                     </td>
                     <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 700, color: 'var(--red-primary)' }}>€{orderTotal(o).toFixed(2)}</td>
-                    <td style={{ padding: '8px 12px', fontSize: 12 }}>{o.checkout?.paymentMethod || '-'}</td>
+                    <td style={{ padding: '8px 12px', fontSize: 12 }}>{checkoutPaymentMethodDisplay(o.checkout?.paymentMethod)}</td>
                     <td style={{ padding: '8px 12px', fontSize: 12, color: 'var(--text-light)' }}>{new Date(o.createdAt).toLocaleString()}</td>
                   </tr>
                 );

@@ -168,7 +168,7 @@ router.post(
 
 /**
  * POST /api/terminal/confirm
- * Tap to Pay 成功后：校验 PI → Checkout(card) → completed + 云打印
+ * Tap to Pay 成功后：校验 PI → Checkout(tap_pay) → completed + 云打印
  * 可选 memberPhone：挂会员身份发印花（不扣储值；memberCreditAmount 固定 0）
  */
 router.post('/confirm', ...requireAuthSameStore, async (req: Request, res: Response, next: NextFunction) => {
@@ -232,7 +232,7 @@ router.post('/confirm', ...requireAuthSameStore, async (req: Request, res: Respo
         Member,
         finalAmount,
         body: {
-          paymentMethod: 'card',
+          paymentMethod: 'tap_pay',
           memberPhone: memberPhoneRaw,
           memberCreditAmount: 0,
         },
@@ -252,7 +252,7 @@ router.post('/confirm', ...requireAuthSameStore, async (req: Request, res: Respo
       storeId: req.storeId,
       type: 'seat',
       totalAmount: finalAmount,
-      paymentMethod: 'card',
+      paymentMethod: 'tap_pay',
       orderIds: [order._id],
       tableNumber: order.tableNumber,
       stripePaymentIntentId: paymentIntentId,
@@ -283,7 +283,7 @@ router.post('/confirm', ...requireAuthSameStore, async (req: Request, res: Respo
       orderId,
       checkoutId: String(checkout._id),
       status: order.status,
-      paymentMethod: 'card',
+      paymentMethod: 'tap_pay',
       totalAmount: finalAmount,
       memberPhoneSnapshot: memberPatch.memberPhoneSnapshot || undefined,
     });

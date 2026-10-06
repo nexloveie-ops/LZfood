@@ -1,5 +1,5 @@
 /** Receipt / kitchen ticket payment method derived from an order row. */
-export type ReceiptPaymentMethod = 'cash' | 'card' | 'mixed' | 'online' | 'member' | 'pending';
+export type ReceiptPaymentMethod = 'cash' | 'card' | 'mixed' | 'online' | 'member' | 'tap_pay' | 'pending';
 
 export interface OrderReceiptPaymentInput {
   type?: string;
@@ -12,10 +12,20 @@ export interface OrderReceiptPaymentInput {
   customerOnlinePaymentAt?: string;
   memberCreditUsed?: number;
   paymentStatus?: string;
+  /** When known from Checkout (e.g. reprint / UOC). */
+  checkoutPaymentMethod?: string;
 }
 
 /** Align with order-center UI: prepaid online / member / card vs unpaid vs counter cash. */
 export function resolveReceiptPaymentMethodFromOrder(o: OrderReceiptPaymentInput): ReceiptPaymentMethod {
+  const checkoutPm = String(o.checkoutPaymentMethod || '').trim();
+  if (checkoutPm === 'tap_pay') return 'tap_pay';
+  if (checkoutPm === 'member') return 'member';
+  if (checkoutPm === 'online') return 'online';
+  if (checkoutPm === 'card') return 'card';
+  if (checkoutPm === 'cash') return 'cash';
+  if (checkoutPm === 'mixed') return 'mixed';
+
   const status = String(o.status || '').toLowerCase();
   const isPending = status === 'pending';
   const isPaidish =
@@ -81,5 +91,18 @@ export function receiptPaymentMethodLabel(pm: ReceiptPaymentMethod): string {
   if (pm === 'online') return 'Online Payment / 网上支付';
   if (pm === 'member') return 'Member balance / 会员余额';
   if (pm === 'mixed') return 'Mixed / 混合支付';
+  if (pm === 'tap_pay') return 'Tap Pay / Tap to Pay';
   return 'Pay later / 后结待付';
+}
+
+/** Display label for admin / history lists. */
+export function checkoutPaymentMethodDisplay(pm: string | undefined | null): string {
+  const v = String(pm || '').trim();
+  if (v === 'cash') return '现金';
+  if (v === 'card') return '刷卡';
+  if (v === 'mixed') return '混合';
+  if (v === 'online') return 'Online';
+  if (v === 'member') return '会员';
+  if (v === 'tap_pay') return 'Tap Pay';
+  return v || '-';
 }

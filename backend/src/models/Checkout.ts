@@ -4,8 +4,8 @@ const CheckoutSchema = new mongoose.Schema({
   type: { type: String, enum: ['table', 'seat'], required: true },
   tableNumber: { type: Number },
   totalAmount: { type: Number, required: true },
-  /** `member` = 应付全额由储值支付（无现金/刷卡剩余） */
-  paymentMethod: { type: String, enum: ['cash', 'card', 'mixed', 'online', 'member'], required: true },
+  /** `member` = 应付全额由储值支付（无现金/刷卡剩余）；`tap_pay` = iOS Tap to Pay（平台 Stripe 代收，不计刷卡） */
+  paymentMethod: { type: String, enum: ['cash', 'card', 'mixed', 'online', 'member', 'tap_pay'], required: true },
   cashAmount: { type: Number },
   cardAmount: { type: Number },
   /** 客人实付现金（找零用）；与 cashAmount（应付现金部分）不同 */

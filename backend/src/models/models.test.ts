@@ -189,6 +189,15 @@ describe('Mongoose Data Models', () => {
       expect(err!.errors['type']).toBeDefined();
     });
 
+    it('should accept tap_pay as paymentMethod', () => {
+      const doc = new Checkout({
+        type: 'seat',
+        totalAmount: 20,
+        paymentMethod: 'tap_pay',
+      });
+      expect(doc.validateSync()).toBeUndefined();
+    });
+
     it('should only accept cash, card, or mixed as paymentMethod', () => {
       const doc = new Checkout({ type: 'table', totalAmount: 100, paymentMethod: 'bitcoin' });
       const err = doc.validateSync();
