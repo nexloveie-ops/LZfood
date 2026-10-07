@@ -9,7 +9,7 @@ import {
   receiptOptionPrintPlain,
   type ReceiptOptionSnapshot,
 } from '../../utils/receiptOptionPrice';
-import { printHtmlReceipt } from '../../utils/posPrint';
+import { printHtmlReceipt, type PrintReceiptResult } from '../../utils/posPrint';
 import {
   attachCatalogMetaToItems,
   formatCatalogHeader,
@@ -968,7 +968,7 @@ export default function ReceiptPrint({ checkoutId, cashReceived, changeAmount, b
         cashReceived: effectiveCashReceived,
         changeAmount: effectiveChangeAmount,
         bundleDiscounts,
-        copies: printCopies ?? copies,
+        ...(printCopies != null ? { copies: printCopies } : {}),
       }).catch(() => {});
     }
   }, [receipt, config, configLoaded, copies, printCopies, effectiveCashReceived, effectiveChangeAmount, bundleDiscounts]);
@@ -1410,20 +1410,33 @@ export async function printBuiltReceipt(
   },
 ) {
   const enriched = await enrichReceiptWithCatalog(receipt);
-  const mode = getReceiptCatalogPrintMode(config);
-  const rawCopies = opts?.copies != null ? Number(opts.copies) : parseReceiptPrintCopies(config, 1);
+  let printConfig = config;
+  if (opts?.copies == null) {
+    try {
+      const res = await apiFetch('/api/admin/config');
+      if (res.ok) {
+        const live = (await res.json()) as RestaurantConfig;
+        printConfig = { ...config, ...live };
+      }
+    } catch {
+      /* keep caller config */
+    }
+  }
+  const mode = getReceiptCatalogPrintMode(printConfig);
+  const rawCopies = opts?.copies != null ? Number(opts.copies) : parseReceiptPrintCopies(printConfig, 1);
   const copies = Number.isFinite(rawCopies) ? Math.max(0, Math.min(10, Math.floor(rawCopies))) : 1;
+  if (copies <= 0) return 'browser' as PrintReceiptResult;
 
   const fullHtml = buildReceiptHTML(
     enriched,
-    config,
+    printConfig,
     opts?.cashReceived,
     opts?.changeAmount,
     opts?.bundleDiscounts,
   );
   const fullPlain = buildReceiptPlainText(
     enriched,
-    config,
+    printConfig,
     opts?.cashReceived,
     opts?.changeAmount,
     opts?.bundleDiscounts,
@@ -1444,8 +1457,8 @@ export async function printBuiltReceipt(
   );
 
   for (const section of sections) {
-    const html = buildCatalogKitchenHTML(enriched, config, section);
-    const plainText = buildCatalogKitchenPlainText(enriched, config, section);
+    const html = buildCatalogKitchenHTML(enriched, printConfig, section);
+    const plainText = buildCatalogKitchenPlainText(enriched, printConfig, section);
     result = await printHtmlReceipt({ html, plainText, copies: 1 });
   }
 
