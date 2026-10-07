@@ -74,7 +74,10 @@ export function getAppleWalletCertStatus(): {
   };
 }
 
+let signerCache: AppleWalletSignerMaterial | null = null;
+
 export function loadAppleWalletSignerMaterial(): AppleWalletSignerMaterial {
+  if (signerCache) return signerCache;
   const status = getAppleWalletCertStatus();
   if (!status.teamId) {
     throw new Error('未配置 APPLE_TEAM_ID');
@@ -90,11 +93,12 @@ export function loadAppleWalletSignerMaterial(): AppleWalletSignerMaterial {
   // Secret 挂载时密码末尾常带 \n，不 trim 会导致 PKCS#12 MAC 校验失败
   const password = (process.env.APPLE_PASS_P12_PASSWORD ?? '').trim();
   const { certPem, keyPem } = extractFromP12(p12, password);
-  return {
+  signerCache = {
     wwdrPem: derOrPemToPem(wwdrRaw, 'CERTIFICATE'),
     signerCertPem: certPem,
     signerKeyPem: keyPem,
     passTypeId: status.passTypeId,
     teamId: status.teamId,
   };
+  return signerCache;
 }

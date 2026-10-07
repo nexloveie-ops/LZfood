@@ -12,6 +12,8 @@ import {
 } from '../utils/appleWallet/passUpdate';
 import { ensureAppleWalletAuthToken } from '../utils/appleWallet/authToken';
 import { parseMemberIdFromSerial } from '../utils/appleWallet/webServiceUrl';
+import { issuePlatformMemberPkpass } from '../utils/appleWallet/issuePass';
+import { findMemberByAppleWalletAddToken } from '../utils/appleWallet/addPassToken';
 
 const router = Router();
 
@@ -72,6 +74,47 @@ async function assertPassAuth(
   if (!expected || token !== expected) return null;
   return { member };
 }
+
+/** Safari 直开 pkpass（短时票，无会员 JWT） */
+router.get('/add-pass', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const member = await findMemberByAppleWalletAddToken(req.query.t);
+    if (!member) {
+      res
+        .status(410)
+        .type('html')
+        .send(
+          '<!doctype html><meta charset="utf-8"><title>LZFOOD</title><p>加入钱包链接已失效，请返回会员页再试。</p>',
+        );
+      return;
+    }
+    const settings = await getAppleWalletSettings();
+    if (!settings.enabled || !getAppleWalletCertStatus().ready) {
+      res
+        .status(503)
+        .type('html')
+        .send('<!doctype html><meta charset="utf-8"><title>LZFOOD</title><p>Apple Wallet 会员卡暂不可用。</p>');
+      return;
+    }
+    const buf = await issuePlatformMemberPkpass(
+      {
+        _id: member._id,
+        memberNo: member.memberNo,
+        displayName: member.displayName,
+        phone: member.phone,
+        creditBalance: member.creditBalance,
+        stampCount: member.stampCount,
+      },
+      settings,
+    );
+    res.setHeader('Content-Type', 'application/vnd.apple.pkpass');
+    res.setHeader('Content-Disposition', 'inline; filename="lzfood-membership.pkpass"');
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(buf);
+  } catch (err) {
+    next(err);
+  }
+});
 
 /**
  * POST /v1/devices/:deviceLibraryIdentifier/registrations/:passTypeIdentifier/:serialNumber

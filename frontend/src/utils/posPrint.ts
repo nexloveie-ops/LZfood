@@ -42,7 +42,10 @@ export type PrintHtmlReceiptOptions = {
 export async function printHtmlReceipt(
   options: PrintHtmlReceiptOptions,
 ): Promise<PrintReceiptResult> {
-  const copies = Math.max(1, Math.floor(options.copies ?? 1));
+  const copies = Number.isFinite(Number(options.copies))
+    ? Math.max(0, Math.floor(Number(options.copies)))
+    : 1;
+  if (copies <= 0) return 'browser';
   const bridge = window.LZFOODPrinter;
   const plain = options.plainText?.trim();
 

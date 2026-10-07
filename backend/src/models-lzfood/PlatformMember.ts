@@ -30,9 +30,13 @@ export const PlatformMemberSchema = new mongoose.Schema(
     appleWalletAuthToken: { type: String, default: '', trim: true },
     /** 余额等变更时间，供 PassKit passesUpdatedSince / If-Modified-Since */
     appleWalletUpdatedAt: { type: Date, default: null },
+    /** 顾客「加入钱包」短时下载票（Safari 直开 pkpass，勿当会话 JWT） */
+    appleWalletAddToken: { type: String, default: '', trim: true },
+    appleWalletAddTokenExp: { type: Date, default: null },
   },
   { timestamps: true },
 );
 
 PlatformMemberSchema.index({ displayName: 1 });
 PlatformMemberSchema.index({ staffStoreIds: 1 });
+PlatformMemberSchema.index({ appleWalletAddToken: 1 }, { sparse: true });

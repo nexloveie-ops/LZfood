@@ -29,6 +29,23 @@ type StripSpec = {
   valueH: number;
 };
 
+const fontCache = new Map<string, Awaited<ReturnType<typeof Jimp.loadFont>>>();
+const stripCache = new Map<string, Record<string, Buffer>>();
+
+async function loadFontCached(font: string) {
+  const hit = fontCache.get(font);
+  if (hit) return hit;
+  const loaded = await Jimp.loadFont(font);
+  fontCache.set(font, loaded);
+  return loaded;
+}
+
+function cloneStripBuffers(src: Record<string, Buffer>): Record<string, Buffer> {
+  const out: Record<string, Buffer> = {};
+  for (const [k, buf] of Object.entries(src)) out[k] = Buffer.from(buf);
+  return out;
+}
+
 /** 余额下一行、右对齐：上方 STAMPS，下方鸭子 + 3 / 9 */
 export async function buildStampStripPngs(
   stamps: number,
@@ -37,6 +54,9 @@ export async function buildStampStripPngs(
 ): Promise<Record<string, Buffer>> {
   const srcPath = duckSourcePath();
   if (!fs.existsSync(srcPath)) return {};
+  const cacheKey = `${Math.max(0, Math.floor(stamps))}|${Math.max(1, Math.floor(goal))}|${foregroundColor}`;
+  const cached = stripCache.get(cacheKey);
+  if (cached) return cloneStripBuffers(cached);
   const black = useBlackText(foregroundColor);
   const value = `${Math.max(0, Math.floor(stamps))} / ${Math.max(1, Math.floor(goal))}`;
   const specs: StripSpec[] = [
@@ -74,8 +94,8 @@ export async function buildStampStripPngs(
   const duck = await Jimp.read(srcPath);
   const out: Record<string, Buffer> = {};
   for (const spec of specs) {
-    const labelFont = await Jimp.loadFont(spec.labelFont);
-    const valueFont = await Jimp.loadFont(spec.valueFont);
+    const labelFont = await loadFontCached(spec.labelFont);
+    const valueFont = await loadFontCached(spec.valueFont);
     const canvas = new Jimp(spec.w, spec.h, 0x00000000);
     const icon = duck.clone().resize(spec.icon, spec.icon);
     const gap = Math.max(8, Math.round(spec.icon * 0.18));
@@ -101,5 +121,10 @@ export async function buildStampStripPngs(
     canvas.print(valueFont, xValue, yValue, value);
     out[spec.file] = await canvas.getBufferAsync(Jimp.MIME_PNG);
   }
-  return out;
+  stripCache.set(cacheKey, out);
+  if (stripCache.size > 40) {
+    const first = stripCache.keys().next().value;
+    if (first) stripCache.delete(first);
+  }
+  return cloneStripBuffers(out);
 }

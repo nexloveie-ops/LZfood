@@ -46,6 +46,7 @@ import { getAppleWalletCertStatus } from '../utils/appleWallet/certs';
 import { getAppleWalletSettings } from '../utils/appleWallet/config';
 import { issuePlatformMemberPkpass } from '../utils/appleWallet/issuePass';
 import { resolveAppleWalletWebServiceUrl } from '../utils/appleWallet/webServiceUrl';
+import { appleWalletAddPassPath, mintAppleWalletAddToken } from '../utils/appleWallet/addPassToken';
 import { loadStampRules } from '../utils/platformStamps';
 
 const MEMBER_TOPUP_MIN_EUR = 1;
@@ -822,8 +823,14 @@ router.get('/me/apple-wallet', memberAuthMiddleware, async (req: Request, res: R
     const certificates = getAppleWalletCertStatus();
     const available = !!(platform && platform.status === 'active' && settings.enabled && certificates.ready);
     const webServiceURL = resolveAppleWalletWebServiceUrl();
+    let passUrl: string | null = null;
+    if (available && platform) {
+      const addToken = await mintAppleWalletAddToken(platform._id);
+      passUrl = appleWalletAddPassPath(addToken);
+    }
     res.json({
       available,
+      passUrl,
       enabled: settings.enabled,
       certificatesReady: certificates.ready,
       passUpdatesEnabled: !!webServiceURL && certificates.ready,

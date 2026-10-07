@@ -198,7 +198,7 @@ export function getReceiptCatalogPrintMode(config: { receipt_print_by_catalog?: 
 
 export function parseReceiptPrintCopies(config: { receipt_print_copies?: string }, fallback = 1): number {
   const n = parseInt(String(config.receipt_print_copies ?? ''), 10);
-  if (!Number.isFinite(n) || n < 1) return fallback;
+  if (!Number.isFinite(n) || n < 0) return fallback;
   return Math.min(10, n);
 }
 
@@ -943,7 +943,9 @@ export default function ReceiptPrint({ checkoutId, cashReceived, changeAmount, b
         if (configRes.ok) {
           const c: Record<string, string> = await configRes.json();
           setConfig(c);
-          if (c.receipt_print_copies) setCopies(parseInt(c.receipt_print_copies, 10) || 2);
+          if (c.receipt_print_copies != null && String(c.receipt_print_copies).trim() !== '') {
+            setCopies(parseReceiptPrintCopies(c, 2));
+          }
         }
         setConfigLoaded(true);
       } catch {
@@ -1409,10 +1411,8 @@ export async function printBuiltReceipt(
 ) {
   const enriched = await enrichReceiptWithCatalog(receipt);
   const mode = getReceiptCatalogPrintMode(config);
-  const copies = Math.max(
-    1,
-    Math.floor(opts?.copies != null ? opts.copies : parseReceiptPrintCopies(config, 1)),
-  );
+  const rawCopies = opts?.copies != null ? Number(opts.copies) : parseReceiptPrintCopies(config, 1);
+  const copies = Number.isFinite(rawCopies) ? Math.max(0, Math.min(10, Math.floor(rawCopies))) : 1;
 
   const fullHtml = buildReceiptHTML(
     enriched,
@@ -1433,7 +1433,7 @@ export async function printBuiltReceipt(
     return printHtmlReceipt({ html: fullHtml, plainText: fullPlain, copies });
   }
 
-  // split：1) 完整小票（份数按设置） 2) 每分类一张厨房单
+  // split：1) 完整小票（份数按设置，0 则跳过） 2) 每分类一张厨房单
   let result = await printHtmlReceipt({ html: fullHtml, plainText: fullPlain, copies });
 
   const foodItems = enriched.orders

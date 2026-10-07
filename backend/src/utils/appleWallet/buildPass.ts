@@ -77,45 +77,35 @@ function fetchUrlBuffer(url: string, timeoutMs = 8000): Promise<Buffer> {
   });
 }
 
-/** 将设置里的 logoUrl 解析为 PNG buffer（本地 uploads、GCS 或公网 URL） */
+const logoCache = new Map<string, { buf: Buffer; at: number }>();
+const LOGO_TTL_MS = 10 * 60 * 1000;
+
+/** 将设置里的 logoUrl 解析为 PNG buffer（本地 uploads、GCS；避免对本服务自拉 /uploads） */
 async function resolveLogoBuffer(logoUrl: string): Promise<Buffer | null> {
   const raw = logoUrl.trim();
   if (!raw) return null;
+  const hit = logoCache.get(raw);
+  if (hit && Date.now() - hit.at < LOGO_TTL_MS) return hit.buf;
   try {
+    let buf: Buffer | null = null;
     if (raw.startsWith('/uploads/')) {
       const rel = raw.replace(/^\/uploads\//, '');
       const fp = path.join(uploadsRoot(), rel);
-      if (fs.existsSync(fp)) return fs.readFileSync(fp);
-
-      // Cloud Run：文件在 GCS，磁盘上没有；先走公网 /uploads 代理，再直读 GCS
-      const origin = (process.env.PORTAL_PUBLIC_ORIGIN || process.env.QR_BASE_URL || '')
-        .trim()
-        .replace(/\/+$/, '');
-      if (origin) {
+      if (fs.existsSync(fp)) buf = fs.readFileSync(fp);
+      if (!buf) {
         try {
-          return await fetchUrlBuffer(`${origin}${raw}`);
+          const { getFileBuffer } = await import('../../storage');
+          buf = await getFileBuffer(rel);
         } catch {
-          /* fall through */
+          buf = null;
         }
       }
-      try {
-        const { getFileStream } = await import('../../storage');
-        const result = await getFileStream(rel);
-        if (result?.stream) {
-          const chunks: Buffer[] = [];
-          for await (const c of result.stream as AsyncIterable<Buffer | string>) {
-            chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c));
-          }
-          const buf = Buffer.concat(chunks);
-          if (buf.length > 0) return buf;
-        }
-      } catch {
-        /* ignore */
-      }
-      return null;
+    } else if (raw.startsWith('http://') || raw.startsWith('https://')) {
+      buf = await fetchUrlBuffer(raw);
     }
-    if (raw.startsWith('http://') || raw.startsWith('https://')) {
-      return await fetchUrlBuffer(raw);
+    if (buf && buf.length > 0) {
+      logoCache.set(raw, { buf, at: Date.now() });
+      return buf;
     }
   } catch {
     return null;
@@ -147,7 +137,6 @@ export async function buildPlatformMemberPkpass(
   settings: AppleWalletSettings,
 ): Promise<Buffer> {
   const signer = loadAppleWalletSignerMaterial();
-  const locations = await resolvePassStoreLocations(settings.storeIds);
   const balance = Number(member.creditBalance) || 0;
   const stamps = Math.max(0, Math.floor(Number(member.stampCount) || 0));
   const stampGoal = Math.max(1, Math.floor(Number(member.stampRedeemAt) || 9));
@@ -160,13 +149,15 @@ export async function buildPlatformMemberPkpass(
     throw new Error('Apple Wallet authenticationToken 无效（需 ≥16 字符）');
   }
 
-  const buffers = await loadAssetBuffers(settings);
-  try {
-    const strips = await buildStampStripPngs(stamps, stampGoal, settings.foregroundColor);
-    Object.assign(buffers, strips);
-  } catch (e) {
-    console.error('[apple-wallet] stamp strip:', e instanceof Error ? e.message : e);
-  }
+  const [locations, buffers, strips] = await Promise.all([
+    resolvePassStoreLocations(settings.storeIds),
+    loadAssetBuffers(settings),
+    buildStampStripPngs(stamps, stampGoal, settings.foregroundColor).catch((e) => {
+      console.error('[apple-wallet] stamp strip:', e instanceof Error ? e.message : e);
+      return {} as Record<string, Buffer>;
+    }),
+  ]);
+  Object.assign(buffers, strips);
 
   const pass = new PKPass(
     buffers,

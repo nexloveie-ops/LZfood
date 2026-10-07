@@ -84,4 +84,16 @@ export async function getFileStream(
   };
 }
 
+/** Read a GCS object fully into memory. Returns null if not GCS or missing. */
+export async function getFileBuffer(filePath: string): Promise<Buffer | null> {
+  const result = await getFileStream(filePath);
+  if (!result?.stream) return null;
+  const chunks: Buffer[] = [];
+  for await (const c of result.stream as AsyncIterable<Buffer | string>) {
+    chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c));
+  }
+  const buf = Buffer.concat(chunks);
+  return buf.length > 0 ? buf : null;
+}
+
 export { USE_GCS };

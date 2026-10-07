@@ -48,7 +48,7 @@ export default function PrintSettings() {
       const data = await res.json() as Record<string, string>;
       setCatalogMode(parseCatalogPrintMode(data.receipt_print_by_catalog));
       const n = parseInt(String(data.receipt_print_copies || '2'), 10);
-      setCopies(Number.isFinite(n) && n >= 1 ? Math.min(10, n) : 2);
+      setCopies(Number.isFinite(n) && n >= 0 ? Math.min(10, n) : 2);
     } finally {
       setLoading(false);
     }
@@ -69,7 +69,7 @@ export default function PrintSettings() {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({
-          receipt_print_copies: String(copies),
+          receipt_print_copies: String(Math.min(10, Math.max(0, Math.floor(copies)))),
           receipt_print_by_catalog:
             catalogMode === 'off' ? '0' : catalogMode === 'headers' ? 'headers' : 'split',
         }),
@@ -127,11 +127,12 @@ export default function PrintSettings() {
             <input
               className="input"
               type="number"
-              min={1}
+              min={0}
               max={10}
               value={copies}
               onChange={(e) => {
-                setCopies(Math.min(10, Math.max(1, Number(e.target.value) || 1)));
+                const n = Number(e.target.value);
+                setCopies(Math.min(10, Math.max(0, Number.isFinite(n) ? Math.floor(n) : 0)));
                 setSaved(false);
               }}
               style={{ display: 'block', marginTop: 6, maxWidth: 120 }}
