@@ -45,8 +45,21 @@ export type TerminalStripeContext = {
   stripe: InstanceType<typeof Stripe>;
   publishableKey: string;
   locationId: string;
+  locationSource: 'store' | 'platform' | 'env' | 'none';
   source: 'platform' | 'store';
 };
+
+async function resolveLocationId(
+  storeId: mongoose.Types.ObjectId,
+): Promise<{ locationId: string; locationSource: 'store' | 'platform' | 'env' | 'none' }> {
+  const storeLoc = await getStoreTerminalLocationId(storeId);
+  if (storeLoc) return { locationId: storeLoc, locationSource: 'store' };
+  const platformLoc = await getPlatformTerminalLocationId();
+  if (platformLoc) return { locationId: platformLoc, locationSource: 'platform' };
+  const envLoc = envTerminalLocationId();
+  if (envLoc) return { locationId: envLoc, locationSource: 'env' };
+  return { locationId: '', locationSource: 'none' };
+}
 
 /**
  * iOS Tap to Pay / Terminal:
@@ -60,10 +73,7 @@ export async function resolveTerminalStripeContext(
   const platformSk = await getPlatformStripeSecret();
   if (platformSk) {
     const publishableKey = await getPlatformStripePublishable();
-    const locationId =
-      (await getStoreTerminalLocationId(storeId)) ||
-      (await getPlatformTerminalLocationId()) ||
-      envTerminalLocationId();
+    const { locationId, locationSource } = await resolveLocationId(storeId);
     if (!publishableKey) {
       throw createAppError('VALIDATION_ERROR', '平台尚未配置 Stripe Publishable Key');
     }
@@ -77,6 +87,7 @@ export async function resolveTerminalStripeContext(
       stripe: new Stripe(platformSk),
       publishableKey,
       locationId,
+      locationSource,
       source: 'platform',
     };
   }
@@ -89,10 +100,7 @@ export async function resolveTerminalStripeContext(
     );
   }
   const publishableKey = await getStripePublishableResolved(storeId);
-  const locationId =
-    (await getStoreTerminalLocationId(storeId)) ||
-    (await getPlatformTerminalLocationId()) ||
-    envTerminalLocationId();
+  const { locationId, locationSource } = await resolveLocationId(storeId);
   if (!publishableKey || !locationId) {
     throw createAppError(
       'VALIDATION_ERROR',
@@ -100,42 +108,38 @@ export async function resolveTerminalStripeContext(
     );
   }
   const stripe = await createStripeClient(storeId);
-  return { stripe, publishableKey, locationId, source: 'store' };
+  return { stripe, publishableKey, locationId, locationSource, source: 'store' };
 }
 
 /** Soft resolve for GET /config (never throws on missing keys). */
 export async function peekTerminalConfig(storeId: mongoose.Types.ObjectId): Promise<{
   publishableKey: string;
   locationId: string;
+  locationSource: 'store' | 'platform' | 'env' | 'none';
   ready: boolean;
   source: 'platform' | 'store' | 'none';
 }> {
+  const { locationId, locationSource } = await resolveLocationId(storeId);
   const platformSk = await getPlatformStripeSecret();
   if (platformSk) {
     const publishableKey = await getPlatformStripePublishable();
-    const locationId =
-      (await getStoreTerminalLocationId(storeId)) ||
-      (await getPlatformTerminalLocationId()) ||
-      envTerminalLocationId();
     return {
       publishableKey,
       locationId,
+      locationSource,
       ready: !!(publishableKey && locationId && platformSk),
       source: 'platform',
     };
   }
   const storeSk = await getStripeSecretResolved(storeId);
   const publishableKey = await getStripePublishableResolved(storeId);
-  const locationId =
-    (await getStoreTerminalLocationId(storeId)) ||
-    (await getPlatformTerminalLocationId()) ||
-    envTerminalLocationId();
   if (!storeSk && !publishableKey && !locationId) {
-    return { publishableKey: '', locationId: '', ready: false, source: 'none' };
+    return { publishableKey: '', locationId: '', locationSource, ready: false, source: 'none' };
   }
   return {
     publishableKey,
     locationId,
+    locationSource,
     ready: !!(storeSk && publishableKey && locationId),
     source: storeSk ? 'store' : 'none',
   };

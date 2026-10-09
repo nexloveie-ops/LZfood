@@ -1,6 +1,9 @@
 import type mongoose from 'mongoose';
 import { getModels } from '../getModels';
 
+/** Store ops timezone — business hours / closed dates are wall-clock in Ireland. */
+export const BUSINESS_HOURS_TZ = 'Europe/Dublin';
+
 export interface BusinessSlot {
   start: string;
   end: string;
@@ -12,11 +15,27 @@ export interface BusinessStatus {
   message?: string;
 }
 
-function toDateKey(date: Date): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+function dublinWallParts(now: Date): { dateKey: string; minutes: number } {
+  const dtf = new Intl.DateTimeFormat('en-US', {
+    timeZone: BUSINESS_HOURS_TZ,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  });
+  const m: Record<string, number> = {};
+  for (const p of dtf.formatToParts(now)) {
+    if (p.type !== 'literal') m[p.type] = Number(p.value);
+  }
+  const year = m.year;
+  const month = String(m.month).padStart(2, '0');
+  const day = String(m.day).padStart(2, '0');
+  return {
+    dateKey: `${year}-${month}-${day}`,
+    minutes: m.hour * 60 + m.minute,
+  };
 }
 
 function parseMinutes(hhmm: string): number | null {
@@ -61,7 +80,7 @@ export async function getBusinessStatus(storeId: mongoose.Types.ObjectId, now = 
     parseJsonArray<string>(closedDatesConfig?.value).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)),
   );
 
-  const todayKey = toDateKey(now);
+  const { dateKey: todayKey, minutes: nowMinutes } = dublinWallParts(now);
   if (closedDates.has(todayKey)) {
     return {
       isOpen: false,
@@ -74,7 +93,6 @@ export async function getBusinessStatus(storeId: mongoose.Types.ObjectId, now = 
     return { isOpen: true };
   }
 
-  const nowMinutes = now.getHours() * 60 + now.getMinutes();
   const inAnySlot = slots.some((slot) => isWithinSlot(nowMinutes, slot));
   if (!inAnySlot) {
     return {

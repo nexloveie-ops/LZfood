@@ -43,6 +43,7 @@ router.get('/config', ...requireAuthSameStore, async (req: Request, res: Respons
     res.json({
       publishableKey: cfg.publishableKey,
       locationId: cfg.locationId,
+      locationSource: cfg.locationSource,
       ready: cfg.ready,
       source: cfg.source,
     });
