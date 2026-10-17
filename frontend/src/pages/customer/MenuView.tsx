@@ -33,6 +33,7 @@ interface AllergenData { _id: string; icon: string; }
 interface MenuItemData {
   _id: string; categoryId: string; price: number; calories?: number;
   avgWaitMinutes?: number; photoUrl?: string; arFileUrl?: string; isSoldOut?: boolean; isRecommended?: boolean; spiceLevel?: number;
+  isMarketPrice?: boolean; todayPricePerKg?: number | null;
   inventoryTracked?: boolean;
   inventory?: { currentQty?: number; perServing?: number };
   translations: { locale: string; name: string; description?: string }[];

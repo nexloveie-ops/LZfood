@@ -40,7 +40,7 @@ export type PayAfterOrder = {
   customerPhone?: string;
   deliveryAddress?: string;
   postalCode?: string;
-  deliverySource?: string;
+  deliverySource?: 'phone' | 'qr';
   deliveryStage?: string;
   deliveryFeeEuro?: number;
   pickupSlotLabel?: string;

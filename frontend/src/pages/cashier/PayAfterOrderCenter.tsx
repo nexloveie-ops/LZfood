@@ -5,7 +5,7 @@ import { connectStoreSocket } from '../../api/storeSocket';
 import { useAuth } from '../../context/AuthContext';
 import { apiFetch } from '../../api/client';
 import { printBuiltReceipt, type BundleDiscountInfo } from '../../components/cashier/ReceiptPrint';
-import { receiptOptionExtraEuro, type ReceiptOptionSnapshot } from '../../utils/receiptOptionPrice';
+import { type ReceiptOptionSnapshot } from '../../utils/receiptOptionPrice';
 import { resolveReceiptPaymentMethodFromOrder } from '../../utils/receiptPaymentMethod';
 import CashierMemberCheckoutBlock, {
   buildMemberFullWalletCheckoutBody,
@@ -203,7 +203,6 @@ export default function PayAfterOrderCenter() {
   const [memberPhone, setMemberPhone] = useState('');
   const [memberPreview, setMemberPreview] = useState<CashierMemberPreview | null>(null);
   const [weighTarget, setWeighTarget] = useState<{ orderId: string; item: PayAfterOrderItem } | null>(null);
-  const [kitchenPrintMenu, setKitchenPrintMenu] = useState(false);
   const fetchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const fetchAll = useCallback(async () => {
