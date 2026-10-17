@@ -23,6 +23,11 @@ import {
 import { computeRefundChannelBreakdown } from '../utils/memberRefundAlign';
 import { FeatureKeys, resolveStoreEffectiveFeatures } from '../utils/featureCatalog';
 import { scheduleStoreCloudPrint } from '../utils/cloudPrint/runJob';
+import {
+  shouldKitchenCloudPrintAfterCashierPay,
+  tryKitchenCloudPrintAndMark,
+  tryKitchenCloudPrintUnprinted,
+} from '../utils/cloudPrint/kitchenRoute';
 import { scheduleStampAwardForCheckout } from '../utils/platformStamps';
 import {
   markDineInFoodLinesFullySettled,
@@ -31,6 +36,7 @@ import {
 import {
   syncDualTrackBeforeSave,
 } from '../utils/orderDualTrack';
+import { assertNoUnweighedMarketLines } from '../utils/marketPrice';
 import {
   loadAndValidateNumberedVoucherForOrder,
   redeemNumberedVoucher,
@@ -116,28 +122,30 @@ function round2Euro(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
-/** 单笔/整桌 seat 结账后订单终态：先付堂食全额结清 → completed；其余 → checked_out */
-async function finalizeSeatOrderCheckedOut(
-  Order: mongoose.Model<any>,
-  storeId: mongoose.Types.ObjectId,
-  orderId: string,
+/** 订单中心结账：只打本地小票，不推飞鹅。点单台 seat 结账仍看管理员「结账自动打」。 */
+function requestSkipsCheckoutCloudPrint(body: unknown): boolean {
+  const b = body && typeof body === 'object' ? (body as Record<string, unknown>) : {};
+  return b.skipCloudPrint === true || b.skipCloudPrint === 'true' || b.skipCloudPrint === 1;
+}
+
+function isMongooseVersionError(err: unknown): boolean {
+  return Boolean(err && typeof err === 'object' && (err as { name?: string }).name === 'VersionError');
+}
+
+function applySeatCheckoutFinalize(
+  doc: any,
+  dineInWf: 'pay_first' | 'pay_after',
   patch: {
     memberId?: mongoose.Types.ObjectId;
     memberPhoneSnapshot?: string;
     memberCreditUsed?: number;
     memberWallet?: 'guest' | 'staff';
   },
-): Promise<'checked_out' | 'completed'> {
-  const doc = await Order.findOne({ _id: orderId, storeId });
-  if (!doc) {
-    throw createAppError('NOT_FOUND', 'Order not found');
-  }
-  /** 先结/后结统一：整单 finalize 时写满 settledQty，避免后结模式下「checked_out 却仍算出未结」 */
+): boolean {
   if (markDineInFoodLinesFullySettled(doc)) {
     doc.markModified('items');
   }
-  /** 财务已结清时同步厨房已打满份数，避免先结单 kitchenPrintedQty 全 0，切后结后订单中心仍按「待出厨房」占位 */
-  if (doc.type === 'dine_in') {
+  if (doc.type === 'dine_in' && dineInWf === 'pay_after') {
     const rem = computeDineInUnsettledPayableEuro(doc);
     if (rem <= 0.02 && !dineInHasUnsettledFoodLineQty(doc)) {
       if (markDineInKitchenPrintedQtyFull(doc)) {
@@ -145,7 +153,6 @@ async function finalizeSeatOrderCheckedOut(
       }
     }
   }
-  const dineInWf = await getDineInWorkflowModeForStore(storeId);
   const payFirstDineInFullyClosed =
     doc.type === 'dine_in' &&
     dineInWf === 'pay_first' &&
@@ -168,8 +175,53 @@ async function finalizeSeatOrderCheckedOut(
     doc.status = staffHideStatus(String(doc.status));
   }
   syncDualTrackBeforeSave(doc, { dineInWorkflowMode: dineInWf });
-  await doc.save();
-  return payFirstDineInFullyClosed ? 'completed' : 'checked_out';
+  return payFirstDineInFullyClosed;
+}
+
+/** 单笔/整桌 seat 结账后订单终态：先付堂食全额结清 → completed；其余 → checked_out */
+async function finalizeSeatOrderCheckedOut(
+  Order: mongoose.Model<any>,
+  storeId: mongoose.Types.ObjectId,
+  orderId: string,
+  patch: {
+    memberId?: mongoose.Types.ObjectId;
+    memberPhoneSnapshot?: string;
+    memberCreditUsed?: number;
+    memberWallet?: 'guest' | 'staff';
+  },
+): Promise<'checked_out' | 'completed'> {
+  const dineInWf = await getDineInWorkflowModeForStore(storeId);
+  let doc = await Order.findOne({ _id: orderId, storeId });
+  if (!doc) {
+    throw createAppError('NOT_FOUND', 'Order not found');
+  }
+  /** 跑单堂食：结账时补打未出厨行（内部会另存一次订单）。先付不走。 */
+  if (doc.type === 'dine_in' && dineInWf === 'pay_after') {
+    await tryKitchenCloudPrintUnprinted({
+      storeId,
+      orderId: doc._id as mongoose.Types.ObjectId,
+      trigger: 'placement',
+    });
+    const afterPrint = await Order.findOne({ _id: orderId, storeId });
+    if (!afterPrint) {
+      throw createAppError('NOT_FOUND', 'Order not found');
+    }
+    doc = afterPrint;
+  }
+
+  let payFirstClosed = applySeatCheckoutFinalize(doc, dineInWf, patch);
+  try {
+    await doc.save();
+  } catch (err) {
+    if (!isMongooseVersionError(err)) throw err;
+    const retry = await Order.findOne({ _id: orderId, storeId });
+    if (!retry) {
+      throw createAppError('NOT_FOUND', 'Order not found');
+    }
+    payFirstClosed = applySeatCheckoutFinalize(retry, dineInWf, patch);
+    await retry.save();
+  }
+  return payFirstClosed ? 'completed' : 'checked_out';
 }
 
 function emitOrderAfterSeatFinalize(
@@ -267,6 +319,10 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
         throw createAppError('NOT_FOUND', 'No pending orders found for this table');
       }
 
+      for (const o of orders) {
+        assertNoUnweighedMarketLines(o.items);
+      }
+
       const dineInWf = await getDineInWorkflowModeForStore(req.storeId!);
       let totalAmount: number;
       if (dineInWf === 'pay_after') {
@@ -360,7 +416,6 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
 
       res.status(201).json(checkout);
       if (req.storeId && checkout?._id) {
-        scheduleStoreCloudPrint(req.storeId, checkout._id as mongoose.Types.ObjectId, 'checkout');
         scheduleStampAwardForCheckout(req.storeId, checkout._id as mongoose.Types.ObjectId);
       }
     } catch (err) {
@@ -389,6 +444,8 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
           currentStatus: order.status,
         });
       }
+
+      assertNoUnweighedMarketLines(order.items);
 
       const dineInWf = await getDineInWorkflowModeForStore(req.storeId!);
       const autoTotal =
@@ -475,6 +532,13 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
             note: '更新订单失败，冲回储值',
           });
           throw e;
+        }
+        if (order.type === 'takeout' && req.storeId) {
+          await tryKitchenCloudPrintAndMark({
+            storeId: req.storeId,
+            orderId: new mongoose.Types.ObjectId(orderId),
+            trigger: 'placement',
+          });
         }
         const updatedLean = await Order.findOne({ _id: orderId, storeId: req.storeId }).lean();
         io.to(storeIoRoom(req.storeId!)).emit('order:updated', updatedLean);
@@ -576,12 +640,27 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
         throw e;
       }
 
+      const skipCloudPrint = requestSkipsCheckoutCloudPrint(req.body);
+      if (
+        !skipCloudPrint
+        && req.storeId
+        && shouldKitchenCloudPrintAfterCashierPay({ type: String(order.type), dineInWorkflowMode: dineInWf })
+      ) {
+        await tryKitchenCloudPrintUnprinted({
+          storeId: req.storeId,
+          orderId: new mongoose.Types.ObjectId(orderId),
+          trigger: 'placement',
+        });
+      }
+
       const updatedLean = await Order.findOne({ _id: orderId, storeId: req.storeId }).lean();
       emitOrderAfterSeatFinalize(io, req.storeId!, order, terminalStatus, updatedLean);
 
       res.status(201).json(checkout);
       if (req.storeId && checkout?._id) {
-        scheduleStoreCloudPrint(req.storeId, checkout._id as mongoose.Types.ObjectId, 'checkout');
+        if (!skipCloudPrint) {
+          scheduleStoreCloudPrint(req.storeId, checkout._id as mongoose.Types.ObjectId, 'checkout');
+        }
         scheduleStampAwardForCheckout(req.storeId, checkout._id as mongoose.Types.ObjectId);
       }
     } catch (err) {
@@ -620,6 +699,7 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
       if (!preview.ok) {
         throw createAppError('VALIDATION_ERROR', preview.message);
       }
+      assertNoUnweighedMarketLines(order.items, lineSettlements.map((s) => s.lineId));
       const { couponName, couponAmount } = req.body as Record<string, unknown>;
       let totalAmount = preview.payable;
       if (couponAmount && typeof couponAmount === 'number' && couponAmount > 0) {
@@ -737,7 +817,6 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
 
       res.status(201).json(checkout);
       if (req.storeId && checkout?._id) {
-        scheduleStoreCloudPrint(req.storeId, checkout._id as mongoose.Types.ObjectId, 'checkout');
         scheduleStampAwardForCheckout(req.storeId, checkout._id as mongoose.Types.ObjectId);
       }
     } catch (err) {
@@ -803,6 +882,7 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
         if (!preview.ok) {
           throw createAppError('VALIDATION_ERROR', preview.message);
         }
+        assertNoUnweighedMarketLines(order.items, lineSettlements.map((s) => s.lineId));
         totalPayable += preview.payable;
         for (const l of preview.lines) {
           allCheckoutLines.push({
@@ -937,7 +1017,6 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
 
       res.status(201).json(checkout);
       if (req.storeId && checkout?._id) {
-        scheduleStoreCloudPrint(req.storeId, checkout._id as mongoose.Types.ObjectId, 'checkout');
         scheduleStampAwardForCheckout(req.storeId, checkout._id as mongoose.Types.ObjectId);
       }
     } catch (err) {

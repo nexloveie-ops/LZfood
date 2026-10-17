@@ -46,6 +46,9 @@ import {
   isItemServingBlocked,
 } from '../../utils/bomAvailability';
 import { syncWaiterModeFromSearch } from '../../utils/waiterMode';
+import RecommendedStar from '../../components/RecommendedStar';
+import SpiceLevelHint from '../../components/SpiceLevelHint';
+import { formatMenuMarketPrice } from '../../utils/marketPriceDisplay';
 
 interface Translation { locale: string; name: string; description?: string; }
 interface Category { _id: string; sortOrder: number; translations: Translation[]; }
@@ -54,6 +57,10 @@ interface MenuItem {
   translations: Translation[];
   optionGroups?: OptionGroup[];
   isSoldOut?: boolean;
+  isRecommended?: boolean;
+  spiceLevel?: number;
+  isMarketPrice?: boolean;
+  todayPricePerKg?: number | null;
   inventoryTracked?: boolean;
   inventory?: {
     baseUnit?: string;
@@ -97,6 +104,10 @@ interface OrderLine {
   name: string;
   price: number;
   options?: OrderItemOption[];
+  isMarketPrice?: boolean;
+  weightKg?: number;
+  pricePerKg?: number;
+  todayPricePerKg?: number | null;
 }
 
 /** GET /api/orders/dine-in/active 返回行（本桌待结列表，点击行载入点单） */
@@ -112,6 +123,9 @@ interface ActiveDineInOrderRow {
     itemName: string;
     itemNameEn?: string;
     refunded?: boolean;
+    isMarketPrice?: boolean;
+    weightKg?: number;
+    pricePerKg?: number;
     selectedOptions?: Array<{
       groupName?: string;
       groupNameEn?: string;
@@ -153,6 +167,13 @@ function buildLinesFromActiveDineInOrders(orders: ActiveDineInOrderRow[], lang: 
           name: displayName,
           price: it.unitPrice,
           options: opts.length ? opts : undefined,
+          ...(it.isMarketPrice
+            ? {
+                isMarketPrice: true,
+                weightKg: it.weightKg,
+                pricePerKg: it.pricePerKg,
+              }
+            : {}),
         });
       }
     }
@@ -173,6 +194,7 @@ function bumpLineIdCounterFromLines(lines: Array<{ id: string }>) {
 }
 
 function lineGroupKey(line: OrderLine): string {
+  if (line.isMarketPrice) return `mkt:${line.id}`;
   const optsKey =
     line.options && line.options.length > 0
       ? JSON.stringify(
@@ -406,6 +428,10 @@ export default function CashierOrder() {
   const [frequentItemsLoading, setFrequentItemsLoading] = useState(false);
   const [error, setError] = useState('');
   const [optionModal, setOptionModal] = useState<MenuItem | null>(null);
+  const [showMarketRates, setShowMarketRates] = useState(false);
+  const [marketRateDraft, setMarketRateDraft] = useState<Record<string, string>>({});
+  const [savingMarketRates, setSavingMarketRates] = useState(false);
+  const [awaitMarketWeighHint, setAwaitMarketWeighHint] = useState(false);
 
   // Payment modal state
   const [showPayment, setShowPayment] = useState(false);
@@ -1318,7 +1344,10 @@ export default function CashierOrder() {
         id: nextLineId(),
         menuItemId: item._id,
         name: getName(item.translations),
-        price: item.price,
+        price: item.isMarketPrice ? 0 : item.price,
+        ...(item.isMarketPrice
+          ? { isMarketPrice: true, todayPricePerKg: item.todayPricePerKg ?? null }
+          : {}),
       },
     ]);
   };
@@ -1338,11 +1367,59 @@ export default function CashierOrder() {
         id: nextLineId(),
         menuItemId: item._id,
         name: getName(item.translations),
-        price: item.price,
+        price: item.isMarketPrice ? 0 : item.price,
         options: options.map((o) => ({ ...o })),
+        ...(item.isMarketPrice
+          ? { isMarketPrice: true, todayPricePerKg: item.todayPricePerKg ?? null }
+          : {}),
       },
     ]);
     setOptionModal(null);
+  };
+
+  const marketMenuItems = menuItems.filter((m) => m.isMarketPrice);
+  const openMarketRates = () => {
+    const d: Record<string, string> = {};
+    for (const m of marketMenuItems) {
+      d[m._id] = m.todayPricePerKg && m.todayPricePerKg > 0 ? String(m.todayPricePerKg) : '';
+    }
+    setMarketRateDraft(d);
+    setShowMarketRates(true);
+  };
+  const saveMarketRates = async () => {
+    const items = Object.entries(marketRateDraft)
+      .map(([menuItemId, v]) => ({ menuItemId, pricePerKg: Number(v) }))
+      .filter((x) => Number.isFinite(x.pricePerKg) && x.pricePerKg > 0);
+    if (items.length === 0) {
+      setError(t('cashier.unweighedCannotCheckout'));
+      return;
+    }
+    setSavingMarketRates(true);
+    try {
+      const res = await apiFetch('/api/menu/market-prices', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ items }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error((body as { message?: string }).message || t('common.error'));
+      }
+      const rateMap = new Map(items.map((x) => [x.menuItemId, x.pricePerKg]));
+      setMenuItems((prev) => prev.map((it) => (
+        it.isMarketPrice ? { ...it, todayPricePerKg: rateMap.get(it._id) ?? it.todayPricePerKg ?? null } : it
+      )));
+      setOrder((prev) => prev.map((line) => {
+        if (!line.isMarketPrice || Number(line.weightKg) > 0) return line;
+        const r = rateMap.get(line.menuItemId);
+        return r ? { ...line, todayPricePerKg: r } : line;
+      }));
+      setShowMarketRates(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : t('common.error'));
+    } finally {
+      setSavingMarketRates(false);
+    }
   };
 
   const [editingLineId, setEditingLineId] = useState<string | null>(null);
@@ -1454,8 +1531,14 @@ export default function CashierOrder() {
         {item.isSoldOut && (
           <span className="cashier-menu-card-soldout">{t('cashier.orderSoldOutBadge')}</span>
         )}
-        <div className="cashier-menu-card-name">{getName(item.translations)}</div>
-        <div className="cashier-menu-card-price">€{item.price}</div>
+        <div className="cashier-menu-card-name">
+          {item.isRecommended ? <RecommendedStar size={16} title={t('customer.recommended')} /> : null}
+          <span className="cashier-menu-card-name-text">{getName(item.translations)}</span>
+          <SpiceLevelHint level={item.spiceLevel} />
+        </div>
+        <div className="cashier-menu-card-price">
+          {item.isMarketPrice ? formatMenuMarketPrice(item.todayPricePerKg, lang.startsWith('en')) : `€${item.price}`}
+        </div>
         {item.optionGroups && item.optionGroups.length > 0 && (
           <div className="cashier-menu-card-meta">⚙ {t('customer.selectOptions')}</div>
         )}
@@ -1769,7 +1852,8 @@ export default function CashierOrder() {
       if (matchedBundles.length > 0) {
         orderBody.appliedBundles = matchedBundles.map(b => ({ offerId: b.offer._id, name: b.offer.name, nameEn: b.offer.nameEn, discount: b.savings }));
       }
-      if (phoneCardPaidAtPlacement && !waiterMode) {
+      const hasMarket = order.some((l) => l.isMarketPrice);
+      if (phoneCardPaidAtPlacement && !waiterMode && !hasMarket) {
         orderBody.placementPrepaidMethod = 'card';
         orderBody.phoneCardPaidAtPlacement = true;
       }
@@ -1818,6 +1902,7 @@ export default function CashierOrder() {
       } catch { /* print error ignored */ }
       }
 
+      setAwaitMarketWeighHint(hasMarket);
       setPhoneOrderId(orderData._id);
       setOrder([]);
       setPhoneGuestPhone('');
@@ -1885,7 +1970,8 @@ export default function CashierOrder() {
       if (profileIdRaw && profileIdRaw !== DELIVERY_PROFILE_NEW_MANUAL && isMongoObjectId(profileIdRaw)) {
         orderBody.customerProfileId = profileIdRaw;
       }
-      if (phoneCardPaidAtPlacement && !waiterMode) {
+      const hasMarket = order.some((l) => l.isMarketPrice);
+      if (phoneCardPaidAtPlacement && !waiterMode && !hasMarket) {
         orderBody.placementPrepaidMethod = 'card';
         orderBody.phoneCardPaidAtPlacement = true;
       }
@@ -2009,6 +2095,7 @@ export default function CashierOrder() {
         /* print error ignored */
       }
       }
+      setAwaitMarketWeighHint(hasMarket);
       setPhoneOrderId(orderData._id);
       setOrder([]);
       setDeliveryCustomerName('');
@@ -2086,12 +2173,11 @@ export default function CashierOrder() {
           .filter((o) => o.groupId && o.choiceId);
       }
       const adHocPayload = adHocOpts.map(adHocPayloadFromOption);
-      const key =
-        line.menuItemId +
-        '|' +
-        JSON.stringify({ sel: selOpts || [], ad: adHocPayload });
+      const key = line.isMarketPrice
+        ? `mkt:${line.id}`
+        : line.menuItemId + '|' + JSON.stringify({ sel: selOpts || [], ad: adHocPayload });
       const existing = grouped.get(key);
-      if (existing) {
+      if (existing && !line.isMarketPrice) {
         existing.quantity++;
       } else {
         grouped.set(key, {
@@ -2219,25 +2305,14 @@ export default function CashierOrder() {
       }
     }
     const rawTable = counterTableInput.trim();
-    // 服务员仍须填桌号；收银台堂食桌号选填
-    let tableNum = 0;
-    if (waiterMode) {
-      if (rawTable === '') {
-        setError(t('cashier.counterTableRequired'));
-        return;
-      }
-      tableNum = parseInt(rawTable, 10);
-      if (!Number.isFinite(tableNum) || tableNum < 1) {
-        setError(t('cashier.counterTableInvalidFormat'));
-        return;
-      }
-    } else {
-      const resolved = resolveOptionalDineInTableNumber();
-      if (resolved == null) {
-        setError(t('cashier.counterTableInvalidFormat'));
-        return;
-      }
-      tableNum = resolved;
+    if (rawTable === '') {
+      setError(t('cashier.counterTableRequired'));
+      return;
+    }
+    const tableNum = parseInt(rawTable, 10);
+    if (!Number.isFinite(tableNum) || tableNum < 1) {
+      setError(t('cashier.counterTableInvalidRequired'));
+      return;
     }
     setPaying(true);
     setError('');
@@ -2289,55 +2364,10 @@ export default function CashierOrder() {
         }>;
       };
 
-      // 客人凭条：后结堂食提交成功后自动打印 1 份（服务员手机不下单打印）
-      if (!waiterMode) {
-      try {
-        const configRes = await apiFetch('/api/admin/config');
-        const cfg = configRes.ok ? await configRes.json() : {};
-        const rawItems = Array.isArray(orderData.items) ? orderData.items : [];
-        const receiptItems = rawItems
-          .filter((it) => it.lineKind !== 'delivery_fee')
-          .map((it) => ({
-            _id: String(it._id ?? ''),
-            menuItemId: it.menuItemId,
-            quantity: it.quantity,
-            unitPrice: it.unitPrice,
-            itemName: it.itemName,
-            itemNameEn: it.itemNameEn,
-            selectedOptions: (it.selectedOptions || []).map((o) => ({
-              groupName: o.groupName ?? '',
-              choiceName: o.choiceName ?? '',
-              extraPrice: typeof o.extraPrice === 'number' ? o.extraPrice : 0,
-            })),
-          }));
-        const receiptData = {
-          checkoutId: orderData._id,
-          type: 'seat' as const,
-          tableNumber: tableNum,
-          totalAmount: finalTotal,
-          paymentMethod: 'pending' as const,
-          checkedOutAt: new Date().toISOString(),
-          orders: [{
-            _id: orderData._id,
-            type: 'dine_in' as const,
-            tableNumber: tableNum,
-            seatNumber: 0,
-            dineInOrderNumber: orderData.dineInOrderNumber,
-            status: 'pending',
-            items: receiptItems,
-          }],
-        };
-        void printBuiltReceipt(receiptData, cfg, {
-          bundleDiscounts: matchedBundles.length > 0
-            ? matchedBundles.map((b) => ({ name: b.offer.name, nameEn: b.offer.nameEn, discount: b.savings }))
-            : undefined,
-        });
-      } catch {
-        /* guest slip print is best-effort */
-      }
-      }
+      // 跑单：有云打印则后端已推飞鹅；没有则进订单中心点打印，这里不弹本地窗。
 
       applyInventoryUpdates(orderData?.inventoryUpdates || []);
+      setAwaitMarketWeighHint(order.some((l) => l.isMarketPrice));
       setDineInSubmittedInfo({
         id: orderData._id,
         dineInOrderNumber: orderData.dineInOrderNumber,
@@ -2356,6 +2386,10 @@ export default function CashierOrder() {
 
   const handleOpenPayment = async () => {
     if (order.length === 0) return;
+    if (order.some((l) => l.isMarketPrice)) {
+      setError(t('cashier.weighInOrderCenterHint'));
+      return;
+    }
     if (orderType === 'delivery') return;
     if (orderType === 'dine_in' && !waiterMode) {
       if (resolveOptionalDineInTableNumber() == null) {
@@ -2422,7 +2456,49 @@ export default function CashierOrder() {
       }
       const orderData = await orderRes.json();
       applyInventoryUpdates(orderData?.inventoryUpdates || []);
+      setAwaitMarketWeighHint(order.some((l) => l.isMarketPrice));
       setPhoneOrderId(orderData._id);
+      setOrder([]);
+      purgeCartDraft();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : t('common.error'));
+    } finally {
+      setPaying(false);
+    }
+  };
+
+  const handlePlaceUnpaidAwaitWeigh = async () => {
+    if (order.length === 0) return;
+    if (orderType === 'dine_in' && dineInWorkflowMode === 'pay_after') {
+      await handleSubmitDineInPayAfterOnly();
+      return;
+    }
+    setPaying(true);
+    setError('');
+    try {
+      if (!(await ensureOrderNotSoldOut())) return;
+      const orderRes = await apiFetch('/api/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ ...buildOrderCreateBody(), releaseToKitchen: true }),
+      });
+      if (!orderRes.ok) {
+        const d = await orderRes.json().catch(() => null);
+        throw new Error(d?.error?.message || t('common.error'));
+      }
+      const orderData = await orderRes.json();
+      applyInventoryUpdates(orderData?.inventoryUpdates || []);
+      setAwaitMarketWeighHint(true);
+      if (orderType === 'dine_in') {
+        const tableNum = resolveOptionalDineInTableNumber();
+        setDineInSubmittedInfo({
+          id: String(orderData._id),
+          dineInOrderNumber: orderData.dineInOrderNumber,
+          tableNumber: tableNum == null ? 0 : tableNum,
+        });
+      } else {
+        setPhoneOrderId(String(orderData._id));
+      }
       setOrder([]);
       purgeCartDraft();
     } catch (e) {
@@ -2437,6 +2513,20 @@ export default function CashierOrder() {
     if (editingOrderId) {
       if (waiterMode) {
         setError(t('cashier.waiterNoEditCheckout', { defaultValue: '手机点单不支持改单结账，请在收银台处理。' }));
+        return;
+      }
+      if (order.some((l) => l.isMarketPrice)) {
+        setPaying(true);
+        setError('');
+        try {
+          if (!(await ensureOrderNotSoldOut())) return;
+          await syncCartToPaymentOrder(editingOrderId);
+          setError(t('cashier.weighInOrderCenterHint'));
+        } catch (e) {
+          setError(e instanceof Error ? e.message : t('common.error'));
+        } finally {
+          setPaying(false);
+        }
         return;
       }
       if (!(await ensureOrderNotSoldOut())) return;
@@ -2482,6 +2572,10 @@ export default function CashierOrder() {
         return;
       }
     }
+    if (order.some((l) => l.isMarketPrice)) {
+      await handlePlaceUnpaidAwaitWeigh();
+      return;
+    }
     if (!(await ensureOrderNotSoldOut())) return;
     await handleOpenPayment();
   };
@@ -2498,6 +2592,11 @@ export default function CashierOrder() {
   const changeAmount = paymentMethod === 'cash' ? Math.max(0, cashReceivedNum - amountToPay) : 0;
 
   const handlePay = async () => {
+    if (order.some((l) => l.isMarketPrice)) {
+      setError(t('cashier.weighInOrderCenterHint'));
+      setPaying(false);
+      return;
+    }
     if (orderType === 'delivery') {
       setShowPayment(false);
       return;
@@ -2618,7 +2717,10 @@ export default function CashierOrder() {
           {waiterMode ? (
             <p style={{ fontSize: 13, color: '#E65100', marginBottom: 16 }}>{t('cashier.waiterPlacedBody')}</p>
           ) : null}
-          <button className="btn btn-primary" onClick={() => setDineInSubmittedInfo(null)} style={{ marginBottom: 20 }}>
+          {awaitMarketWeighHint ? (
+            <p style={{ fontSize: 13, color: '#E65100', marginBottom: 16 }}>{t('cashier.weighInOrderCenterHint')}</p>
+          ) : null}
+          <button className="btn btn-primary" onClick={() => { setDineInSubmittedInfo(null); setAwaitMarketWeighHint(false); }} style={{ marginBottom: 20 }}>
             {t('cashier.continueOrder')}
           </button>
         </div>
@@ -2638,7 +2740,10 @@ export default function CashierOrder() {
           <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 16 }}>
             {waiterMode ? t('cashier.waiterPlacedBody') : t('cashier.phoneOrderPayLater')}
           </p>
-          <button className="btn btn-primary" onClick={() => setPhoneOrderId(null)} style={{ marginBottom: 20 }}>{t('cashier.continueOrder')}</button>
+          {awaitMarketWeighHint ? (
+            <p style={{ fontSize: 13, color: '#E65100', marginBottom: 16 }}>{t('cashier.weighInOrderCenterHint')}</p>
+          ) : null}
+          <button className="btn btn-primary" onClick={() => { setPhoneOrderId(null); setAwaitMarketWeighHint(false); }} style={{ marginBottom: 20 }}>{t('cashier.continueOrder')}</button>
         </div>
       </div>
     );
@@ -2710,8 +2815,13 @@ export default function CashierOrder() {
       {/* Center: Menu Grid */}
       <div className="cashier-order-menu" style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         {!waiterMode ? (
-        <div style={{ padding: '10px 12px', background: 'var(--bg-white)', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
-          <input className="input cashier-menu-search" placeholder={t('cashier.searchMenuPlaceholder')} value={search} onChange={e => setSearch(e.target.value)} />
+        <div style={{ padding: '10px 12px', background: 'var(--bg-white)', borderBottom: '1px solid var(--border)', flexShrink: 0, display: 'flex', gap: 8 }}>
+          <input className="input cashier-menu-search" placeholder={t('cashier.searchMenuPlaceholder')} value={search} onChange={e => setSearch(e.target.value)} style={{ flex: 1 }} />
+          {marketMenuItems.length > 0 ? (
+            <button type="button" className="btn btn-outline" style={{ flexShrink: 0, fontSize: 12, padding: '6px 10px' }} onClick={openMarketRates}>
+              {t('cashier.todayMarketPrices')}
+            </button>
+          ) : null}
         </div>
         ) : null}
         {search.trim() ? (
@@ -2990,14 +3100,19 @@ export default function CashierOrder() {
             <div style={{ display: 'flex', gap: 8, alignItems: 'stretch' }}>
               <label style={{ flex: '0 0 96px', display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
                 <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)' }}>
-                  {t('cashier.table')}（{t('cashier.dineInGuestInputPh')}）
+                  {t('cashier.table')}
+                  {dineInWorkflowMode === 'pay_after'
+                    ? ' *'
+                    : `（${t('cashier.dineInGuestInputPh')}）`}
                 </span>
                 <input
                   className="input"
                   type="number"
                   inputMode="numeric"
                   min={1}
-                  placeholder={t('cashier.counterTablePlaceholder')}
+                  placeholder={dineInWorkflowMode === 'pay_after'
+                    ? t('cashier.counterTablePlaceholderRequired')
+                    : t('cashier.counterTablePlaceholder')}
                   value={counterTableInput}
                   onChange={(e) => setCounterTableInput(e.target.value)}
                   style={{ width: '100%', fontSize: 14, padding: '8px 10px' }}
@@ -3162,6 +3277,9 @@ export default function CashierOrder() {
                     )}
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0, paddingTop: 1 }}>
+                    {line.isMarketPrice ? (
+                      <span style={{ fontSize: 11, color: '#E65100', whiteSpace: 'nowrap' }}>{t('customer.marketPriceAwaitWeigh')}</span>
+                    ) : (
                     <div style={{ display: 'inline-flex', alignItems: 'center', gap: 1 }} onClick={(e) => e.stopPropagation()}>
                       <button type="button" style={qtyBtnStyle} onClick={() => setGroupQuantity(group, group.quantity - 1)} aria-label={t('cashier.lineQtyDecrease')}>−</button>
                       <input
@@ -3178,7 +3296,8 @@ export default function CashierOrder() {
                       />
                       <button type="button" style={qtyBtnStyle} onClick={() => setGroupQuantity(group, group.quantity + 1)} aria-label={t('cashier.lineQtyIncrease')}>+</button>
                     </div>
-                    {isEditing ? (
+                    )}
+                    {isEditing && !line.isMarketPrice ? (
                       <div style={{ display: 'flex', alignItems: 'center', gap: 2 }} onClick={e => e.stopPropagation()}>
                         <span style={{ fontSize: 11, color: 'var(--text-light)' }}>€</span>
                         <input
@@ -3196,10 +3315,15 @@ export default function CashierOrder() {
                     ) : (
                       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', minWidth: 48 }}>
                         <span
-                          onClick={(e) => startEditPrice(line.id, unitPrice, e)}
-                          style={{ fontSize: 13, fontWeight: 700, color: 'var(--red-primary)', cursor: 'text', borderBottom: '1px dashed var(--red-primary)', whiteSpace: 'nowrap' }}
+                          onClick={(e) => {
+                            if (line.isMarketPrice) return;
+                            startEditPrice(line.id, unitPrice, e);
+                          }}
+                          style={{ fontSize: 13, fontWeight: 700, color: 'var(--red-primary)', cursor: line.isMarketPrice ? 'default' : 'text', borderBottom: line.isMarketPrice ? 'none' : '1px dashed var(--red-primary)', whiteSpace: 'nowrap' }}
                         >
-                          {group.quantity > 1 ? `€${(unitPrice * group.quantity).toFixed(2)}` : `€${unitPrice.toFixed(2)}`}
+                          {line.isMarketPrice && !(Number(line.weightKg) > 0)
+                            ? t('customer.marketPrice')
+                            : group.quantity > 1 ? `€${(unitPrice * group.quantity).toFixed(2)}` : `€${unitPrice.toFixed(2)}`}
                         </span>
                         {group.quantity > 1 ? (
                           <span style={{ fontSize: 10, color: 'var(--text-light)', whiteSpace: 'nowrap' }}>×{group.quantity} €{unitPrice.toFixed(2)}</span>
@@ -3258,7 +3382,8 @@ export default function CashierOrder() {
               >
                 <input
                   type="checkbox"
-                  checked={phoneCardPaidAtPlacement}
+                  checked={phoneCardPaidAtPlacement && !order.some((l) => l.isMarketPrice)}
+                  disabled={order.some((l) => l.isMarketPrice)}
                   onChange={(e) => setPhoneCardPaidAtPlacement(e.target.checked)}
                   style={{ marginTop: 2, flexShrink: 0 }}
                 />
@@ -3269,11 +3394,24 @@ export default function CashierOrder() {
           <button
             className="btn btn-primary"
             onClick={() => void handlePrimaryAction()}
-            disabled={order.length === 0 || paying || paymentModalPreparing || editOrderLoading || !!editOrderLoadError}
+            disabled={
+              order.length === 0
+              || paying
+              || paymentModalPreparing
+              || editOrderLoading
+              || !!editOrderLoadError
+              || (orderType === 'dine_in' && dineInWorkflowMode === 'pay_after' && (() => {
+                const raw = counterTableInput.trim();
+                const n = parseInt(raw, 10);
+                return raw === '' || !Number.isFinite(n) || n < 1;
+              })())
+            }
             style={{ width: '100%', fontSize: 15, padding: '12px 0', letterSpacing: 1 }}
           >
-            {editingOrderId
+            {editingOrderId && !order.some((l) => l.isMarketPrice)
               ? t('cashier.editOrderSaveCheckout', '保存并结账')
+              : order.some((l) => l.isMarketPrice)
+                ? t('cashier.submitAwaitWeigh')
               : waiterMode
                 ? t('cashier.waiterPlaceUnpaid')
               : orderType === 'phone'
@@ -3335,7 +3473,7 @@ export default function CashierOrder() {
                     <>
                       <label>
                         <span style={{ fontSize: 12, fontWeight: 600 }}>{t('cashier.table')} *</span>
-                        <input className="input" type="number" inputMode="numeric" min={1} placeholder={t('cashier.counterTablePlaceholder')} value={counterTableInput} onChange={(e) => setCounterTableInput(e.target.value)} />
+                        <input className="input" type="number" inputMode="numeric" min={1} placeholder={t('cashier.counterTablePlaceholderRequired')} value={counterTableInput} onChange={(e) => setCounterTableInput(e.target.value)} />
                       </label>
                       <label>
                         <span style={{ fontSize: 12, fontWeight: 600 }}>{t('cashier.dineInGuestLabelShort')}</span>
@@ -3504,11 +3642,38 @@ export default function CashierOrder() {
         />
       ) : null}
 
+      {showMarketRates ? (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 1700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+          <div style={{ width: 420, maxWidth: '94vw', background: '#fff', borderRadius: 14, padding: 18, maxHeight: '86vh', overflowY: 'auto' }}>
+            <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 12 }}>{t('cashier.todayMarketPrices')}</div>
+            {marketMenuItems.map((m) => (
+              <div key={m._id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                <span style={{ flex: 1, fontSize: 13 }}>{getName(m.translations)}</span>
+                <span style={{ fontSize: 12, color: 'var(--text-light)' }}>€/kg</span>
+                <input
+                  className="input"
+                  type="number"
+                  step="0.01"
+                  min="0.01"
+                  value={marketRateDraft[m._id] ?? ''}
+                  onChange={(e) => setMarketRateDraft((prev) => ({ ...prev, [m._id]: e.target.value }))}
+                  style={{ width: 90 }}
+                />
+              </div>
+            ))}
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
+              <button type="button" className="btn btn-outline" onClick={() => setShowMarketRates(false)}>{t('common.cancel')}</button>
+              <button type="button" className="btn btn-primary" disabled={savingMarketRates} onClick={() => void saveMarketRates()}>{t('common.save')}</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {/* Option selection modal */}
       {optionModal && optionModal.optionGroups && optionModal.optionGroups.length > 0 && (
         <OptionSelectModal
           itemName={getName(optionModal.translations)}
-          price={optionModal.price}
+          price={optionModal.isMarketPrice ? 0 : optionModal.price}
           optionGroups={optionModal.optionGroups}
           menuItemId={optionModal._id}
           bomSnapshot={bomSnapshot}

@@ -87,7 +87,9 @@ const router = Router();
 const tempUpload = multer({ dest: os.tmpdir(), limits: { fileSize: 5 * 1024 * 1024 } });
 const UPLOAD_BASE = path.resolve(__dirname, '../../uploads');
 const LOGO_DIR = path.join(UPLOAD_BASE, 'logo');
+const MENU_BG_DIR = path.join(UPLOAD_BASE, 'menu-bg');
 fs.mkdirSync(LOGO_DIR, { recursive: true });
+fs.mkdirSync(MENU_BG_DIR, { recursive: true });
 
 // GET /api/admin/config — Get all system configs (Stripe keys never included — use GET /stripe-config for admin)
 router.get('/config', async (req: Request, res: Response, next: NextFunction) => {
@@ -360,6 +362,42 @@ router.post('/logo',
       next(err);
     }
   }
+);
+
+// POST /api/admin/menu-background — 顾客菜单边框/空白衬底（按店）
+router.post('/menu-background',
+  tempUpload.single('background'),
+  ...requireAuthSameStore,
+  requirePermission('config:update'),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { SystemConfig } = adminModels();
+      if (!req.file) {
+        throw createAppError('VALIDATION_ERROR', 'No file provided');
+      }
+      const ext = path.extname(req.file.originalname).toLowerCase();
+      if (!['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(ext)) {
+        fs.unlink(req.file.path, () => {});
+        throw createAppError('VALIDATION_ERROR', 'Invalid image format');
+      }
+      const storeTag = String(req.storeId);
+      const filename = `menu-bg-${storeTag}-${Date.now()}-${randomBytes(4).toString('hex')}${ext}`;
+      const localDest = path.join(MENU_BG_DIR, filename);
+      fs.copyFileSync(req.file.path, localDest);
+      const imageUrl = await uploadFile(localDest, 'menu-bg', filename);
+      fs.unlink(req.file.path, () => {});
+
+      await SystemConfig.findOneAndUpdate(
+        { storeId: req.storeId, key: 'customer_menu_background' },
+        { storeId: req.storeId, key: 'customer_menu_background', value: imageUrl },
+        { upsert: true, new: true },
+      );
+
+      res.json({ imageUrl });
+    } catch (err) {
+      next(err);
+    }
+  },
 );
 
 // GET /api/admin/users — List admins (requires auth + admin:users)

@@ -3,6 +3,7 @@ import { MenuCategorySchema } from '../models/MenuCategory';
 import { MenuItemSchema } from '../models/MenuItem';
 import { AllergenSchema } from '../models/Allergen';
 import { OrderSchema } from '../models/Order';
+import { MarketPriceDaySchema } from '../models/MarketPriceDay';
 import { CheckoutSchema } from '../models/Checkout';
 import { OfferSchema } from '../models/Offer';
 import { ForecastCalibrationSchema } from '../models/ForecastCalibration';
@@ -93,6 +94,7 @@ export type LZFoodModels = {
   VoucherCampaign: Model<unknown>;
   NumberedVoucher: Model<unknown>;
   Order: Model<unknown>;
+  MarketPriceDay: Model<unknown>;
   Checkout: Model<unknown>;
   DailyOrderCounter: Model<unknown>;
   SystemConfig: Model<unknown>;
@@ -165,6 +167,7 @@ export function registerLZFoodModels(conn: Connection): LZFoodModels {
   const VoucherCampaign = m('VoucherCampaign', withStoreId(VoucherCampaignSchema), 'voucher_campaigns');
   const NumberedVoucher = m('NumberedVoucher', withStoreId(NumberedVoucherSchema), 'numbered_vouchers');
   const Order = m('Order', withStoreId(OrderSchema), 'orders');
+  const MarketPriceDay = m('MarketPriceDay', withStoreId(MarketPriceDaySchema), 'market_price_days');
   const Checkout = m('Checkout', withStoreId(CheckoutSchema), 'checkouts');
   const DailyOrderCounter = m('DailyOrderCounter', LZFoodDailyOrderCounterSchema, 'daily_order_counters');
   const SystemConfig = m('SystemConfig', LZFoodSystemConfigSchema, 'system_configs');
@@ -265,6 +268,7 @@ export function registerLZFoodModels(conn: Connection): LZFoodModels {
     VoucherCampaign,
     NumberedVoucher,
     Order,
+    MarketPriceDay,
     Checkout,
     DailyOrderCounter,
     SystemConfig,

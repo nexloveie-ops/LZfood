@@ -13,6 +13,7 @@ import { getFileStream, USE_GCS } from './storage';
 import authRouter from './routes/auth';
 import menuCategoriesRouter from './routes/menuCategories';
 import menuItemsRouter from './routes/menuItems';
+import marketPricesRouter from './routes/marketPrices';
 import menuBomAvailabilityRouter from './routes/menuBomAvailability';
 import allergensRouter from './routes/allergens';
 import { createOrdersRouter } from './routes/orders';
@@ -78,7 +79,7 @@ if (USE_GCS) {
         return;
       }
       res.setHeader('Content-Type', result.contentType);
-      const isLogo = req.params.folder === 'logo';
+      const isLogo = req.params.folder === 'logo' || req.params.folder === 'menu-bg';
       res.setHeader(
         'Cache-Control',
         isLogo ? 'public, max-age=3600, must-revalidate' : 'public, max-age=31536000',
@@ -116,6 +117,7 @@ app.use('/api/menu/categories', menuCategoriesRouter);
 
 // Menu items routes
 app.use('/api/menu/items', menuItemsRouter);
+app.use('/api/menu/market-prices', marketPricesRouter);
 app.use('/api/menu/bom-availability', menuBomAvailabilityRouter);
 
 // Allergen routes

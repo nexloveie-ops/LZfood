@@ -183,6 +183,8 @@ describe('POST /api/menu/items', () => {
     expect(res.body.calories).toBe(450);
     expect(res.body.avgWaitMinutes).toBe(15);
     expect(res.body.isSoldOut).toBe(false);
+    expect(res.body.isRecommended).toBe(false);
+    expect(res.body.spiceLevel).toBe(0);
     expect(res.body.translations).toHaveLength(2);
     expect(res.body._id).toBeDefined();
   });
@@ -304,6 +306,86 @@ describe('PUT /api/menu/items/:id', () => {
     expect(res.status).toBe(200);
     expect(res.body.price).toBe(25);
     expect(res.body.translations[0].name).toBe('Burger');
+  });
+
+  it('should update isRecommended', async () => {
+    const item = await MenuItem.create({
+      categoryId,
+      price: 10,
+      translations: [{ locale: 'en-US', name: 'Burger' }],
+    });
+
+    const res = await request(app)
+      .put(`/api/menu/items/${item._id}`)
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .send({ isRecommended: true });
+
+    expect(res.status).toBe(200);
+    expect(res.body.isRecommended).toBe(true);
+  });
+
+  it('should update isMarketPrice', async () => {
+    const item = await MenuItem.create({
+      categoryId,
+      price: 10,
+      translations: [{ locale: 'en-US', name: 'Lobster' }],
+    });
+
+    const res = await request(app)
+      .put(`/api/menu/items/${item._id}`)
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .send({ isMarketPrice: true });
+
+    expect(res.status).toBe(200);
+    expect(res.body.isMarketPrice).toBe(true);
+  });
+
+  it('should return 400 when isRecommended is not a boolean', async () => {
+    const item = await MenuItem.create({
+      categoryId,
+      price: 10,
+      translations: [{ locale: 'en-US', name: 'Burger' }],
+    });
+
+    const res = await request(app)
+      .put(`/api/menu/items/${item._id}`)
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .send({ isRecommended: 'yes' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('should update spiceLevel', async () => {
+    const item = await MenuItem.create({
+      categoryId,
+      price: 10,
+      translations: [{ locale: 'en-US', name: 'Burger' }],
+    });
+
+    const res = await request(app)
+      .put(`/api/menu/items/${item._id}`)
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .send({ spiceLevel: 2 });
+
+    expect(res.status).toBe(200);
+    expect(res.body.spiceLevel).toBe(2);
+  });
+
+  it('should return 400 when spiceLevel is out of range', async () => {
+    const item = await MenuItem.create({
+      categoryId,
+      price: 10,
+      translations: [{ locale: 'en-US', name: 'Burger' }],
+    });
+
+    const res = await request(app)
+      .put(`/api/menu/items/${item._id}`)
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .send({ spiceLevel: 9 });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
   });
 
   it('should return 404 for non-existent item', async () => {

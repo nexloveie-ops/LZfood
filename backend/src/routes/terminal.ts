@@ -12,6 +12,10 @@ import {
   markDineInKitchenPrintedQtyFull,
 } from '../utils/dineInMarkLinesFullySettled';
 import { scheduleStoreCloudPrint } from '../utils/cloudPrint/runJob';
+import {
+  shouldKitchenCloudPrintAfterCashierPay,
+  tryKitchenCloudPrintUnprinted,
+} from '../utils/cloudPrint/kitchenRoute';
 import { scheduleStampAwardForCheckout } from '../utils/platformStamps';
 import { resolveMemberPaymentForCheckout } from '../utils/checkoutMemberResolve';
 import { FeatureKeys, resolveStoreEffectiveFeatures } from '../utils/featureCatalog';
@@ -272,10 +276,23 @@ router.post('/confirm', ...requireAuthSameStore, async (req: Request, res: Respo
       if (memberPatch.memberWallet) order.memberWallet = memberPatch.memberWallet;
     }
     markDineInFoodLinesFullySettled(order);
-    markDineInKitchenPrintedQtyFull(order);
+    const printKitchenAfterPay = shouldKitchenCloudPrintAfterCashierPay({
+      type: String(order.type),
+      dineInWorkflowMode: dineInWf,
+    });
+    if (!printKitchenAfterPay) {
+      markDineInKitchenPrintedQtyFull(order);
+    }
     order.markModified('items');
     syncDualTrackBeforeSave(order, { dineInWorkflowMode: dineInWf });
     await order.save();
+    if (printKitchenAfterPay) {
+      await tryKitchenCloudPrintUnprinted({
+        storeId: req.storeId!,
+        orderId: order._id as mongoose.Types.ObjectId,
+        trigger: 'placement',
+      });
+    }
 
     scheduleStoreCloudPrint(req.storeId!, checkout._id as mongoose.Types.ObjectId, 'checkout');
     scheduleStampAwardForCheckout(req.storeId!, checkout._id as mongoose.Types.ObjectId);

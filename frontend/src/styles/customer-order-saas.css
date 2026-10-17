@@ -39,6 +39,14 @@
   background: var(--co-bg, #f8fafc);
 }
 
+.menu-page--decor {
+  background-color: #faf6eb;
+  background-image: var(--menu-decor);
+  background-size: cover;
+  background-position: center top;
+  background-repeat: no-repeat;
+}
+
 .menu-scroll-top-fab {
   position: absolute;
   left: 14px;
@@ -512,6 +520,33 @@
   background: var(--co-bg, #f8fafc);
 }
 
+.menu-page--decor .menu-scroll {
+  background: transparent;
+}
+
+.menu-page--decor .menu-hero--standalone,
+.menu-page--decor .menu-hero--embed {
+  background: rgba(255, 252, 245, 0.58);
+  border-bottom-color: rgba(15, 23, 42, 0.08);
+}
+
+.menu-page--decor .menu-hero-toolbar {
+  border-bottom-color: rgba(15, 23, 42, 0.08);
+}
+
+.menu-page--decor .menu-tabs-row {
+  background: rgba(255, 252, 245, 0.78);
+}
+
+.menu-page--decor .menu-section-title {
+  text-shadow: 0 1px 0 rgba(255, 252, 245, 0.85);
+}
+
+.menu-page--decor .menu-items-list {
+  padding-left: 14px;
+  padding-right: 14px;
+}
+
 /* Cart page — same flex + inner scroll as menu */
 .cart-page {
   display: flex;
@@ -635,11 +670,11 @@
 .customer-order-app .menu-item-card {
   display: flex;
   gap: 12px;
-  background: var(--co-surface, #fff);
+  background: transparent;
   border-radius: var(--co-radius, 12px);
   padding: 12px;
-  box-shadow: var(--co-shadow);
-  border: 1px solid var(--co-border, #e2e8f0);
+  box-shadow: none;
+  border: 1.5px solid rgba(15, 23, 42, 0.42);
   position: relative;
   overflow: hidden;
   transition: border-color 0.15s ease;
@@ -647,7 +682,8 @@
 
 .customer-order-app .menu-item-card--selected {
   border-color: var(--co-accent, #dc2626);
-  box-shadow: 0 0 0 1px rgba(220, 38, 38, 0.15), var(--co-shadow);
+  box-shadow: none;
+  background: transparent;
 }
 
 .customer-order-app .menu-item-card__thumb {
@@ -665,6 +701,21 @@
   font-size: 15px;
   font-weight: 600;
   color: var(--co-text);
+}
+
+.customer-order-app .menu-item-card__desc {
+  font-size: 12px;
+  line-height: 1.5;
+  color: #334155;
+}
+
+.customer-order-app .menu-item-card__name .recommended-star {
+  flex-shrink: 0;
+  color: #E8B923;
+}
+
+.customer-order-app .menu-item-card__name .spice-level-hint {
+  flex-shrink: 0;
 }
 
 .customer-order-app .menu-item-card__price {

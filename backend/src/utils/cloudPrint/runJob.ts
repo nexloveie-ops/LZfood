@@ -11,7 +11,7 @@ import {
   parseCloudPrintEnabled,
 } from './config';
 import { feieyunPrintMsg, isFeieyunConfigured } from './feieyunClient';
-import { loadCloudPrintOrderTicket, loadCloudPrintReceipt } from './loadReceipt';
+import { loadCloudPrintOrderTicket, loadCloudPrintReceipt, loadCloudPrintTableTicket } from './loadReceipt';
 
 export type CloudPrintTrigger = 'checkout' | 'reprint' | 'placement' | 'append';
 
@@ -24,6 +24,8 @@ export async function runStoreCloudPrint(opts: {
   storeId: mongoose.Types.ObjectId;
   checkoutId?: mongoose.Types.ObjectId;
   orderId?: mongoose.Types.ObjectId;
+  /** 跑单整桌：同一桌多单合成一张厨房票 */
+  tableNumber?: number;
   trigger: CloudPrintTrigger;
   onlyLineIds?: string[];
 }): Promise<CloudPrintJobResult> {
@@ -61,7 +63,9 @@ export async function runStoreCloudPrint(opts: {
   }
 
   let receipt;
-  if (opts.trigger === 'placement' || opts.trigger === 'append') {
+  if ((opts.trigger === 'placement' || opts.trigger === 'append') && opts.tableNumber != null) {
+    receipt = await loadCloudPrintTableTicket(opts.storeId, opts.tableNumber);
+  } else if (opts.trigger === 'placement' || opts.trigger === 'append') {
     receipt = opts.orderId
       ? await loadCloudPrintOrderTicket(opts.storeId, opts.orderId, {
           ticketKind: opts.trigger,

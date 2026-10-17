@@ -30,7 +30,7 @@ import PhoneOrderList from './pages/cashier/PhoneOrderList';
 import TakeoutOrderList from './pages/cashier/TakeoutOrderList';
 import TakeoutDelivery from './pages/cashier/TakeoutDelivery';
 import CheckoutFlow from './pages/cashier/CheckoutFlow';
-import UnifiedOrderCenter from './pages/cashier/UnifiedOrderCenter';
+import CashierOrderCenterGate from './pages/cashier/CashierOrderCenterGate';
 import RestockPage from './pages/cashier/RestockPage';
 import { syncWaiterModeFromSearch } from './utils/waiterMode';
 import CategoryManager from './pages/admin/CategoryManager';
@@ -186,8 +186,8 @@ export default function App() {
             </Route>
 
             <Route path="cashier" element={<RequireAuth><CashierLayout /></RequireAuth>}>
-              <Route index element={<UnifiedOrderCenter />} />
-              <Route path="orders" element={<UnifiedOrderCenter />} />
+              <Route index element={<CashierOrderCenterGate />} />
+              <Route path="orders" element={<CashierOrderCenterGate />} />
               {/* Legacy pages kept for rollback */}
               <Route path="order" element={<CashierOrder />} />
               <Route path="reprint" element={<ReprintReceipt />} />

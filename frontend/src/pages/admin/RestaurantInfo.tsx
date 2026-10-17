@@ -42,6 +42,8 @@ export default function RestaurantInfo() {
     return init as Record<ConfigKey, string>;
   });
   const [logoUrl, setLogoUrl] = useState('');
+  const [menuBgUrl, setMenuBgUrl] = useState('');
+  const [uploadingMenuBg, setUploadingMenuBg] = useState(false);
   const [restaurantLat, setRestaurantLat] = useState('');
   const [restaurantLng, setRestaurantLng] = useState('');
   const [geocoding, setGeocoding] = useState(false);
@@ -138,6 +140,7 @@ export default function RestaurantInfo() {
           return next;
         });
         if (data.restaurant_logo) setLogoUrl(data.restaurant_logo);
+        setMenuBgUrl(data.customer_menu_background || '');
         if (data.restaurant_lat !== undefined) setRestaurantLat(data.restaurant_lat);
         if (data.restaurant_lng !== undefined) setRestaurantLng(data.restaurant_lng);
         if (data.dine_in_workflow_mode === 'pay_after' || data.dine_in_workflow_mode === 'pay_first') {
@@ -230,6 +233,41 @@ export default function RestaurantInfo() {
     finally { setUploadingLogo(false); }
   };
 
+  const handleMenuBgUpload = async (file: File) => {
+    setUploadingMenuBg(true);
+    try {
+      const fd = new FormData();
+      fd.append('background', file);
+      const res = await apiFetch('/api/admin/menu-background', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: fd,
+      });
+      if (res.ok) {
+        const data = await res.json() as { imageUrl?: string };
+        setMenuBgUrl(data.imageUrl || '');
+        await refreshRestaurantConfig(storeSlug);
+      }
+    } catch { /* ignore */ }
+    finally { setUploadingMenuBg(false); }
+  };
+
+  const handleMenuBgClear = async () => {
+    setUploadingMenuBg(true);
+    try {
+      const res = await apiFetch('/api/admin/config', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ customer_menu_background: '' }),
+      });
+      if (res.ok) {
+        setMenuBgUrl('');
+        await refreshRestaurantConfig(storeSlug);
+      }
+    } catch { /* ignore */ }
+    finally { setUploadingMenuBg(false); }
+  };
+
   return (
     <div>
       <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 16 }}>{t('admin.restaurantInfo')}</h2>
@@ -260,6 +298,55 @@ export default function RestaurantInfo() {
               支持 JPG, PNG, SVG, 最大 5MB
             </div>
           </div>
+        </div>
+      </div>
+
+      <div className="card" style={{ padding: 20, marginBottom: 16 }}>
+        <label style={{ fontSize: 14, fontWeight: 500, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>
+          {t('admin.menuBackdrop')}
+        </label>
+        <div style={{ fontSize: 12, color: 'var(--text-light)', marginBottom: 12, lineHeight: 1.45 }}>
+          {t('admin.menuBackdropHint')}
+        </div>
+        <div
+          style={{
+            width: '100%',
+            height: 120,
+            borderRadius: 10,
+            overflow: 'hidden',
+            marginBottom: 12,
+            border: '1px dashed var(--border)',
+            background: menuBgUrl ? `url(${menuBgUrl}) center/cover` : 'var(--bg)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: 'var(--text-light)',
+            fontSize: 13,
+          }}
+        >
+          {!menuBgUrl ? t('admin.menuBackdropEmpty') : null}
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+          <label style={{ cursor: 'pointer' }}>
+            <span className="btn btn-outline" style={{ fontSize: 13, display: 'inline-block' }}>
+              {uploadingMenuBg ? t('admin.menuBackdropUploading') : menuBgUrl ? t('admin.menuBackdropReplace') : t('admin.menuBackdropUpload')}
+            </span>
+            <input
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/gif"
+              hidden
+              disabled={uploadingMenuBg}
+              onChange={e => { if (e.target.files?.[0]) { void handleMenuBgUpload(e.target.files[0]); e.target.value = ''; } }}
+            />
+          </label>
+          {menuBgUrl ? (
+            <button type="button" className="btn btn-ghost" style={{ fontSize: 13 }} disabled={uploadingMenuBg} onClick={() => void handleMenuBgClear()}>
+              {t('admin.menuBackdropClear')}
+            </button>
+          ) : null}
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--text-light)', marginTop: 6 }}>
+          {t('admin.menuBackdropFormats')}
         </div>
       </div>
 

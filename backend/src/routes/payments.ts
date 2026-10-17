@@ -18,6 +18,8 @@ import {
 import { voidNotifyCustomerOrderEvent } from '../modules/customer-notifications/dispatcher';
 import { syncDualTrackBeforeSave } from '../utils/orderDualTrack';
 import { scheduleStampAwardForCheckout } from '../utils/platformStamps';
+import { tryKitchenCloudPrintAndMark } from '../utils/cloudPrint/kitchenRoute';
+import { assertNoUnweighedMarketLines } from '../utils/marketPrice';
 
 function paymentModels() {
   return getModels() as {
@@ -45,6 +47,7 @@ router.post('/create-intent', async (req: Request, res: Response, next: NextFunc
     const order = await Order.findOne({ _id: orderId, storeId: req.storeId });
     if (!order) throw createAppError('NOT_FOUND', 'Order not found');
     if (order.status !== 'pending') throw createAppError('VALIDATION_ERROR', 'Order is already checked out');
+    assertNoUnweighedMarketLines(order.items);
 
     let totalEuro = computeOrderPayableTotalEuro(order);
     if (order.type === 'dine_in' && order.status === 'pending') {
@@ -90,6 +93,7 @@ router.post('/confirm', async (req: Request, res: Response, next: NextFunction) 
       res.json({ message: 'Order already processed' });
       return;
     }
+    assertNoUnweighedMarketLines(order.items);
 
     const stripe = await createStripeClient(req.storeId!);
     const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
@@ -152,7 +156,22 @@ router.post('/confirm', async (req: Request, res: Response, next: NextFunction) 
     syncDualTrackBeforeSave(order, { dineInWorkflowMode: wfSync });
     await order.save();
 
-    io.to(storeIoRoom(req.storeId!)).emit('order:updated', order);
+    if (req.storeId && (order.type === 'takeout' || order.type === 'delivery')) {
+      await tryKitchenCloudPrintAndMark({
+        storeId: req.storeId,
+        orderId: order._id as mongoose.Types.ObjectId,
+        trigger: 'placement',
+      });
+      const { Order } = paymentModels();
+      const fresh = await Order.findOne({ _id: order._id, storeId: req.storeId });
+      if (fresh) {
+        io.to(storeIoRoom(req.storeId!)).emit('order:updated', fresh);
+      } else {
+        io.to(storeIoRoom(req.storeId!)).emit('order:updated', order);
+      }
+    } else {
+      io.to(storeIoRoom(req.storeId!)).emit('order:updated', order);
+    }
 
     if (order.type === 'phone' || order.type === 'delivery') {
       const orderLean = typeof order.toObject === 'function' ? order.toObject() : order;
@@ -267,7 +286,7 @@ router.post('/finalize', async (req: Request, res: Response, next: NextFunction)
     if (markDineInFoodLinesFullySettled(order)) {
       order.markModified('items');
     }
-    if (order.type === 'dine_in') {
+    if (order.type === 'dine_in' && wfFin === 'pay_after') {
       const rem = computeDineInUnsettledPayableEuro(order);
       if (rem <= 0.02 && !dineInHasUnsettledFoodLineQty(order)) {
         if (markDineInKitchenPrintedQtyFull(order)) {

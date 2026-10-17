@@ -22,6 +22,14 @@ const OrderItemSubdocSchema = new mongoose.Schema({
   kitchenPrintedQty: { type: Number, default: 0, min: 0 },
   /** 后结堂食：已通过收银/Stripe 结清的份数（≤ quantity），用于部分结账与剩余应付 */
   settledQty: { type: Number, default: 0, min: 0 },
+  /** 跑单桌账内第几轮点菜（厨房只打本轮新增；结账小票按轮分段） */
+  roundIndex: { type: Number, default: 1, min: 1 },
+  /** 本行来源：店员/手持 vs 客人桌码。换桌时随行走。 */
+  placedBy: { type: String, enum: ['staff', 'customer_qr'], default: 'staff' },
+  /** 时价：每条/只一行；称重前 unitPrice=0，称重后 = weightKg × pricePerKg */
+  isMarketPrice: { type: Boolean, default: false },
+  weightKg: { type: Number, min: 0 },
+  pricePerKg: { type: Number, min: 0 },
 }, { _id: true });
 
 const AppliedBundleSchema = new mongoose.Schema({
@@ -33,6 +41,7 @@ const AppliedBundleSchema = new mongoose.Schema({
 
 const OrderSchema = new mongoose.Schema({
   type: { type: String, enum: ['dine_in', 'takeout', 'phone', 'delivery'], required: true },
+  /** 跑单桌账主键（第一版即桌号；换桌/并桌以后改此字段，不改订单号） */
   tableNumber: { type: Number },
   seatNumber: { type: Number },
   dailyOrderNumber: { type: Number },

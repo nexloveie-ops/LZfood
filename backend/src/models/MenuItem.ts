@@ -98,6 +98,12 @@ const MenuItemSchema = new mongoose.Schema({
   arFileUrl: { type: String },
   isSoldOut: { type: Boolean, default: false },
   soldOutUntil: { type: Date },
+  /** 店家推荐：点单/顾客菜单在菜名前显示金色星星 */
+  isRecommended: { type: Boolean, default: false },
+  /** 辣度提示：0 不辣 / 1 微辣 / 2 中辣 / 3 重辣；菜单上显示对应数量辣椒 */
+  spiceLevel: { type: Number, default: 0, min: 0, max: 3 },
+  /** 时价海鲜等：按当天 €/kg × 收银台称重计价；目录 price 不用作结账单价 */
+  isMarketPrice: { type: Boolean, default: false },
   allergenIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Allergen' }],
   translations: [ItemTranslationSchema],
   optionGroups: [OptionGroupSchema],

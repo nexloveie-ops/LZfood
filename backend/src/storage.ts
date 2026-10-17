@@ -17,7 +17,7 @@ if (USE_GCS) {
 }
 
 /** 与 `/uploads/:folder/:filename` 路由一致；`postorder-ads` 广告图；`apple-wallet` 会员卡 Logo */
-export type UploadFolder = 'photos' | 'ar' | 'logo' | 'postorder-ads' | 'apple-wallet';
+export type UploadFolder = 'photos' | 'ar' | 'logo' | 'postorder-ads' | 'apple-wallet' | 'menu-bg';
 
 /**
  * Upload a file to GCS or local filesystem.
@@ -32,7 +32,7 @@ export async function uploadFile(
   const destination = `${folder}/${filename}`;
   const cacheControl =
     opts?.cacheControl ??
-    (folder === 'logo'
+    (folder === 'logo' || folder === 'menu-bg'
       ? 'public, max-age=3600, must-revalidate'
       : 'public, max-age=31536000');
 

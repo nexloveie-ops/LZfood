@@ -15,6 +15,7 @@ backend/seed-admin.ts
 **/AppleWWDR*.cer
 backend/certs/
 ios-cashier-app/
+android-handheld/
 
 # Local snapshots (git bundle / tar); do not commit
 backups/

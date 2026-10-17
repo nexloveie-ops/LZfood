@@ -12,6 +12,7 @@ export type CloudPrintLine = {
   _id?: string;
   menuItemId?: string;
   lineKind?: string;
+  refunded?: boolean;
   quantity: number;
   unitPrice: number;
   itemName: string;
@@ -21,6 +22,11 @@ export type CloudPrintLine = {
   categoryName?: string;
   categoryNameEn?: string;
   categorySortOrder?: number;
+  roundIndex?: number;
+  placedBy?: 'staff' | 'customer_qr';
+  isMarketPrice?: boolean;
+  weightKg?: number;
+  pricePerKg?: number;
 };
 
 export type CloudPrintOrder = {
@@ -46,6 +52,10 @@ export type CloudPrintReceipt = {
   checkoutId: string;
   /** checkout = 结账小票；placement = 手持下单全单；append = 加菜仅新增行 */
   ticketKind?: CloudPrintTicketKind;
+  /** 仅厨房票使用：跑单厨打隐藏单号并放大选项；先付厨打/结账票不走这套 */
+  dineInWorkflowMode?: 'pay_first' | 'pay_after';
+  /** 跑单整桌：多张堂食单合并成一张厨房票 */
+  wholeTableKitchenTicket?: boolean;
   tableNumber?: number;
   totalAmount: number;
   paymentMethod: string;
@@ -114,17 +124,31 @@ function extraSuffix(raw: unknown): string {
   return ep > 0.000001 ? ` +${ep.toFixed(2)} EUR` : '';
 }
 
-function optLines(o: CloudPrintOption): string[] {
+function extraRight(raw: unknown): string {
+  const ep = extraEuro(raw);
+  return ep > 0.000001 ? `+${ep.toFixed(2)} EUR` : '';
+}
+
+function optLines(o: CloudPrintOption, kitchenEmphasis = false): string[] {
   const zh = String(o.choiceName || o.groupName || '').trim();
   const en = String(o.choiceNameEn || o.groupNameEn || '').trim();
   const fallback = extraEuro(o.extraPrice) > 0 ? 'Option' : '';
   const primary = zh || en;
   const secondary = zh && en && en !== zh ? en : undefined;
   const main = primary || fallback;
-  const price = extraSuffix(o.extraPrice);
-  if (!main && !price) return [];
-  const out = [`  · ${main}${price}`];
-  if (secondary && primary) out.push(`    ${secondary}`);
+  if (!main && extraEuro(o.extraPrice) <= 0) return [];
+  if (!kitchenEmphasis) {
+    const price = extraSuffix(o.extraPrice);
+    if (!main && !price) return [];
+    const out = [`  · ${main}${price}`];
+    if (secondary && primary) out.push(`    ${secondary}`);
+    return out;
+  }
+  const out: string[] = [];
+  const name = main ? `  · ${main}` : '  ·';
+  const price = extraRight(o.extraPrice);
+  out.push(`<L><B>${price ? padRow(name, price) : name}</B></L>`);
+  if (secondary && primary) out.push(`<L><B>    ${secondary}</B></L>`);
   return out;
 }
 
@@ -181,9 +205,20 @@ function groupByCatalog(items: CloudPrintLine[]): Array<CatalogMeta & { items: C
     });
 }
 
-function itemTitle(qty: number, name: string): string {
+function itemTitle(
+  qty: number,
+  name: string,
+  market?: { isMarketPrice?: boolean; weightKg?: number; pricePerKg?: number },
+): string {
+  if (market?.isMarketPrice && Number(market.weightKg) > 0 && Number(market.pricePerKg) > 0) {
+    return `${name} ${Number(market.weightKg).toFixed(2)}kg × €${Number(market.pricePerKg).toFixed(2)}/kg`;
+  }
   const q = Math.max(0, Number(qty) || 0);
   return q > 0 ? `${q}X ${name}` : name;
+}
+
+function maxRoundIndex(items: CloudPrintLine[]): number {
+  return items.reduce((m, it) => Math.max(m, Math.floor(Number(it.roundIndex) || 0)), 0);
 }
 
 function dash(): string {
@@ -261,7 +296,9 @@ function describePartial(receipt: CloudPrintReceipt): { lines: PartialLine[]; su
     const it = lineById.get(String(row.orderLineItemId));
     return {
       key: `${String(row.orderLineItemId)}-${idx}`,
-      title: it?.itemName || 'Item',
+      title: it
+        ? itemTitle(row.quantity, it.itemName, it)
+        : 'Item',
       titleEn: it?.itemNameEn,
       qty: row.quantity,
       amountEuro: row.amountEuro,
@@ -287,6 +324,7 @@ export function buildFeieyunReceiptContent(receipt: CloudPrintReceipt): string {
   const isDelivery = type === 'delivery';
   const ticketKind: CloudPrintTicketKind = receipt.ticketKind || 'checkout';
   const isKitchenTicket = ticketKind === 'placement' || ticketKind === 'append';
+  const isPayAfterKitchen = isKitchenTicket && isDineIn && receipt.dineInWorkflowMode === 'pay_after';
   const restaurantName = receipt.restaurant.name || '';
   const pay = paymentLabels(isKitchenTicket ? 'pending' : receipt.paymentMethod);
   const allItems = receipt.orders.flatMap((o) => o.items);
@@ -301,18 +339,25 @@ export function buildFeieyunReceiptContent(receipt: CloudPrintReceipt): string {
   if (receipt.restaurant.email) lines.push(`<C>${receipt.restaurant.email}</C>`);
   if (ticketKind === 'append') {
     lines.push('<CB>Added items / 加菜</CB>');
-  } else if (ticketKind === 'placement') {
+  } else if (ticketKind === 'placement' && !isPayAfterKitchen) {
     lines.push('<CB>Kitchen / 厨房</CB>');
   }
 
   if (isDineIn) {
     if (receipt.tableNumber != null && receipt.tableNumber > 0) lines.push(`<CB>Table ${receipt.tableNumber}</CB>`);
+    if (isPayAfterKitchen && receipt.wholeTableKitchenTicket) {
+      lines.push('<CB>整桌 / Whole table</CB>');
+    }
     const seats = [...new Set(receipt.orders.map((o) => o.seatNumber).filter((s) => typeof s === 'number' && s > 0))].sort();
     if (seats.length > 0) lines.push(`<CB>Seat ${seats.join(', ')}</CB>`);
-    const orderNum = receipt.orders.map((o) => o.dineInOrderNumber).find((n) => n && String(n).trim());
-    if (orderNum) lines.push(`<CB>Order #${orderNum}</CB>`);
+    if (!isPayAfterKitchen) {
+      const orderNum = receipt.orders.map((o) => o.dineInOrderNumber).find((n) => n && String(n).trim());
+      if (orderNum) lines.push(`<CB>Order #${orderNum}</CB>`);
+    }
     if (qty > 0) lines.push(`<CB>Item: ${qty}</CB>`);
-    lines.push(`<C>Ref: ${String(receipt.checkoutId).slice(-8).toUpperCase()}</C>`);
+    if (!isPayAfterKitchen) {
+      lines.push(`<C>Ref: ${String(receipt.checkoutId).slice(-8).toUpperCase()}</C>`);
+    }
   } else if (isPhone) {
     lines.push(`<CB>Phone #${receipt.orders[0]?.dailyOrderNumber || ''}</CB>`);
     if (qty > 0) lines.push(`<CB>Item: ${qty}</CB>`);
@@ -344,7 +389,7 @@ export function buildFeieyunReceiptContent(receipt: CloudPrintReceipt): string {
     lines.push(`<B>${title}</B>`);
     lines.push(`<RIGHT>${euro(amount)}</RIGHT>`);
     if (titleEn && titleEn !== title.replace(/^\d+X\s/, '')) lines.push(`  ${titleEn}`);
-    for (const o of options || []) lines.push(...optLines(o));
+    for (const o of options || []) lines.push(...optLines(o, isPayAfterKitchen));
   };
 
   if (partial) {
@@ -373,9 +418,19 @@ export function buildFeieyunReceiptContent(receipt: CloudPrintReceipt): string {
     for (const section of groupByCatalog(allItems)) {
       lines.push(dash());
       lines.push(`<C>◆ ${formatCatalogHeader(section)}</C>`);
-      for (const item of section.items) {
+      const showRoundHeads = isPayAfterKitchen && maxRoundIndex(allItems) >= 2;
+      const sectionItems = showRoundHeads || receipt.wholeTableKitchenTicket
+        ? [...section.items].sort((a, b) => Math.floor(Number(a.roundIndex) || 0) - Math.floor(Number(b.roundIndex) || 0))
+        : section.items;
+      let lastRound = 0;
+      for (const item of sectionItems) {
+        const round = Math.floor(Number(item.roundIndex) || 0);
+        if (showRoundHeads && round >= 1 && round !== lastRound) {
+          lastRound = round;
+          lines.push(`<C>Round ${round} / 第${round}轮</C>`);
+        }
         pushItemBlock(
-          itemTitle(item.quantity, item.itemName),
+          itemTitle(item.quantity, item.itemName, item),
           item.unitPrice * item.quantity,
           item.itemNameEn,
           item.selectedOptions,
@@ -444,7 +499,7 @@ export function buildFeieyunReceiptContent(receipt: CloudPrintReceipt): string {
   }
 
   const thanks = isKitchenTicket
-    ? (ticketKind === 'append' ? 'Added items / 加菜联' : 'Kitchen copy / 厨房联')
+    ? (ticketKind === 'append' ? 'Added items / 加菜联' : (isPayAfterKitchen ? 'Dine-in / 堂食' : 'Kitchen copy / 厨房联'))
     : isDineIn
       ? 'Thank you for dining with us!'
       : isPhone

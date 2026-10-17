@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import { getModels } from '../../getModels';
+import { getDineInWorkflowModeForStore } from '../dineInWorkflowMode';
 import type { CloudPrintLine, CloudPrintOrder, CloudPrintReceipt, CloudPrintTicketKind } from './buildFeieyunReceipt';
 
 function pickName(translations: { locale: string; name: string }[] | undefined, locale: string): string {
@@ -178,6 +179,58 @@ export async function loadCloudPrintReceipt(
   };
 }
 
+const OPEN_DINE_IN_STATUSES = ['pending', 'paid_online', 'checked_out'];
+
+export async function loadOpenDineInTableOrders(
+  storeId: mongoose.Types.ObjectId,
+  tableNumber: number,
+): Promise<LeanOrder[]> {
+  const { Order } = getModels() as { Order: mongoose.Model<any> };
+  return Order.find({
+    storeId,
+    type: 'dine_in',
+    tableNumber,
+    status: { $in: OPEN_DINE_IN_STATUSES },
+  }).sort({ createdAt: 1 }).lean() as unknown as Promise<LeanOrder[]>;
+}
+
+/** 跑单整桌厨房票：同一桌所有未完结堂食单合成一张。 */
+export async function loadCloudPrintTableTicket(
+  storeId: mongoose.Types.ObjectId,
+  tableNumber: number,
+): Promise<CloudPrintReceipt | null> {
+  const orders = await loadOpenDineInTableOrders(storeId, tableNumber);
+  const filtered: LeanOrder[] = orders
+    .map((o) => ({
+      ...o,
+      items: (o.items || []).filter((it) => it.lineKind !== 'delivery_fee' && !it.refunded),
+      appliedBundles: [],
+    }))
+    .filter((o) => (o.items || []).length > 0);
+  if (filtered.length === 0) return null;
+
+  const enriched = await enrichLinesWithCategories(storeId, filtered);
+  const restaurant = await loadRestaurantHeader(storeId);
+  const dineInWorkflowMode = await getDineInWorkflowModeForStore(storeId);
+  const cloudOrders = filtered.map((o, i) => toCloudPrintOrder(o, enriched[i] || []));
+  const foodTotal = cloudOrders
+    .flatMap((o) => o.items)
+    .reduce((s, it) => s + lineUnitTotal(it), 0);
+
+  return {
+    checkoutId: `table-${tableNumber}`,
+    ticketKind: 'placement',
+    dineInWorkflowMode,
+    wholeTableKitchenTicket: true,
+    tableNumber,
+    totalAmount: Math.max(0, Math.round(foodTotal * 100) / 100),
+    paymentMethod: 'pending',
+    checkedOutAt: new Date(),
+    restaurant,
+    orders: cloudOrders,
+  };
+}
+
 /** 手持下单/加菜厨打：从订单行生成小票（可只打指定行）。 */
 export async function loadCloudPrintOrderTicket(
   storeId: mongoose.Types.ObjectId,
@@ -205,10 +258,14 @@ export async function loadCloudPrintOrderTicket(
   const bundles = filtered.appliedBundles || [];
   const disc = opts?.ticketKind === 'append' ? 0 : bundles.reduce((s, b) => s + (Number(b.discount) || 0), 0);
   const restaurant = await loadRestaurantHeader(storeId);
+  const dineInWorkflowMode = String(order.type || '') === 'dine_in'
+    ? await getDineInWorkflowModeForStore(storeId)
+    : undefined;
 
   return {
     checkoutId: String(order._id),
     ticketKind: opts?.ticketKind || 'placement',
+    ...(dineInWorkflowMode ? { dineInWorkflowMode } : {}),
     tableNumber: order.tableNumber as number | undefined,
     totalAmount: Math.max(0, Math.round((foodTotal - disc) * 100) / 100),
     paymentMethod: 'pending',

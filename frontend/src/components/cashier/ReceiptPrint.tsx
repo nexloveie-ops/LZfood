@@ -43,6 +43,11 @@ interface ReceiptOrderItem {
   categoryName?: string;
   categoryNameEn?: string;
   categorySortOrder?: number;
+  roundIndex?: number;
+  placedBy?: 'staff' | 'customer_qr';
+  isMarketPrice?: boolean;
+  weightKg?: number;
+  pricePerKg?: number;
 }
 
 interface ReceiptOrder {
@@ -122,7 +127,9 @@ function describeDineInPartialLines(receipt: ReceiptData): {
     const it = lineById.get(String(row.orderLineItemId));
     return {
       key: `${String(row.orderLineItemId)}-${idx}`,
-      title: it?.itemName || 'Item',
+      title: it
+        ? formatReceiptItemTitle(row.quantity, it.itemName, it.roundIndex, it)
+        : 'Item',
       titleEn: it?.itemNameEn,
       qty: row.quantity,
       amountEuro: row.amountEuro,
@@ -245,7 +252,15 @@ function escapeReceiptHtml(s: string): string {
     .replace(/"/g, '&quot;');
 }
 
-function formatReceiptItemTitle(qty: number, name: string): string {
+function formatReceiptItemTitle(
+  qty: number,
+  name: string,
+  _roundIndex?: number,
+  market?: { isMarketPrice?: boolean; weightKg?: number; pricePerKg?: number },
+): string {
+  if (market?.isMarketPrice && Number(market.weightKg) > 0 && Number(market.pricePerKg) > 0) {
+    return `${name} ${Number(market.weightKg).toFixed(2)}kg × €${Number(market.pricePerKg).toFixed(2)}/kg`;
+  }
   const q = Math.max(0, Number(qty) || 0);
   if (q <= 0) return name;
   return `${q}X ${name}`;
@@ -611,7 +626,7 @@ function buildReceiptPlainText(
       for (const item of section.items) {
         lines.push(
           ...plainItemLines(
-            formatReceiptItemTitle(item.quantity, item.itemName),
+            formatReceiptItemTitle(item.quantity, item.itemName, item.roundIndex, item),
             item.unitPrice * item.quantity,
           ),
         );
@@ -841,7 +856,7 @@ function buildReceiptHTML(
         html += `<tr><td colspan="2" class="catalog-hdr">◆ ${escapeReceiptHtml(catalogHeaderLabel(section))}</td></tr>`;
       }
       for (const item of section.items) {
-        html += `<tr><td><div class="item-cn">${escapeReceiptHtml(formatReceiptItemTitle(item.quantity, item.itemName))}</div>`;
+        html += `<tr><td><div class="item-cn">${escapeReceiptHtml(formatReceiptItemTitle(item.quantity, item.itemName, item.roundIndex, item))}</div>`;
         if (item.itemNameEn && item.itemNameEn !== item.itemName) html += `<div class="item-en">${escapeReceiptHtml(item.itemNameEn)}</div>`;
         if (item.selectedOptions && item.selectedOptions.length > 0) {
           for (const o of item.selectedOptions) {
@@ -1129,7 +1144,7 @@ export default function ReceiptPrint({ checkoutId, cashReceived, changeAmount, b
               rows.push(
                 <div key={`${section.categoryId}-${item._id}`} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0' }}>
                   <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 20, lineHeight: 1.25 }}>{formatReceiptItemTitle(item.quantity, item.itemName)}</div>
+                    <div style={{ fontSize: 20, lineHeight: 1.25 }}>{formatReceiptItemTitle(item.quantity, item.itemName, item.roundIndex, item)}</div>
                     {item.itemNameEn && item.itemNameEn !== item.itemName && <div style={{ fontSize: 16, lineHeight: 1.25 }}>{item.itemNameEn}</div>}
                     {item.selectedOptions && item.selectedOptions.length > 0 && item.selectedOptions.map((o, idx) => (
                       <ReceiptOptionLines key={idx} o={o} />
@@ -1288,7 +1303,7 @@ function buildCatalogKitchenPlainText(
   for (const item of section.items) {
     lines.push(
       ...plainItemLines(
-        formatReceiptItemTitle(item.quantity, item.itemName),
+        formatReceiptItemTitle(item.quantity, item.itemName, item.roundIndex, item),
         item.unitPrice * item.quantity,
       ),
     );
@@ -1379,7 +1394,7 @@ function buildCatalogKitchenHTML(
   html += `<div class="divider-solid"></div><table>`;
 
   for (const item of section.items) {
-    html += `<tr><td><div class="item-cn">${escapeReceiptHtml(formatReceiptItemTitle(item.quantity, item.itemName))}</div>`;
+    html += `<tr><td><div class="item-cn">${escapeReceiptHtml(formatReceiptItemTitle(item.quantity, item.itemName, item.roundIndex, item))}</div>`;
     if (item.itemNameEn && item.itemNameEn !== item.itemName) {
       html += `<div class="item-en">${escapeReceiptHtml(item.itemNameEn)}</div>`;
     }

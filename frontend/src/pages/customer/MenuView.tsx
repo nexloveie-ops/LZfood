@@ -19,11 +19,20 @@ import { isCustomerMenuItemSoldOut } from '../../utils/menuItemAvailability';
 import { isDineInCustomerFlow } from '../../utils/qrCode';
 import '../../styles/customer-order-saas.css';
 
+function menuDecorCssUrl(raw?: string): string | undefined {
+  const u = String(raw || '').trim();
+  if (!u) return undefined;
+  if (u.startsWith('/uploads/') || /^https?:\/\//i.test(u)) {
+    return `url("${u.replace(/["'\\)]/g, '')}")`;
+  }
+  return undefined;
+}
+
 interface Category { _id: string; sortOrder: number; translations: { locale: string; name: string }[]; }
 interface AllergenData { _id: string; icon: string; }
 interface MenuItemData {
   _id: string; categoryId: string; price: number; calories?: number;
-  avgWaitMinutes?: number; photoUrl?: string; arFileUrl?: string; isSoldOut?: boolean;
+  avgWaitMinutes?: number; photoUrl?: string; arFileUrl?: string; isSoldOut?: boolean; isRecommended?: boolean; spiceLevel?: number;
   inventoryTracked?: boolean;
   inventory?: { currentQty?: number; perServing?: number };
   translations: { locale: string; name: string; description?: string }[];
@@ -41,7 +50,7 @@ export default function MenuView({ storeFrontEmbed = false }: { storeFrontEmbed?
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { storeSlug } = useParams<{ storeSlug: string }>();
-  const { displayName, displayNameOther } = useRestaurantConfig();
+  const { displayName, displayNameOther, config } = useRestaurantConfig();
   const heroTitle = displayName || storeSlug;
   const heroSub = displayNameOther;
   const { isOpen, reason, loading: statusLoading, deliveryEnabled } = useBusinessStatus();
@@ -357,9 +366,13 @@ export default function MenuView({ storeFrontEmbed = false }: { storeFrontEmbed?
 
   const compactHero = storeFrontEmbed && activeOffers.length === 0;
   const heroVariant = storeFrontEmbed ? 'onLight' : 'onLight';
+  const menuDecor = menuDecorCssUrl(config.customer_menu_background);
 
   return (
-    <div className="menu-page">
+    <div
+      className={`menu-page${menuDecor ? ' menu-page--decor' : ''}`}
+      style={menuDecor ? { ['--menu-decor' as string]: menuDecor } : undefined}
+    >
       <div
         ref={heroRef}
         className={`menu-hero ${storeFrontEmbed ? 'menu-hero--embed' : 'menu-hero--standalone'}${compactHero ? ' menu-hero--compact' : ''}${heroHidden ? ' menu-hero--hidden' : ''}`}
@@ -485,6 +498,10 @@ export default function MenuView({ storeFrontEmbed = false }: { storeFrontEmbed?
                     photoFetchPriority={catIndex === 0 && itemIndex < 8 ? 'high' : 'auto'}
                     arFileUrl={item.arFileUrl}
                     isSoldOut={isCustomerMenuItemSoldOut(item)}
+                    isRecommended={!!item.isRecommended}
+                    spiceLevel={item.spiceLevel}
+                    isMarketPrice={!!item.isMarketPrice}
+                    todayPricePerKg={item.todayPricePerKg}
                     allergenIcons={(item.allergenIds || []).map(aid => allergens.find(a => a._id === aid)?.icon).filter((x): x is string => !!x)}
                     optionGroups={item.optionGroups}
                     quantity={getCartQty(item._id)}

@@ -8,6 +8,12 @@ type MenuLineLike = {
   refunded?: boolean;
   kitchenPrintedQty?: number;
   settledQty?: number;
+  roundIndex?: number;
+  placedBy?: 'staff' | 'customer_qr';
+  isMarketPrice?: boolean;
+  weightKg?: number;
+  pricePerKg?: number;
+  unitPrice?: number;
 };
 
 /** 与 assertDineInItemsAdditiveOnly 相同的菜品+选项聚合键 */
@@ -56,6 +62,137 @@ export function mergeDineInKitchenPrintedAndSettledFromPrevious(
     raw.settledQty = takeS;
     prevPrinted.set(k, (prevPrinted.get(k) || 0) - takeP);
     prevSettled.set(k, (prevSettled.get(k) || 0) - takeS);
+  }
+}
+
+export function nextDineInRoundIndex(items: MenuLineLike[]): number {
+  let max = 0;
+  for (const it of items) {
+    if (it.lineKind === 'delivery_fee') continue;
+    const r = Math.floor(Number(it.roundIndex) || 0);
+    if (r > max) max = r;
+  }
+  return Math.max(1, max + 1);
+}
+
+export type LinePlacedBy = 'staff' | 'customer_qr';
+
+/** 新建行打上轮次与来源（客人扫码加菜标 customer_qr，之后换桌也不丢）。 */
+export function stampNewDineInLines(
+  existingItems: MenuLineLike[],
+  newLines: Record<string, unknown>[],
+  placedBy: LinePlacedBy,
+): void {
+  const round = nextDineInRoundIndex(existingItems);
+  for (const raw of newLines) {
+    const it = raw as MenuLineLike;
+    if (it.lineKind === 'delivery_fee') continue;
+    raw.roundIndex = round;
+    raw.placedBy = placedBy;
+  }
+}
+
+/** PUT 整单重建时带回 roundIndex / placedBy；新菜品键进入下一轮。 */
+export function mergeDineInRoundAndPlacedByFromPrevious(
+  previousItems: MenuLineLike[],
+  nextItems: Record<string, unknown>[],
+  newLinePlacedBy: LinePlacedBy,
+): void {
+  const prevMeta = new Map<string, { roundIndex: number; placedBy: LinePlacedBy }>();
+  for (const it of previousItems) {
+    if (it.lineKind === 'delivery_fee' || it.refunded) continue;
+    if (!it.menuItemId) continue;
+    const k = dineInMenuLineAggregateKey(it);
+    if (prevMeta.has(k)) continue;
+    const roundIndex = Math.max(1, Math.floor(Number(it.roundIndex) || 1));
+    const placedBy: LinePlacedBy = it.placedBy === 'customer_qr' ? 'customer_qr' : 'staff';
+    prevMeta.set(k, { roundIndex, placedBy });
+  }
+  const nextRound = nextDineInRoundIndex(previousItems);
+  for (const raw of nextItems) {
+    const it = raw as MenuLineLike;
+    if (it.lineKind === 'delivery_fee' || !it.menuItemId) continue;
+    const k = dineInMenuLineAggregateKey(it);
+    const prev = prevMeta.get(k);
+    if (prev) {
+      raw.roundIndex = prev.roundIndex;
+      raw.placedBy = prev.placedBy;
+    } else {
+      raw.roundIndex = nextRound;
+      raw.placedBy = newLinePlacedBy;
+    }
+  }
+}
+
+/** 已出厨房的行不能减量、改选项或删除；未出厨房的行仍可改。 */
+export function assertKitchenPrintedLinesImmutable(
+  previousItems: MenuLineLike[],
+  nextItems: MenuLineLike[],
+): void {
+  const prevPrintedQty = new Map<string, number>();
+  for (const it of previousItems) {
+    if (it.lineKind === 'delivery_fee' || it.refunded) continue;
+    if (!it.menuItemId) continue;
+    const printed = Math.max(0, Math.min(Number(it.kitchenPrintedQty) || 0, Number(it.quantity) || 0));
+    if (printed <= 0) continue;
+    const k = dineInMenuLineAggregateKey(it);
+    prevPrintedQty.set(k, (prevPrintedQty.get(k) || 0) + (Number(it.quantity) || 0));
+  }
+  if (prevPrintedQty.size === 0) return;
+
+  const nextQty = new Map<string, number>();
+  for (const it of nextItems) {
+    if (it.lineKind === 'delivery_fee' || it.refunded) continue;
+    if (!it.menuItemId) continue;
+    const k = dineInMenuLineAggregateKey(it);
+    nextQty.set(k, (nextQty.get(k) || 0) + (typeof it.quantity === 'number' && it.quantity > 0 ? it.quantity : 0));
+  }
+
+  for (const [k, need] of prevPrintedQty) {
+    const have = nextQty.get(k) || 0;
+    if (have < need) {
+      throw createAppError(
+        'ORDER_NOT_MODIFIABLE',
+        '厨房已出餐的菜品不能修改或删除，请退菜或整单取消',
+        { lineKey: k, previousQty: need, nextQty: have },
+      );
+    }
+  }
+}
+
+/**
+ * PUT /items 会整单重建。顾客加菜时不会带 weightKg，须按「菜品+选项」FIFO 把已称重行写回，
+ * 避免收银称重被覆盖。
+ */
+export function mergeMarketWeighFromPrevious(
+  previousItems: MenuLineLike[],
+  nextItems: Record<string, unknown>[],
+): void {
+  const queues = new Map<string, Array<{ weightKg: number; pricePerKg: number; unitPrice: number }>>();
+  for (const it of previousItems) {
+    if (it.lineKind === 'delivery_fee' || it.refunded || !it.isMarketPrice) continue;
+    const w = Number(it.weightKg) || 0;
+    const r = Number(it.pricePerKg) || 0;
+    if (!(w > 0 && r > 0)) continue;
+    const k = dineInMenuLineAggregateKey(it);
+    const arr = queues.get(k) || [];
+    arr.push({
+      weightKg: w,
+      pricePerKg: r,
+      unitPrice: Number(it.unitPrice) || Math.round(w * r * 100) / 100,
+    });
+    queues.set(k, arr);
+  }
+  for (const raw of nextItems) {
+    const it = raw as MenuLineLike;
+    if (it.lineKind === 'delivery_fee' || !it.isMarketPrice) continue;
+    if (Number(raw.weightKg) > 0) continue;
+    const q = queues.get(dineInMenuLineAggregateKey(it));
+    const snap = q?.shift();
+    if (!snap) continue;
+    raw.weightKg = snap.weightKg;
+    raw.pricePerKg = snap.pricePerKg;
+    raw.unitPrice = snap.unitPrice;
   }
 }
 

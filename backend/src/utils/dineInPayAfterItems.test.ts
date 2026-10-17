@@ -1,7 +1,10 @@
 import {
   dineInMenuLineAggregateKey,
   mergeDineInKitchenPrintedAndSettledFromPrevious,
+  mergeDineInRoundAndPlacedByFromPrevious,
+  mergeMarketWeighFromPrevious,
   assertDineInItemsAdditiveOnly,
+  assertKitchenPrintedLinesImmutable,
 } from './dineInPayAfterItems';
 
 describe('dineInMenuLineAggregateKey', () => {
@@ -198,5 +201,79 @@ describe('assertDineInItemsAdditiveOnly', () => {
     const prev = [{ lineKind: 'menu', menuItemId: 'm1', quantity: 2, selectedOptions: [] }];
     const next = [{ lineKind: 'menu', menuItemId: 'm1', quantity: 3, selectedOptions: [] }];
     expect(() => assertDineInItemsAdditiveOnly(prev, next)).not.toThrow();
+  });
+});
+
+describe('assertKitchenPrintedLinesImmutable', () => {
+  it('blocks deleting or reducing a kitchen-printed dish', () => {
+    const prev = [{
+      lineKind: 'menu',
+      menuItemId: 'm1',
+      quantity: 2,
+      kitchenPrintedQty: 2,
+      selectedOptions: [],
+    }];
+    const next = [{ lineKind: 'menu', menuItemId: 'm1', quantity: 1, selectedOptions: [] }];
+    expect(() => assertKitchenPrintedLinesImmutable(prev, next)).toThrow();
+  });
+
+  it('allows adding more portions on a printed dish', () => {
+    const prev = [{
+      lineKind: 'menu',
+      menuItemId: 'm1',
+      quantity: 2,
+      kitchenPrintedQty: 2,
+      selectedOptions: [],
+    }];
+    const next = [{ lineKind: 'menu', menuItemId: 'm1', quantity: 3, selectedOptions: [] }];
+    expect(() => assertKitchenPrintedLinesImmutable(prev, next)).not.toThrow();
+  });
+});
+
+describe('mergeDineInRoundAndPlacedByFromPrevious', () => {
+  it('keeps existing round and marks new dishes as the next round', () => {
+    const prev = [{
+      lineKind: 'menu',
+      menuItemId: 'm1',
+      quantity: 1,
+      roundIndex: 1,
+      placedBy: 'staff' as const,
+      selectedOptions: [],
+    }];
+    const next: Record<string, unknown>[] = [
+      { lineKind: 'menu', menuItemId: 'm1', quantity: 1, selectedOptions: [] },
+      { lineKind: 'menu', menuItemId: 'm2', quantity: 1, selectedOptions: [] },
+    ];
+    mergeDineInRoundAndPlacedByFromPrevious(prev, next, 'customer_qr');
+    expect(next[0].roundIndex).toBe(1);
+    expect(next[0].placedBy).toBe('staff');
+    expect(next[1].roundIndex).toBe(2);
+    expect(next[1].placedBy).toBe('customer_qr');
+  });
+});
+
+describe('mergeMarketWeighFromPrevious', () => {
+  it('restores FIFO weigh onto rebuilt unweighed market lines', () => {
+    const prev = [
+      {
+        lineKind: 'menu',
+        menuItemId: 'lob',
+        isMarketPrice: true,
+        quantity: 1,
+        weightKg: 0.85,
+        pricePerKg: 48,
+        unitPrice: 40.8,
+        selectedOptions: [],
+      },
+    ];
+    const next: Record<string, unknown>[] = [
+      { lineKind: 'menu', menuItemId: 'lob', isMarketPrice: true, quantity: 1, unitPrice: 0, selectedOptions: [] },
+      { lineKind: 'menu', menuItemId: 'lob', isMarketPrice: true, quantity: 1, unitPrice: 0, selectedOptions: [] },
+    ];
+    mergeMarketWeighFromPrevious(prev, next);
+    expect(next[0].weightKg).toBe(0.85);
+    expect(next[0].unitPrice).toBe(40.8);
+    expect(next[1].weightKg).toBeUndefined();
+    expect(next[1].unitPrice).toBe(0);
   });
 });

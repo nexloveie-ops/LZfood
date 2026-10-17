@@ -23,6 +23,9 @@ interface OrderItem {
   refunded?: boolean;
   /** 与后端 DELETE 堂食取消规则、收银 dineInAllowCancelPending 一致 */
   kitchenPrintedQty?: number;
+  isMarketPrice?: boolean;
+  weightKg?: number;
+  pricePerKg?: number;
   selectedOptions?: { groupName: string; groupNameEn?: string; choiceName: string; choiceNameEn?: string; extraPrice: number }[];
 }
 interface AppliedBundle { offerId?: string; name: string; nameEn?: string; discount: number; }
@@ -562,7 +565,14 @@ export default function OrderStatusPage() {
             borderBottom: '1px solid #f0f0f0',
           }}>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontWeight: 600, fontSize: 14 }}>{lang === 'en-US' && item.itemNameEn ? item.itemNameEn : item.itemName}</div>
+              <div style={{ fontWeight: 600, fontSize: 14 }}>
+                {item.isMarketPrice && Number(item.weightKg) > 0 && Number(item.pricePerKg) > 0
+                  ? `${lang === 'en-US' && item.itemNameEn ? item.itemNameEn : item.itemName} ${Number(item.weightKg).toFixed(2)}kg × €${Number(item.pricePerKg).toFixed(2)}/kg`
+                  : (lang === 'en-US' && item.itemNameEn ? item.itemNameEn : item.itemName)}
+                {item.isMarketPrice && !(Number(item.weightKg) > 0) ? (
+                  <span style={{ marginLeft: 8, fontSize: 12, fontWeight: 600, color: '#E65100' }}>{t('customer.marketPriceAwaitWeigh')}</span>
+                ) : null}
+              </div>
               {item.selectedOptions && item.selectedOptions.length > 0 && (
                 <div style={{ fontSize: 11, color: 'var(--text-light)', marginTop: 2 }}>
                   {item.selectedOptions.map((o, i) => (
@@ -599,10 +609,16 @@ export default function OrderStatusPage() {
 
       {/* Actions */}
       <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {isPending && order.items.some((it) => it.isMarketPrice && !(Number(it.weightKg) > 0) && !it.refunded) ? (
+          <div style={{ padding: '12px 14px', background: '#FFF8E1', borderRadius: 10, fontSize: 13, color: '#E65100', fontWeight: 600 }}>
+            {t('customer.payBlockedAwaitWeigh')}
+          </div>
+        ) : null}
         {isPending && (
           <>
             {/* Online Payment Button */}
             <button className="btn" onClick={() => setShowPayment(true)}
+              disabled={order.items.some((it) => it.isMarketPrice && !(Number(it.weightKg) > 0) && !it.refunded)}
               style={{
                 width: '100%', padding: '14px 0', fontSize: 16, fontWeight: 700,
                 background: '#000', color: '#fff', border: 'none', borderRadius: 12,
@@ -613,6 +629,7 @@ export default function OrderStatusPage() {
             {canMemberWallet ? (
               <button
                 className="btn btn-outline"
+                disabled={order.items.some((it) => it.isMarketPrice && !(Number(it.weightKg) > 0) && !it.refunded)}
                 onClick={() => setShowMemberWallet(true)}
                 style={{
                   width: '100%',

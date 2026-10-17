@@ -26,7 +26,22 @@ import { attachCustomerProfileToDeliveryOrder } from '../utils/customerProfileDe
 import { aggregateFrequentMenuItemsForCustomer } from '../utils/customerFrequentOrderItems';
 import { zonedDayBoundsForRef } from '../utils/zonedDayBounds';
 import { getDineInWorkflowModeForStore } from '../utils/dineInWorkflowMode';
-import { assertDineInItemsAdditiveOnly, mergeDineInKitchenPrintedAndSettledFromPrevious } from '../utils/dineInPayAfterItems';
+import {
+  assertDineInItemsAdditiveOnly,
+  assertKitchenPrintedLinesImmutable,
+  mergeDineInKitchenPrintedAndSettledFromPrevious,
+  mergeDineInRoundAndPlacedByFromPrevious,
+  mergeMarketWeighFromPrevious,
+  stampNewDineInLines,
+} from '../utils/dineInPayAfterItems';
+import {
+  assertNoUnweighedMarketLines,
+  dublinCalendarDate,
+  loadTodayPricePerKgMap,
+  marketLineUnitPrice,
+  parsePositiveKg,
+  parsePricePerKg,
+} from '../utils/marketPrice';
 import {
   adHocOptionsToSnapshots,
   parseAdHocOptionsFromItemPayload,
@@ -44,14 +59,17 @@ import {
   type OrderItemForInventory,
 } from '../utils/inventoryService';
 import { voidNotifyCustomerOrderEvent } from '../modules/customer-notifications/dispatcher';
-import { scheduleOrderCloudPrint } from '../utils/cloudPrint/runJob';
+import {
+  shouldKitchenCloudPrintOnCreate,
+  tryKitchenCloudPrintAndMark,
+  tryKitchenCloudPrintTableAndMark,
+} from '../utils/cloudPrint/kitchenRoute';
 import { releaseNumberedVoucherForOrder } from '../utils/numberedVoucherOps';
 import { handleNotifyCustomerReady } from './customerNotifications';
 import {
   DUAL_TRACK_VERSION,
   fulfillmentAfterKitchenPrintAll,
   initialDualTrackForCreate,
-  isCashierKitchenAtPlacement,
   isKitchenPrintSatisfied,
   isLegacyPaymentSettled,
   maybeAdvanceDeliveryStageOnKitchenReady,
@@ -122,6 +140,7 @@ function orderModels() {
     SystemConfig: mongoose.Model<any>;
     CustomerProfile: mongoose.Model<any>;
     InventoryTxn: mongoose.Model<any>;
+    MarketPriceDay: mongoose.Model<any>;
   };
 }
 
@@ -129,6 +148,7 @@ type MenuItemForOrder = MenuItemLike & {
   translations?: { locale: string; name: string }[];
   price: number;
   isSoldOut?: boolean;
+  isMarketPrice?: boolean;
 };
 
 export function createOrdersRouter(io: SocketIOServer): Router {
@@ -142,6 +162,8 @@ export function createOrdersRouter(io: SocketIOServer): Router {
     quantity: number;
     selectedOptions?: SelectedOptInput[];
     adHocOptions?: AdHocOptionInput[];
+    weightKg?: unknown;
+    pricePerKg?: unknown;
   };
 
   function parseOrderItemAdHoc(raw: unknown, staffAllowed: boolean): AdHocOptionInput[] {
@@ -254,7 +276,13 @@ export function createOrdersRouter(io: SocketIOServer): Router {
         extraPrice: number;
         source?: string;
       }[];
+      isMarketPrice?: boolean;
+      weightKg?: number;
+      pricePerKg?: number;
     }[] = [];
+
+    const { MarketPriceDay } = orderModels();
+    const todayRates = await loadTodayPricePerKgMap(MarketPriceDay, storeId, dublinCalendarDate());
 
     for (const item of items) {
       const menuItem = menuItemMap.get(item.menuItemId)!;
@@ -268,6 +296,44 @@ export function createOrdersRouter(io: SocketIOServer): Router {
         ...menuSnapshots.map((s) => ({ ...s, source: 'menu' as const })),
         ...adHocSnapshots,
       ];
+
+      if (menuItem.isMarketPrice) {
+        const copies = Math.max(1, Math.floor(Number(item.quantity) || 1));
+        let staffWeight = 0;
+        let staffRate = 0;
+        if (staffAllowed) {
+          if (item.weightKg != null && item.weightKg !== '') {
+            staffWeight = parsePositiveKg(item.weightKg);
+          }
+          if (item.pricePerKg != null && item.pricePerKg !== '') {
+            staffRate = parsePricePerKg(item.pricePerKg);
+          }
+        }
+        const dayRate = todayRates.get(String(item.menuItemId)) || 0;
+        for (let i = 0; i < copies; i++) {
+          const weighThis = staffAllowed && copies === 1 && staffWeight > 0;
+          const weightKg = weighThis ? staffWeight : 0;
+          const pricePerKg = weighThis
+            ? (staffRate > 0 ? staffRate : dayRate)
+            : 0;
+          const unitPrice = weightKg > 0 && pricePerKg > 0 ? marketLineUnitPrice(weightKg, pricePerKg) : 0;
+          if (weighThis && !(pricePerKg > 0)) {
+            throw createAppError('VALIDATION_ERROR', '称重时须填写当天 €/kg');
+          }
+          orderItems.push({
+            menuItemId: item.menuItemId,
+            lineKind: 'menu',
+            quantity: 1,
+            unitPrice,
+            itemName,
+            itemNameEn,
+            selectedOptions,
+            isMarketPrice: true,
+            ...(weightKg > 0 ? { weightKg, pricePerKg } : {}),
+          });
+        }
+        continue;
+      }
 
       orderItems.push({
         menuItemId: item.menuItemId,
@@ -332,12 +398,17 @@ export function createOrdersRouter(io: SocketIOServer): Router {
       }
 
       // For dine_in, require tableNumber and seatNumber
+      const dineInWf =
+        type === 'dine_in' ? await getDineInWorkflowModeForStore(req.storeId!) : undefined;
       if (type === 'dine_in') {
         if (tableNumber == null || typeof tableNumber !== 'number') {
           throw createAppError('VALIDATION_ERROR', 'tableNumber is required for dine_in orders');
         }
         if (seatNumber == null || typeof seatNumber !== 'number') {
           throw createAppError('VALIDATION_ERROR', 'seatNumber is required for dine_in orders');
+        }
+        if (dineInWf === 'pay_after' && (!Number.isFinite(tableNumber) || tableNumber < 1)) {
+          throw createAppError('VALIDATION_ERROR', '跑单堂食必须填写桌号');
         }
       }
       if (type === 'delivery') {
@@ -401,6 +472,9 @@ export function createOrdersRouter(io: SocketIOServer): Router {
         ((req.body as { waiterPlacement?: unknown }).waiterPlacement === true ||
           (req.body as { waiterPlacement?: unknown }).waiterPlacement === 'true');
       const orderItems = await buildOrderItemsPayload(req.storeId!, items, menuItemMap, staffAllowed);
+      if (type === 'dine_in' && dineInWf === 'pay_after') {
+        stampNewDineInLines([], orderItems as Record<string, unknown>[], staffAllowed ? 'staff' : 'customer_qr');
+      }
       const orderData: Record<string, unknown> = {
         storeId: req.storeId,
         type,
@@ -418,7 +492,6 @@ export function createOrdersRouter(io: SocketIOServer): Router {
           String(now.getHours()).padStart(2, '0') +
           String(now.getMinutes()).padStart(2, '0') +
           String(now.getSeconds()).padStart(2, '0');
-        const dineInWf = await getDineInWorkflowModeForStore(req.storeId!);
         const rawGuest =
           typeof (req.body as { dineInGuestLabel?: unknown }).dineInGuestLabel === 'string'
             ? String((req.body as { dineInGuestLabel: string }).dineInGuestLabel).trim()
@@ -610,27 +683,14 @@ export function createOrdersRouter(io: SocketIOServer): Router {
             throw createAppError('FORBIDDEN', '当前套餐未开通会员储值');
           }
         }
+        assertNoUnweighedMarketLines(orderItems);
         prepaidAtPlacement = true;
       }
 
       const takeoutSrc = (orderData as { takeoutPlacementSource?: string }).takeoutPlacementSource;
       const deliverySrcRaw = String((orderData as { deliverySource?: string }).deliverySource || '').trim();
       const deliverySrc = type === 'delivery' ? (deliverySrcRaw === 'qr' ? 'qr' : 'phone') : undefined;
-      const kitchenAtPlacement = isCashierKitchenAtPlacement({
-        type,
-        takeoutPlacementSource: takeoutSrc === 'cashier' ? 'cashier' : takeoutSrc === 'customer' ? 'customer' : undefined,
-        deliverySource: deliverySrc,
-        waiterPlacement,
-      });
-      if (kitchenAtPlacement) {
-        for (const line of orderItems as { lineKind?: string; kitchenPrintedQty?: number; quantity: number }[]) {
-          if (line.lineKind === 'delivery_fee') continue;
-          line.kitchenPrintedQty = line.quantity;
-        }
-        if (type === 'delivery' && deliverySrc === 'phone') {
-          orderData.deliveryStage = 'accepted';
-        }
-      }
+      /** 不再预写 kitchenPrintedQty：有云打印则下单后推飞鹅再记已出厨；失败则订单中心补打。 */
       Object.assign(
         orderData,
         initialDualTrackForCreate({
@@ -774,8 +834,26 @@ export function createOrdersRouter(io: SocketIOServer): Router {
 
       io.to(storeIoRoom(req.storeId!)).emit('order:new', order);
 
-      if (waiterPlacement) {
-        scheduleOrderCloudPrint(req.storeId!, order._id as mongoose.Types.ObjectId, 'placement');
+      let kitchenPrint: 'cloud' | 'pending' | undefined;
+      if (req.storeId && shouldKitchenCloudPrintOnCreate({
+        type,
+        dineInWorkflowMode: dineInWf,
+        waiterPlacement,
+        deliverySource: deliverySrc,
+        isStaff: isStaffCashierOrOwner(req),
+        releaseToKitchen:
+          (req.body as { releaseToKitchen?: unknown }).releaseToKitchen === true
+          || (req.body as { releaseToKitchen?: unknown }).releaseToKitchen === 'true',
+      })) {
+        kitchenPrint = await tryKitchenCloudPrintAndMark({
+          storeId: req.storeId,
+          orderId: order._id as mongoose.Types.ObjectId,
+          trigger: 'placement',
+        });
+        if (kitchenPrint === 'cloud') {
+          const fresh = await Order.findOne({ _id: order._id, storeId: req.storeId });
+          if (fresh) order = fresh;
+        }
       }
 
       const orderLean = typeof order.toObject === 'function' ? order.toObject() : order;
@@ -809,6 +887,7 @@ export function createOrdersRouter(io: SocketIOServer): Router {
         ...(typeof order.toObject === 'function' ? order.toObject() : order),
       };
       if (inventoryUpdates.length > 0) responseBody.inventoryUpdates = inventoryUpdates;
+      if (kitchenPrint) responseBody.kitchenPrint = kitchenPrint;
       res.status(201).json(responseBody);
     } catch (err) {
       next(err);
@@ -1643,6 +1722,112 @@ export function createOrdersRouter(io: SocketIOServer): Router {
     },
   );
 
+  // POST /api/orders/kitchen-cloud-print-table — 跑单：一桌多单合成一张厨房票
+  router.post(
+    '/kitchen-cloud-print-table',
+    ...requireAuthSameStore,
+    requirePermission('checkout:process'),
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const wf = await getDineInWorkflowModeForStore(req.storeId!);
+        if (wf !== 'pay_after') {
+          throw createAppError('VALIDATION_ERROR', '整桌厨房打印仅用于跑单模式');
+        }
+        const tableNumber = Math.floor(Number((req.body as { tableNumber?: unknown }).tableNumber));
+        if (!Number.isFinite(tableNumber) || tableNumber < 0) {
+          throw createAppError('VALIDATION_ERROR', 'Invalid table number');
+        }
+        const result = await tryKitchenCloudPrintTableAndMark({
+          storeId: req.storeId!,
+          tableNumber,
+        });
+        if (result.orderIds.length === 0) {
+          throw createAppError('VALIDATION_ERROR', '没有可打印的菜品行');
+        }
+        res.json({
+          kitchenPrint: result.kitchenPrint,
+          tableNumber,
+          orderIds: result.orderIds,
+        });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  // POST /api/orders/:id/kitchen-cloud-print — 订单中心：整单或指定行/轮次推飞鹅厨房票（可补打）
+  router.post(
+    '/:id/kitchen-cloud-print',
+    ...requireAuthSameStore,
+    requirePermission('checkout:process'),
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const { Order } = orderModels();
+        const id = req.params.id as string;
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+          throw createAppError('VALIDATION_ERROR', 'Invalid order ID');
+        }
+        const order = await Order.findOne({ _id: id, storeId: req.storeId });
+        if (!order) throw createAppError('NOT_FOUND', 'Order not found');
+        if (String(order.type) !== 'dine_in') {
+          throw createAppError('VALIDATION_ERROR', 'kitchen-cloud-print is only for dine_in orders');
+        }
+        const wfPrint = await getDineInWorkflowModeForStore(req.storeId!);
+        if (wfPrint !== 'pay_after') {
+          throw createAppError('VALIDATION_ERROR', '厨房云打印仅用于跑单模式');
+        }
+        if (!['pending', 'paid_online', 'checked_out'].includes(String(order.status))) {
+          throw createAppError('ORDER_NOT_MODIFIABLE', 'Order status does not allow kitchen print');
+        }
+
+        const rawLines = (req.body as { lineIds?: unknown }).lineIds;
+        const roundRaw = (req.body as { roundIndex?: unknown }).roundIndex;
+        const roundNum = roundRaw == null || roundRaw === '' ? null : Math.floor(Number(roundRaw));
+
+        const foodLines = (order.items as Array<{
+          _id?: { toString(): string };
+          lineKind?: string;
+          refunded?: boolean;
+          roundIndex?: number;
+        }>).filter((it) => it.lineKind !== 'delivery_fee' && !it.refunded);
+
+        let onlyLineIds: string[];
+        if (Array.isArray(rawLines) && rawLines.length > 0) {
+          const want = new Set(rawLines.map((x) => String(x)));
+          onlyLineIds = foodLines.filter((it) => want.has(String(it._id))).map((it) => String(it._id));
+        } else if (roundNum != null && Number.isFinite(roundNum) && roundNum >= 1) {
+          onlyLineIds = foodLines
+            .filter((it) => Math.max(1, Math.floor(Number(it.roundIndex) || 1)) === roundNum)
+            .map((it) => String(it._id));
+        } else {
+          onlyLineIds = foodLines.map((it) => String(it._id));
+        }
+        if (onlyLineIds.length === 0) {
+          throw createAppError('VALIDATION_ERROR', '没有可打印的菜品行');
+        }
+
+        const kitchenPrint = await tryKitchenCloudPrintAndMark({
+          storeId: req.storeId!,
+          orderId: order._id as mongoose.Types.ObjectId,
+          trigger: roundNum != null && roundNum > 1 ? 'append' : 'placement',
+          onlyLineIds,
+        });
+        const fresh = kitchenPrint === 'cloud'
+          ? await Order.findOne({ _id: id, storeId: req.storeId })
+          : order;
+        res.json({
+          kitchenPrint,
+          lineIds: onlyLineIds,
+          order: fresh && typeof (fresh as { toObject?: () => unknown }).toObject === 'function'
+            ? (fresh as { toObject: () => unknown }).toObject()
+            : fresh,
+        });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
   // POST /api/orders/:id/append-items — 手持跑账：堂食未完结单只追加行并云打印新增
   router.post(
     '/:id/append-items',
@@ -1655,12 +1840,16 @@ export function createOrdersRouter(io: SocketIOServer): Router {
         if (!mongoose.Types.ObjectId.isValid(id)) {
           throw createAppError('VALIDATION_ERROR', 'Invalid order ID');
         }
-        const order = await Order.findOne({ _id: id, storeId: req.storeId });
+        let order = await Order.findOne({ _id: id, storeId: req.storeId });
         if (!order) {
           throw createAppError('NOT_FOUND', 'Order not found');
         }
         if (String(order.type) !== 'dine_in') {
           throw createAppError('VALIDATION_ERROR', 'append-items is only for dine_in orders');
+        }
+        const wfAppend = await getDineInWorkflowModeForStore(req.storeId!);
+        if (wfAppend !== 'pay_after') {
+          throw createAppError('VALIDATION_ERROR', '追加菜品仅用于跑单模式');
         }
         if (String(order.status) !== 'pending') {
           throw createAppError('ORDER_NOT_MODIFIABLE', 'Order cannot be appended', {
@@ -1701,6 +1890,7 @@ export function createOrdersRouter(io: SocketIOServer): Router {
         const menuItemMap = new Map(menuItems.map((m) => [m._id.toString(), m as MenuItemForOrder]));
         const staffAllowed = isStaffCashierOrOwner(req);
         const newLines = await buildOrderItemsPayload(req.storeId!, items, menuItemMap, staffAllowed);
+        stampNewDineInLines(order.items as Parameters<typeof stampNewDineInLines>[0], newLines as Record<string, unknown>[], 'staff');
 
         const inventoryServings = aggregateServingsByMenuItem(items as OrderItemForInventory[]);
         const inventoryDeduction = await deductStockForOrderCreation(
@@ -1798,7 +1988,18 @@ export function createOrdersRouter(io: SocketIOServer): Router {
         }
 
         const appendedIds = order.items.slice(beforeCount).map((line: { _id?: { toString(): string } }) => String(line._id));
-        scheduleOrderCloudPrint(req.storeId!, order._id as mongoose.Types.ObjectId, 'append', appendedIds);
+        const kitchenPrint = await tryKitchenCloudPrintAndMark({
+          storeId: req.storeId!,
+          orderId: order._id as mongoose.Types.ObjectId,
+          trigger: 'append',
+          onlyLineIds: appendedIds,
+        });
+        if (kitchenPrint === 'cloud') {
+          const fresh = await Order.findOne({ _id: order._id, storeId: req.storeId });
+          if (fresh) {
+            order = fresh;
+          }
+        }
         io.to(storeIoRoom(req.storeId!)).emit('order:updated', order);
 
         const inventoryUpdates = inventoryDeduction.demands.length === 0
@@ -1816,6 +2017,7 @@ export function createOrdersRouter(io: SocketIOServer): Router {
           ...(typeof order.toObject === 'function' ? order.toObject() : order),
           appendedItemIds: appendedIds,
           merged: true,
+          kitchenPrint,
         };
         if (inventoryUpdates.length > 0) responseBody.inventoryUpdates = inventoryUpdates;
         res.json(responseBody);
@@ -1917,6 +2119,10 @@ export function createOrdersRouter(io: SocketIOServer): Router {
 
       // Build updated order items with price/name snapshots
       const orderItems = await buildOrderItemsPayload(req.storeId!, items, menuItemMap, staffAllowed);
+      mergeMarketWeighFromPrevious(
+        order.items as Parameters<typeof mergeMarketWeighFromPrevious>[0],
+        orderItems as Record<string, unknown>[],
+      );
       appendDeliveryFeeLineToOrderItems(
         orderItems as Record<string, unknown>[],
         order.type,
@@ -1931,6 +2137,18 @@ export function createOrdersRouter(io: SocketIOServer): Router {
       }
 
       if (order.type === 'dine_in') {
+        const dineInWfPut = await getDineInWorkflowModeForStore(req.storeId!);
+        if (dineInWfPut === 'pay_after') {
+          assertKitchenPrintedLinesImmutable(
+            order.items as Parameters<typeof assertKitchenPrintedLinesImmutable>[0],
+            orderItems as Parameters<typeof assertKitchenPrintedLinesImmutable>[1],
+          );
+          mergeDineInRoundAndPlacedByFromPrevious(
+            order.items as Parameters<typeof mergeDineInRoundAndPlacedByFromPrevious>[0],
+            orderItems as Record<string, unknown>[],
+            staffAllowed ? 'staff' : 'customer_qr',
+          );
+        }
         mergeDineInKitchenPrintedAndSettledFromPrevious(
           order.items as Parameters<typeof mergeDineInKitchenPrintedAndSettledFromPrevious>[0],
           orderItems as Record<string, unknown>[],
@@ -2023,6 +2241,32 @@ export function createOrdersRouter(io: SocketIOServer): Router {
 
       io.to(storeIoRoom(req.storeId!)).emit('order:updated', updated);
 
+      let kitchenPrint: 'cloud' | 'pending' | undefined;
+      if (order.type === 'dine_in' && req.storeId && updated) {
+        const wfPut = await getDineInWorkflowModeForStore(req.storeId);
+        if (wfPut === 'pay_after') {
+          const unprintedIds = ((updated as { items?: Array<{ _id?: { toString(): string }; lineKind?: string; refunded?: boolean; kitchenPrintedQty?: number; quantity?: number }> }).items || [])
+            .filter((it) => {
+              if (it.lineKind === 'delivery_fee' || it.refunded) return false;
+              const printed = Math.max(0, Number(it.kitchenPrintedQty) || 0);
+              return printed <= 0;
+            })
+            .map((it) => String(it._id));
+          if (unprintedIds.length > 0) {
+            kitchenPrint = await tryKitchenCloudPrintAndMark({
+              storeId: req.storeId,
+              orderId: order._id as mongoose.Types.ObjectId,
+              trigger: 'append',
+              onlyLineIds: unprintedIds,
+            });
+            if (kitchenPrint === 'cloud') {
+              const fresh = await Order.findOne({ _id: order._id, storeId: req.storeId });
+              if (fresh) updated = fresh;
+            }
+          }
+        }
+      }
+
       /** 同 POST：返回本次新增扣减后的最新库存，给前端就地 patch */
       const inventoryUpdates = inventoryDelta.demands.length === 0
         ? []
@@ -2041,11 +2285,120 @@ export function createOrdersRouter(io: SocketIOServer): Router {
           : (updated as unknown as Record<string, unknown>)),
       };
       if (inventoryUpdates.length > 0) responseBody.inventoryUpdates = inventoryUpdates;
+      if (kitchenPrint) responseBody.kitchenPrint = kitchenPrint;
       res.json(responseBody);
     } catch (err) {
       next(err);
     }
   });
+
+  // PATCH /api/orders/:id/weigh-line — 收银称重时价行
+  router.patch(
+    '/:id/weigh-line',
+    ...requireAuthSameStore,
+    requirePermission('checkout:process'),
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const { Order, MarketPriceDay } = orderModels();
+        const id = req.params.id as string;
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+          throw createAppError('VALIDATION_ERROR', 'Invalid order ID');
+        }
+        const order = await Order.findOne({ _id: id, storeId: req.storeId });
+        if (!order) throw createAppError('NOT_FOUND', 'Order not found');
+        if (!['pending', 'paid_online', 'checked_out'].includes(String(order.status))) {
+          throw createAppError('VALIDATION_ERROR', 'Order cannot be weighed', { currentStatus: order.status });
+        }
+        const lineId = String((req.body as { lineId?: unknown }).lineId ?? '');
+        if (!mongoose.Types.ObjectId.isValid(lineId)) {
+          throw createAppError('VALIDATION_ERROR', 'lineId is required');
+        }
+        const line = (order.items as Array<{
+          _id?: { toString(): string };
+          isMarketPrice?: boolean;
+          refunded?: boolean;
+          menuItemId?: unknown;
+          weightKg?: number;
+          pricePerKg?: number;
+          unitPrice?: number;
+        }>).find((it) => String(it._id) === lineId);
+        if (!line) throw createAppError('NOT_FOUND', 'Line not found');
+        if (!line.isMarketPrice) {
+          throw createAppError('VALIDATION_ERROR', 'Only market-price lines can be weighed');
+        }
+        if (line.refunded) {
+          throw createAppError('VALIDATION_ERROR', 'Cannot weigh a voided line');
+        }
+        const weightKg = parsePositiveKg((req.body as { weightKg?: unknown }).weightKg);
+        let pricePerKg = 0;
+        if ((req.body as { pricePerKg?: unknown }).pricePerKg != null && (req.body as { pricePerKg?: unknown }).pricePerKg !== '') {
+          pricePerKg = parsePricePerKg((req.body as { pricePerKg?: unknown }).pricePerKg);
+        } else if (Number(line.pricePerKg) > 0) {
+          pricePerKg = Number(line.pricePerKg);
+        } else {
+          const rates = await loadTodayPricePerKgMap(MarketPriceDay, req.storeId!, dublinCalendarDate());
+          pricePerKg = rates.get(String(line.menuItemId)) || 0;
+        }
+        if (!(pricePerKg > 0)) {
+          throw createAppError('VALIDATION_ERROR', '称重时须填写当天 €/kg');
+        }
+        line.weightKg = weightKg;
+        line.pricePerKg = pricePerKg;
+        line.unitPrice = marketLineUnitPrice(weightKg, pricePerKg);
+        order.markModified('items');
+        const wf = order.type === 'dine_in' ? await getDineInWorkflowModeForStore(req.storeId!) : undefined;
+        syncDualTrackBeforeSave(order, { dineInWorkflowMode: wf });
+        await order.save();
+        io.to(storeIoRoom(req.storeId!)).emit('order:updated', order);
+        res.json(order);
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  // POST /api/orders/:id/void-lines — 跑单：厨房已出菜只能退菜（标 refunded），不能改行
+  router.post(
+    '/:id/void-lines',
+    ...requireAuthSameStore,
+    requirePermission('checkout:process'),
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const { Order } = orderModels();
+        const id = req.params.id as string;
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+          throw createAppError('VALIDATION_ERROR', 'Invalid order ID');
+        }
+        const order = await Order.findOne({ _id: id, storeId: req.storeId });
+        if (!order) throw createAppError('NOT_FOUND', 'Order not found');
+        const rawIds = (req.body as { lineIds?: unknown }).lineIds;
+        const lineIds = Array.isArray(rawIds) ? rawIds.map((x) => String(x)).filter(Boolean) : [];
+        if (lineIds.length === 0) {
+          throw createAppError('VALIDATION_ERROR', 'lineIds is required');
+        }
+        const want = new Set(lineIds);
+        let n = 0;
+        for (const line of order.items as Array<{ _id?: { toString(): string }; refunded?: boolean; lineKind?: string }>) {
+          if (!want.has(String(line._id))) continue;
+          if (line.lineKind === 'delivery_fee') continue;
+          if (line.refunded) continue;
+          line.refunded = true;
+          n += 1;
+        }
+        if (n === 0) {
+          throw createAppError('VALIDATION_ERROR', 'No matching lines to void');
+        }
+        order.markModified('items');
+        const wf = order.type === 'dine_in' ? await getDineInWorkflowModeForStore(req.storeId!) : undefined;
+        syncDualTrackBeforeSave(order, { dineInWorkflowMode: wf });
+        await order.save();
+        io.to(storeIoRoom(req.storeId!)).emit('order:updated', order);
+        res.json(order);
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
 
   // DELETE /api/orders/:id — Hard-delete order (+ linked checkouts). Staff any stage; customer pending unpaid only.
   router.delete('/:id', optionalAuthMiddleware, async (req: Request, res: Response, next: NextFunction) => {

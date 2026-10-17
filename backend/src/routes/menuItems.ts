@@ -19,11 +19,13 @@ import {
 } from '../utils/rawMaterialBoMBackfill';
 import { sanitizePurchaseUnits, enrichPurchaseUnitsForResponse } from '../utils/purchaseUnits';
 import { isValidConsumptionQty, roundConsumptionQty } from '../utils/consumptionQty';
+import { dublinCalendarDate, loadTodayPricePerKgMap } from '../utils/marketPrice';
 
 function menuModels() {
   return getModels() as {
     MenuItem: mongoose.Model<any>;
     MenuCategory: mongoose.Model<any>;
+    MarketPriceDay: mongoose.Model<any>;
   };
 }
 
@@ -33,6 +35,15 @@ function menuModels() {
  * - 每条要求合法 ObjectId 与 ≥0.01 的 qty（最多 2 位小数）；不合法直接抛 VALIDATION_ERROR
  * - 同一 rawMaterialId 重复 → 抛错（前端应合并）
  */
+function parseSpiceLevel(raw: unknown, fallback?: number): number | undefined {
+  if (raw === undefined || raw === null || raw === '') return fallback;
+  const n = typeof raw === 'number' ? raw : Number(raw);
+  if (!Number.isInteger(n) || n < 0 || n > 3) {
+    throw createAppError('VALIDATION_ERROR', 'spiceLevel must be 0, 1, 2, or 3');
+  }
+  return n;
+}
+
 function sanitizeConsumption(raw: unknown): { rawMaterialId: mongoose.Types.ObjectId; qty: number }[] {
   if (raw === undefined || raw === null) return [];
   if (!Array.isArray(raw)) {
@@ -125,11 +136,19 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
       inventory?: { purchaseUnits?: unknown };
     }>;
 
+    const { MarketPriceDay } = menuModels();
+    const todayRates = await loadTodayPricePerKgMap(MarketPriceDay, req.storeId!, dublinCalendarDate());
+
     const withPurchaseUnitLabels = baseItems.map((item) => {
-      const inv = item.inventory;
-      if (!inv?.purchaseUnits) return item;
+      const rec = item as Record<string, unknown>;
+      const id = String(rec._id ?? '');
+      const withRate = rec.isMarketPrice
+        ? { ...item, todayPricePerKg: todayRates.get(id) ?? null }
+        : item;
+      const inv = withRate.inventory;
+      if (!inv?.purchaseUnits) return withRate;
       return {
-        ...item,
+        ...withRate,
         inventory: {
           ...inv,
           purchaseUnits: enrichPurchaseUnitsForResponse(
@@ -169,7 +188,7 @@ router.post(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { MenuItem, MenuCategory } = menuModels();
-      const { categoryId, price, calories, avgWaitMinutes, photoUrl, arFileUrl, isSoldOut, translations, allergenIds, optionGroups, consumption } = req.body;
+      const { categoryId, price, calories, avgWaitMinutes, photoUrl, arFileUrl, isSoldOut, isRecommended, spiceLevel, isMarketPrice, translations, allergenIds, optionGroups, consumption } = req.body;
 
       if (!categoryId || price == null || !Array.isArray(translations) || translations.length === 0) {
         throw createAppError(
@@ -213,6 +232,9 @@ router.post(
         photoUrl,
         arFileUrl,
         isSoldOut: isSoldOut ?? false,
+        isRecommended: typeof isRecommended === 'boolean' ? isRecommended : false,
+        spiceLevel: parseSpiceLevel(spiceLevel, 0),
+        isMarketPrice: typeof isMarketPrice === 'boolean' ? isMarketPrice : false,
         translations,
         allergenIds: allergenIds || [],
         optionGroups: normalizedOptionGroups ?? [],
@@ -256,6 +278,9 @@ router.put(
         photoUrl,
         arFileUrl,
         isSoldOut,
+        isRecommended,
+        spiceLevel,
+        isMarketPrice,
         translations,
         allergenIds,
         optionGroups,
@@ -299,6 +324,21 @@ router.put(
       if (photoUrl !== undefined) updateData.photoUrl = photoUrl;
       if (arFileUrl !== undefined) updateData.arFileUrl = arFileUrl;
       if (isSoldOut !== undefined) updateData.isSoldOut = isSoldOut;
+      if (isRecommended !== undefined) {
+        if (typeof isRecommended !== 'boolean') {
+          throw createAppError('VALIDATION_ERROR', 'isRecommended must be a boolean');
+        }
+        updateData.isRecommended = isRecommended;
+      }
+      if (spiceLevel !== undefined) {
+        updateData.spiceLevel = parseSpiceLevel(spiceLevel);
+      }
+      if (isMarketPrice !== undefined) {
+        if (typeof isMarketPrice !== 'boolean') {
+          throw createAppError('VALIDATION_ERROR', 'isMarketPrice must be a boolean');
+        }
+        updateData.isMarketPrice = isMarketPrice;
+      }
       if (translations !== undefined) updateData.translations = translations;
       if (allergenIds !== undefined) updateData.allergenIds = allergenIds;
       if (normalizedOptionGroups !== undefined) updateData.optionGroups = normalizedOptionGroups;

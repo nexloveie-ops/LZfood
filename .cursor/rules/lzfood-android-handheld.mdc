@@ -1,0 +1,17 @@
+---
+description: Handheld Android 跑账 App debug device — Samsung Tab S8 Ultra
+alwaysApply: true
+---
+
+# Android handheld debug device
+
+When building or installing the **new** 手持跑账 App (not `android-waiter-app` WebView, not `android-cashier-shell`):
+
+- Device: **Samsung Galaxy Tab S8 Ultra Wi-Fi** (`SM-X900`, `gts8uwifi`)
+- Serial: `R52T10050XD`
+- OS: Android 16 (API 36)
+- ADB: `adb -s R52T10050XD …` (USB debugging already authorized on this PC)
+
+Install/debug on this tablet. Confirm `adb -s R52T10050XD get-state` is `device` before deploy. If `unauthorized` or missing, ask Lei to unlock and allow USB debugging.
+
+Do not use iOS Simulator or `lzfood_phone` emulator as the default target for this app.

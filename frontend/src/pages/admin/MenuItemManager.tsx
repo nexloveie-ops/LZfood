@@ -9,6 +9,8 @@ import {
 } from '../../utils/purchaseUnitLabel';
 import { CONSUMPTION_QTY_MIN, roundConsumptionQty } from '../../utils/consumptionQty';
 import BomQtyInput from '../../components/admin/BomQtyInput';
+import RecommendedStar from '../../components/RecommendedStar';
+import SpiceLevelHint, { clampSpiceLevel, type SpiceLevel } from '../../components/SpiceLevelHint';
 
 interface Translation { locale: string; name: string; description?: string; }
 interface Category { _id: string; sortOrder?: number; translations: Translation[]; }
@@ -28,7 +30,7 @@ interface InventorySubdoc {
 interface MenuItem {
   _id: string; categoryId: string; price: number; calories?: number;
   avgWaitMinutes?: number; photoUrl?: string; arFileUrl?: string;
-  isSoldOut?: boolean; translations: Translation[]; allergenIds?: string[];
+  isSoldOut?: boolean; isRecommended?: boolean; spiceLevel?: number; isMarketPrice?: boolean; translations: Translation[]; allergenIds?: string[];
   optionGroups?: OptionGroupData[];
   inventoryTracked?: boolean;
   inventory?: InventorySubdoc;
@@ -56,6 +58,9 @@ const emptyForm = {
   nameEn: '',
   descZh: '',
   descEn: '',
+  isRecommended: false,
+  isMarketPrice: false,
+  spiceLevel: 0 as SpiceLevel,
   allergenIds: [] as string[],
   optionGroups: [] as FormOptionGroup[],
   inventoryTracked: false,
@@ -66,6 +71,52 @@ const emptyForm = {
   trackingMode: 'off' as TrackingMode,
   itemConsumption: [] as BoMEntryData[],
 };
+
+function SpiceLevelField({
+  value,
+  onChange,
+  t,
+}: {
+  value: SpiceLevel;
+  onChange: (n: SpiceLevel) => void;
+  t: (key: string) => string;
+}) {
+  const opts: Array<{ v: SpiceLevel; label: string; hint?: string }> = [
+    { v: 0, label: t('admin.spiceNone') },
+    { v: 1, label: t('admin.spiceMild'), hint: '🌶️' },
+    { v: 2, label: t('admin.spiceMedium'), hint: '🌶️🌶️' },
+    { v: 3, label: t('admin.spiceHot'), hint: '🌶️🌶️🌶️' },
+  ];
+  return (
+    <div style={{ gridColumn: '1 / -1' }}>
+      <span style={{ fontSize: 12, color: 'var(--text-light)', display: 'block', marginBottom: 6 }}>{t('admin.spiceLevel')}</span>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+        {opts.map((o) => {
+          const on = value === o.v;
+          return (
+            <button
+              key={o.v}
+              type="button"
+              onClick={() => onChange(o.v)}
+              style={{
+                padding: '6px 10px',
+                borderRadius: 6,
+                fontSize: 13,
+                cursor: 'pointer',
+                border: on ? '1px solid var(--red-primary)' : '1px solid var(--border)',
+                background: on ? 'var(--red-light)' : '#fff',
+                color: on ? 'var(--red-primary)' : 'var(--text-secondary)',
+                fontWeight: on ? 700 : 500,
+              }}
+            >
+              {o.label}{o.hint ? ` ${o.hint}` : ''}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 export default function MenuItemManager() {
   const { t } = useTranslation();
@@ -223,6 +274,9 @@ export default function MenuItemManager() {
         nameEn: item.translations.find(t2 => t2.locale === 'en-US')?.name || '',
         descZh: item.translations.find(t2 => t2.locale === 'zh-CN')?.description || '',
         descEn: item.translations.find(t2 => t2.locale === 'en-US')?.description || '',
+        isRecommended: !!item.isRecommended,
+        isMarketPrice: !!item.isMarketPrice,
+        spiceLevel: clampSpiceLevel(item.spiceLevel),
         allergenIds: item.allergenIds || [],
         optionGroups,
         inventoryTracked: !!item.inventoryTracked,
@@ -343,6 +397,9 @@ export default function MenuItemManager() {
       categoryId: saveForm.categoryId, price: saveForm.price,
       calories: saveForm.calories, avgWaitMinutes: saveForm.avgWaitMinutes,
       allergenIds: saveForm.allergenIds,
+      isRecommended: !!saveForm.isRecommended,
+      isMarketPrice: !!saveForm.isMarketPrice,
+      spiceLevel: clampSpiceLevel(saveForm.spiceLevel),
       translations: [
         { locale: 'zh-CN', name: saveForm.nameZh, description: saveForm.descZh },
         { locale: 'en-US', name: saveForm.nameEn, description: saveForm.descEn },
@@ -761,6 +818,28 @@ export default function MenuItemManager() {
               <label style={{ fontSize: 12, color: 'var(--text-light)', display: 'block', marginBottom: 4 }}>English Name</label>
               <input className="input" value={form.nameEn} onChange={e => setForm({ ...form, nameEn: e.target.value })} />
             </div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer', gridColumn: '1 / -1' }}>
+              <input
+                type="checkbox"
+                checked={form.isRecommended}
+                onChange={e => setForm({ ...form, isRecommended: e.target.checked })}
+              />
+              <RecommendedStar size={14} />
+              <span>{t('admin.recommendedDish')}</span>
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer', gridColumn: '1 / -1' }}>
+              <input
+                type="checkbox"
+                checked={form.isMarketPrice}
+                onChange={e => setForm({ ...form, isMarketPrice: e.target.checked })}
+              />
+              <span>{t('admin.marketPriceDish')}</span>
+            </label>
+            <SpiceLevelField
+              value={form.spiceLevel}
+              onChange={(n) => setForm({ ...form, spiceLevel: n })}
+              t={t}
+            />
             <div>
               <label style={{ fontSize: 12, color: 'var(--text-light)', display: 'block', marginBottom: 4 }}>中文描述</label>
               <textarea className="input" value={form.descZh} onChange={e => setForm({ ...form, descZh: e.target.value })} rows={2} />
@@ -959,7 +1038,11 @@ export default function MenuItemManager() {
                   </label>
                 </td>
                 <td style={{ padding: '8px 12px' }}>
-                  <div style={{ fontWeight: 600 }}>{item.translations.find(t2 => t2.locale === 'zh-CN')?.name}</div>
+                  <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: 2 }}>
+                    {item.isRecommended ? <RecommendedStar size={13} title={t('admin.recommendedDish')} /> : null}
+                    {item.translations.find(t2 => t2.locale === 'zh-CN')?.name}
+                    <SpiceLevelHint level={item.spiceLevel} />
+                  </div>
                   <div style={{ fontSize: 11, color: 'var(--text-light)' }}>{item.translations.find(t2 => t2.locale === 'en-US')?.name}</div>
                   {item.optionGroups && item.optionGroups.length > 0 && (<div style={{ fontSize: 10, color: 'var(--text-light)', marginTop: 2 }}>⚙ {item.optionGroups.length} {t('admin.optionGroups').toLowerCase()}</div>)}
                 </td>
@@ -988,6 +1071,20 @@ export default function MenuItemManager() {
                     <div><label style={{ fontSize: 12, color: 'var(--text-light)', display: 'block', marginBottom: 4 }}>价格</label><input className="input" type="number" value={form.price} onChange={e => setForm({ ...form, price: Number(e.target.value) })} /></div>
                     <div><label style={{ fontSize: 12, color: 'var(--text-light)', display: 'block', marginBottom: 4 }}>中文名称</label><input className="input" value={form.nameZh} onChange={e => setForm({ ...form, nameZh: e.target.value })} /></div>
                     <div><label style={{ fontSize: 12, color: 'var(--text-light)', display: 'block', marginBottom: 4 }}>English Name</label><input className="input" value={form.nameEn} onChange={e => setForm({ ...form, nameEn: e.target.value })} /></div>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer', gridColumn: '1 / -1' }}>
+                      <input type="checkbox" checked={form.isRecommended} onChange={e => setForm({ ...form, isRecommended: e.target.checked })} />
+                      <RecommendedStar size={14} />
+                      <span>{t('admin.recommendedDish')}</span>
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer', gridColumn: '1 / -1' }}>
+                      <input type="checkbox" checked={form.isMarketPrice} onChange={e => setForm({ ...form, isMarketPrice: e.target.checked })} />
+                      <span>{t('admin.marketPriceDish')}</span>
+                    </label>
+                    <SpiceLevelField
+                      value={form.spiceLevel}
+                      onChange={(n) => setForm({ ...form, spiceLevel: n })}
+                      t={t}
+                    />
                     <div><label style={{ fontSize: 12, color: 'var(--text-light)', display: 'block', marginBottom: 4 }}>中文描述</label><textarea className="input" value={form.descZh} onChange={e => setForm({ ...form, descZh: e.target.value })} rows={2} /></div>
                     <div><label style={{ fontSize: 12, color: 'var(--text-light)', display: 'block', marginBottom: 4 }}>English Description</label><textarea className="input" value={form.descEn} onChange={e => setForm({ ...form, descEn: e.target.value })} rows={2} /></div>
                     <div><label style={{ fontSize: 12, color: 'var(--text-light)', display: 'block', marginBottom: 4 }}>热量</label><input className="input" type="number" value={form.calories} onChange={e => setForm({ ...form, calories: Number(e.target.value) })} /></div>

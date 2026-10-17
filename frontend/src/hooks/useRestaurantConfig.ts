@@ -12,6 +12,8 @@ export interface RestaurantConfig {
   restaurant_address?: string;
   restaurant_phone?: string;
   restaurant_logo?: string;
+  /** 顾客扫码菜单边/空白衬底图；空则用默认浅底 */
+  customer_menu_background?: string;
   restaurant_website?: string;
   restaurant_email?: string;
   receipt_terms?: string;

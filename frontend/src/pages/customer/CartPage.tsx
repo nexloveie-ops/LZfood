@@ -243,12 +243,18 @@ export default function CartPage() {
     setSubmitting(true);
     setError('');
     try {
-      const itemsPayload = items.map(i => {
-        const item: Record<string, unknown> = { menuItemId: i.menuItemId, quantity: i.quantity };
-        if (i.options && i.options.length > 0) {
-          item.selectedOptions = i.options.map(o => ({ groupId: o.groupId, choiceId: o.choiceId }));
+      const itemsPayload = items.flatMap(i => {
+        const copies = i.isMarketPrice ? Math.max(1, Math.floor(i.quantity) || 1) : 1;
+        const qty = i.isMarketPrice ? 1 : i.quantity;
+        const rows: Record<string, unknown>[] = [];
+        for (let n = 0; n < copies; n++) {
+          const item: Record<string, unknown> = { menuItemId: i.menuItemId, quantity: qty };
+          if (i.options && i.options.length > 0) {
+            item.selectedOptions = i.options.map(o => ({ groupId: o.groupId, choiceId: o.choiceId }));
+          }
+          rows.push(item);
         }
-        return item;
+        return rows;
       });
 
       let res: Response;
@@ -409,7 +415,9 @@ export default function CartPage() {
                   </div>
                 )}
                 <div style={{ fontSize: 13, color: 'var(--red-primary)', fontWeight: 600, fontFamily: "'Noto Serif SC', serif" }}>
-                  €{item.price}{optExtra > 0 && ` +€${optExtra}`}
+                  {item.isMarketPrice
+                    ? t('customer.marketPriceAwaitWeigh')
+                    : `€${item.price}${optExtra > 0 ? ` +€${optExtra}` : ''}`}
                 </div>
               </div>
               <div style={{

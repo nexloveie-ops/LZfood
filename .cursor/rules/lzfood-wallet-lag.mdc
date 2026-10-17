@@ -1,0 +1,14 @@
+---
+description: >-
+  Apple Wallet「加入钱包」卡顿 — every tap rebuilds pkpass (Jimp strip, p12, logo
+  fetch, store geocode). Wake when user says 钱包卡顿 (also 加入钱包慢, Wallet 卡顿).
+alwaysApply: false
+---
+
+# 钱包卡顿
+
+Wake: **钱包卡顿** (also 加入钱包慢 / Wallet 卡顿 / pkpass 慢).
+
+Default: **read-only**; do not change code unless Lei says **ok go** / **实现** / **写代码**. Load skill `lzfood-wallet-lag`.
+
+Parked 2026-10-04. Button waits on full `GET /api/members/me/apple-wallet-pass`. Fix order after ok go: cache p12 signer → cache Jimp fonts / @2x-only strip → cache logo → don’t geocode when lat/lng already stored.

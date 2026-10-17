@@ -8,6 +8,9 @@ import {
   computeCartRawDemand,
   isItemServingBlocked,
 } from '../../utils/bomAvailability';
+import RecommendedStar from '../RecommendedStar';
+import SpiceLevelHint from '../SpiceLevelHint';
+import { formatMenuMarketPrice } from '../../utils/marketPriceDisplay';
 
 interface MenuItemCardProps {
   id: string;
@@ -22,12 +25,16 @@ interface MenuItemCardProps {
   photoFetchPriority?: 'high' | 'low' | 'auto';
   arFileUrl?: string;
   isSoldOut?: boolean;
+  isRecommended?: boolean;
+  spiceLevel?: number;
+  isMarketPrice?: boolean;
+  todayPricePerKg?: number | null;
   allergenIcons?: string[];
   optionGroups?: OptionGroup[];
   quantity?: number;
   /** 已点份数均来自不可减的订单行时禁用「−」 */
   decreaseDisabled?: boolean;
-  onAdd: (id: string, names: Record<string, string>, price: number, options?: CartItemOption[]) => void;
+  onAdd: (id: string, names: Record<string, string>, price: number, options?: CartItemOption[], meta?: { isMarketPrice?: boolean }) => void;
   onDecrease?: (menuItemId: string) => void;
   bomSnapshot?: BomAvailabilitySnapshot | null;
   /** 购物车/当前单已占用原材料 */
@@ -36,10 +43,12 @@ interface MenuItemCardProps {
 
 export default function MenuItemCard({
   id, name, names, description, price, calories, avgWaitMinutes,
-  photoUrl, photoFetchPriority = 'auto', arFileUrl, isSoldOut, allergenIcons, optionGroups, quantity, decreaseDisabled, onAdd, onDecrease,
+  photoUrl, photoFetchPriority = 'auto', arFileUrl, isSoldOut, isRecommended, spiceLevel, isMarketPrice, todayPricePerKg, allergenIcons, optionGroups, quantity, decreaseDisabled, onAdd, onDecrease,
   bomSnapshot, cartBomLines = [],
 }: MenuItemCardProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const isEn = (i18n.language || '').toLowerCase().startsWith('en');
+  const addMeta = isMarketPrice ? { isMarketPrice: true } : undefined;
   const [expanded, setExpanded] = useState(false);
   const [isClamped, setIsClamped] = useState(false);
   const [showOptions, setShowOptions] = useState(false);
@@ -73,12 +82,12 @@ export default function MenuItemCard({
     if (hasOptions) {
       setShowOptions(true);
     } else {
-      onAdd(id, names, price);
+      onAdd(id, names, price, undefined, addMeta);
     }
   };
 
   const handleOptionConfirm = (options: CartItemOption[]) => {
-    onAdd(id, names, price, options);
+    onAdd(id, names, price, options, addMeta);
     setShowOptions(false);
   };
 
@@ -153,16 +162,19 @@ export default function MenuItemCard({
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
           <div className="menu-item-card__name" style={{
             marginBottom: 2,
-            display: 'flex', alignItems: 'center', gap: 6,
+            display: 'flex', alignItems: 'center', gap: 6, minWidth: 0,
           }}>
-            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
+            {isRecommended ? <RecommendedStar size={16} title={t('customer.recommended')} /> : null}
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, flex: 1 }}>
+              {name}
+            </span>
+            <SpiceLevelHint level={spiceLevel} />
             {arFileUrl && <ARViewer arFileUrl={arFileUrl} itemName={name} />}
           </div>
 
           {description && (
             <div style={{ marginBottom: 6 }}>
-              <div ref={descRef} style={{
-                fontSize: 12, color: 'var(--text-light)', lineHeight: 1.5,
+              <div ref={descRef} className="menu-item-card__desc" style={{
                 ...(!expanded ? {
                   display: '-webkit-box',
                   WebkitLineClamp: 2,
@@ -198,7 +210,13 @@ export default function MenuItemCard({
 
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 'auto' }}>
             <div className="menu-item-card__price">
-              <span style={{ fontSize: 13, fontWeight: 500, marginRight: 1 }}>€</span>{price}
+              {isMarketPrice ? (
+                <span style={{ fontSize: 14, fontWeight: 700 }}>{formatMenuMarketPrice(todayPricePerKg, isEn)}</span>
+              ) : (
+                <>
+                  <span style={{ fontSize: 13, fontWeight: 500, marginRight: 1 }}>€</span>{price}
+                </>
+              )}
             </div>
             <button
               className="menu-item-card__add"

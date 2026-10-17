@@ -1,5 +1,6 @@
 import {
   cashierMayEditQrOrder,
+  isCustomerQrOrderForEdit,
   orderKitchenSubmitted,
   orderUnpaidForQrEdit,
 } from './cashierQrOrderEdit';
@@ -40,16 +41,31 @@ describe('cashierQrOrderEdit', () => {
     }, 'pay_first')).toBe(false);
   });
 
-  it('blocks stripe and dine-in pay_after', () => {
+  it('does not treat a pending Terminal PaymentIntent as already paid', () => {
     expect(orderUnpaidForQrEdit({
       status: 'pending',
+      paymentStatus: 'unpaid',
       stripePaymentIntentId: 'pi_123',
-    })).toBe(false);
+    })).toBe(true);
+  });
+
+  it('blocks dine-in pay_after', () => {
     expect(cashierMayEditQrOrder({
       type: 'dine_in',
       status: 'pending',
       paymentStatus: 'unpaid',
       items: baseItems,
     }, 'pay_after')).toBe(false);
+  });
+
+  it('treats staff-placed dine-in as cashier order, not QR', () => {
+    expect(isCustomerQrOrderForEdit({
+      type: 'dine_in',
+      items: [{ ...baseItems[0], placedBy: 'staff' }],
+    })).toBe(false);
+    expect(isCustomerQrOrderForEdit({
+      type: 'dine_in',
+      items: [{ ...baseItems[0], placedBy: 'customer_qr' }],
+    })).toBe(true);
   });
 });

@@ -19,6 +19,8 @@ import OrderItemOptionGroupList from '../../components/cashier/OrderItemOptionGr
 import { cashierOrderItemDisplayName } from '../../utils/cashierOrderItemOptions';
 import { isWaiterMode } from '../../utils/waiterMode';
 import { resolveReceiptPaymentMethodFromOrder } from '../../utils/receiptPaymentMethod';
+import WeighMarketDialog from '../../components/cashier/WeighMarketDialog';
+import { formatMarketLineTitle, isUnweighedMarketLine } from '../../utils/marketPriceDisplay';
 
 type OrderType = 'dine_in' | 'takeout' | 'phone' | 'delivery';
 type OrderStatus = 'pending' | 'paid_online' | 'checked_out' | 'completed' | 'refunded' | 'checked_out-hide' | 'completed-hide';
@@ -57,6 +59,9 @@ interface OrderRow {
     /** 已打印至厨房小票的份数（后结堂食增量打印） */
     kitchenPrintedQty?: number;
     settledQty?: number;
+    isMarketPrice?: boolean;
+    weightKg?: number;
+    pricePerKg?: number;
     selectedOptions?: {
       groupName?: string;
       groupNameEn?: string;
@@ -109,6 +114,9 @@ function mapOrderItemToReceipt(item: OrderRow['items'][0], qtyOverride: number) 
     unitPrice: item.unitPrice,
     itemName: item.itemName,
     itemNameEn: item.itemNameEn,
+    isMarketPrice: item.isMarketPrice,
+    weightKg: item.weightKg,
+    pricePerKg: item.pricePerKg,
     selectedOptions: mapSelectedOptionsForReceipt(item.selectedOptions),
   };
 }
@@ -374,6 +382,52 @@ function orderItemsAmountSummaryBox(
   );
 }
 
+function marketLinesForWeigh(o: OrderRow) {
+  return (o.items || []).filter((it) => it.isMarketPrice && !it.refunded && it.lineKind !== 'delivery_fee');
+}
+
+function MarketWeighBlock({
+  o,
+  awaitLabel,
+  weighLabel,
+  onWeigh,
+}: {
+  o: OrderRow;
+  awaitLabel: string;
+  weighLabel: string;
+  onWeigh: (item: OrderRow['items'][0]) => void;
+}) {
+  const lines = marketLinesForWeigh(o);
+  if (lines.length === 0) return null;
+  return (
+    <div
+      style={{ marginBottom: 8, padding: 8, borderRadius: 8, background: '#FFF8E1', border: '1px solid #FFE0B2' }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      {lines.map((it) => (
+        <div key={it._id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, marginBottom: 4 }}>
+          <span style={{ flex: 1, minWidth: 0 }}>
+            {formatMarketLineTitle(it.itemName, it.weightKg, it.pricePerKg)}
+            {isUnweighedMarketLine(it) ? (
+              <em style={{ color: '#E65100' }}> · {awaitLabel}</em>
+            ) : (
+              <span> · €{Number(it.unitPrice).toFixed(2)}</span>
+            )}
+          </span>
+          <button
+            type="button"
+            className="btn btn-outline"
+            style={{ fontSize: 11, padding: '1px 8px', flexShrink: 0 }}
+            onClick={() => onWeigh(it)}
+          >
+            {weighLabel}
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /** 按桌结账弹窗：先结仅 pending；后结为仍有未结金额或仍有未结份数的单（避免一桌无 pending 时无法结账） */
 function dineInOrdersForTableCheckoutModal(tableOrders: OrderRow[], dineInPayAfter: boolean): OrderRow[] {
   if (!dineInPayAfter) {
@@ -416,6 +470,7 @@ export default function UnifiedOrderCenter() {
     [canEditInOrderTab, navigate, storeSlug],
   );
   const [loadHint, setLoadHint] = useState('');
+  const [weighTarget, setWeighTarget] = useState<{ orderId: string; item: OrderRow['items'][0] } | null>(null);
   const [queueMode, setQueueMode] = useState<'unified' | 'fallback'>('unified');
   const [checkoutModalOrder, setCheckoutModalOrder] = useState<OrderRow | null>(null);
   const [checkoutModalTable, setCheckoutModalTable] = useState<{ tableNumber: number; orders: OrderRow[] } | null>(null);
@@ -576,6 +631,7 @@ export default function UnifiedOrderCenter() {
         body.couponName = coupon.name;
         body.couponAmount = coupon.amount;
       }
+      body.skipCloudPrint = true;
       const res = await apiFetch(`/api/checkout/seat/${order._id}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -2073,6 +2129,12 @@ export default function UnifiedOrderCenter() {
                             <div style={{ marginBottom: 6 }}>
                               {orderItemsAmountSummaryBox(o, dineInPayAfter, orderSummaryLabels)}
                             </div>
+                            <MarketWeighBlock
+                              o={o}
+                              awaitLabel={t('customer.marketPriceAwaitWeigh')}
+                              weighLabel={t('cashier.weigh')}
+                              onWeigh={(item) => setWeighTarget({ orderId: o._id, item })}
+                            />
                             {dineInPayAfter && kitchenUnprinted > 0 ? (
                               <div
                                 style={{
@@ -2420,6 +2482,12 @@ export default function UnifiedOrderCenter() {
                     <div style={{ minHeight: 38 }} />
                   ) : null}
                   {orderItemsAmountSummaryBox(o, dineInPayAfter, orderSummaryLabels)}
+                  <MarketWeighBlock
+                    o={o}
+                    awaitLabel={t('customer.marketPriceAwaitWeigh')}
+                    weighLabel={t('cashier.weigh')}
+                    onWeigh={(item) => setWeighTarget({ orderId: o._id, item })}
+                  />
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 'auto' }} onClick={(e) => e.stopPropagation()}>
                     {o.type === 'delivery' ? (
                       !isOrderKitchenFullyPrinted(o) ? (
@@ -2731,6 +2799,22 @@ export default function UnifiedOrderCenter() {
                   <span>{L.total}</span>
                   <span style={{ color: 'var(--red-primary)' }}>€{checkoutModalPayableEuro.toFixed(2)}</span>
                 </div>
+                {checkoutModalOrder?.items.filter(isUnweighedMarketLine).map((it) => (
+                  <div key={it._id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 13, marginBottom: 8, padding: '8px 10px', background: '#FFF8E1', borderRadius: 8 }}>
+                    <span>{it.itemName} · {t('customer.marketPriceAwaitWeigh')}</span>
+                    <button type="button" className="btn btn-outline" style={{ fontSize: 11, padding: '2px 8px' }} onClick={() => setWeighTarget({ orderId: checkoutModalOrder._id, item: it })}>
+                      {t('cashier.weigh')}
+                    </button>
+                  </div>
+                ))}
+                {checkoutModalTable?.orders.flatMap((o) => o.items.filter(isUnweighedMarketLine).map((it) => ({ o, it }))).map(({ o, it }) => (
+                  <div key={`${o._id}:${it._id}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 13, marginBottom: 8, padding: '8px 10px', background: '#FFF8E1', borderRadius: 8 }}>
+                    <span>{it.itemName} · {t('customer.marketPriceAwaitWeigh')}</span>
+                    <button type="button" className="btn btn-outline" style={{ fontSize: 11, padding: '2px 8px' }} onClick={() => setWeighTarget({ orderId: o._id, item: it })}>
+                      {t('cashier.weigh')}
+                    </button>
+                  </div>
+                ))}
               </>
             )}
             {checkoutModalTable && dineInPayAfter && tableCheckoutStep === 'lines' ? (
@@ -2775,9 +2859,29 @@ export default function UnifiedOrderCenter() {
                             }}
                           />
                           <span style={{ flex: 1, minWidth: 0 }}>
-                            {cashierOrderItemDisplayName(it, isEn)}
-                            <span style={{ color: '#888' }}> · max {maxQ}</span>
+                            {it.isMarketPrice
+                              ? formatMarketLineTitle(cashierOrderItemDisplayName(it, isEn), it.weightKg, it.pricePerKg)
+                              : cashierOrderItemDisplayName(it, isEn)}
+                            {it.isMarketPrice && isUnweighedMarketLine(it) ? (
+                              <em style={{ color: '#E65100' }}> · {t('customer.marketPriceAwaitWeigh')}</em>
+                            ) : (
+                              <span style={{ color: '#888' }}> · max {maxQ}</span>
+                            )}
                           </span>
+                          {it.isMarketPrice ? (
+                            <button
+                              type="button"
+                              className="btn btn-outline"
+                              style={{ fontSize: 11, padding: '1px 8px' }}
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setWeighTarget({ orderId: o._id, item: it });
+                              }}
+                            >
+                              {t('cashier.weigh')}
+                            </button>
+                          ) : null}
                         </label>
                       );
                     })}
@@ -2955,7 +3059,8 @@ export default function UnifiedOrderCenter() {
                     disabled={
                       busyId === (checkoutModalOrder?._id || `table-${checkoutModalTable?.tableNumber ?? '-'}`) ||
                       checkoutVoucherAwaitingValidate ||
-                      (checkoutMethod === 'member' && !canMemberFullWalletPay(memberPreview, checkoutModalPayableEuro))
+                      (checkoutMethod === 'member' && !canMemberFullWalletPay(memberPreview, checkoutModalPayableEuro)) ||
+                      !!(checkoutModalOrder?.items.some(isUnweighedMarketLine) || checkoutModalTable?.orders.some((o) => o.items.some(isUnweighedMarketLine)))
                     }
                     onClick={() => void submitCheckoutModal()}
                   >
@@ -3102,13 +3207,25 @@ export default function UnifiedOrderCenter() {
                 >
                   <div style={{ flex: 1, minWidth: 0, color: '#333' }}>
                     <div style={{ fontWeight: 600 }}>
-                      {cashierOrderItemDisplayName(item, isEn)} ×{item.quantity}
+                      {item.isMarketPrice
+                        ? formatMarketLineTitle(cashierOrderItemDisplayName(item, isEn), item.weightKg, item.pricePerKg)
+                        : `${cashierOrderItemDisplayName(item, isEn)} ×${item.quantity}`}
+                      {item.isMarketPrice && isUnweighedMarketLine(item) ? (
+                        <em style={{ marginLeft: 6, color: '#E65100', fontWeight: 600 }}>{t('customer.marketPriceAwaitWeigh')}</em>
+                      ) : null}
                     </div>
                     <OrderItemOptionGroupList options={item.selectedOptions} isEn={isEn} compact />
                   </div>
-                  <span style={{ fontWeight: 600, flexShrink: 0 }}>
-                    €{((item.unitPrice + (item.selectedOptions || []).reduce((s, o) => s + (o.extraPrice || 0), 0)) * item.quantity).toFixed(2)}
-                  </span>
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, flexShrink: 0 }}>
+                    {item.isMarketPrice && !item.refunded ? (
+                      <button type="button" className="btn btn-outline" style={{ fontSize: 11, padding: '1px 8px' }} onClick={() => setWeighTarget({ orderId: detailModalOrder._id, item })}>
+                        {t('cashier.weigh')}
+                      </button>
+                    ) : null}
+                    <span style={{ fontWeight: 600 }}>
+                      €{((item.unitPrice + (item.selectedOptions || []).reduce((s, o) => s + (o.extraPrice || 0), 0)) * item.quantity).toFixed(2)}
+                    </span>
+                  </div>
                 </div>
               ))}
             </div>
@@ -3249,6 +3366,36 @@ export default function UnifiedOrderCenter() {
           </div>
         </div>
       ) : null}
+      <WeighMarketDialog
+        open={!!weighTarget}
+        title={weighTarget?.item.itemName || t('cashier.weigh')}
+        menuItemId={weighTarget?.item.menuItemId}
+        initialKg={weighTarget?.item.weightKg}
+        initialPricePerKg={weighTarget?.item.pricePerKg}
+        onClose={() => setWeighTarget(null)}
+        onSave={async (kg, rate) => {
+          if (!weighTarget) return;
+          const res = await apiFetch(`/api/orders/${weighTarget.orderId}/weigh-line`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ lineId: weighTarget.item._id, weightKg: kg, pricePerKg: rate }),
+          });
+          if (!res.ok) {
+            const d = await res.json().catch(() => null) as { error?: { message?: string } } | null;
+            alert(d?.error?.message || t('common.error'));
+            return;
+          }
+          const updated = (await res.json()) as OrderRow;
+          setWeighTarget(null);
+          setCheckoutModalOrder((prev) => (prev && prev._id === updated._id ? { ...prev, ...updated } : prev));
+          setDetailModalOrder((prev) => (prev && prev._id === updated._id ? { ...prev, ...updated } : prev));
+          setCheckoutModalTable((prev) => {
+            if (!prev) return prev;
+            return { ...prev, orders: prev.orders.map((o) => (o._id === updated._id ? { ...o, ...updated } : o)) };
+          });
+          await fetchAll();
+        }}
+      />
     </div>
   );
 }

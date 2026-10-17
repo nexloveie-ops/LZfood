@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { connectStoreSocket } from '../../api/storeSocket';
 import { useAuth } from '../../context/AuthContext';
-import OrderDetail, { type Order } from '../../components/cashier/OrderDetail';
+import OrderDetail, { type Order, type OrderItem } from '../../components/cashier/OrderDetail';
+import WeighMarketDialog from '../../components/cashier/WeighMarketDialog';
 import { printBuiltReceipt } from '../../components/cashier/ReceiptPrint';
 import { apiFetch } from '../../api/client';
 import { computeCustomerFacingPayableEuro } from '../../utils/orderPayableEuro';
@@ -23,6 +24,7 @@ export default function DineInOrderBoard() {
   const [rawOrders, setRawOrders] = useState<Order[]>([]);
   const [selectedTable, setSelectedTable] = useState<number | null>(null);
   const [printing, setPrinting] = useState(false);
+  const [weighTarget, setWeighTarget] = useState<{ orderId: string; item: OrderItem } | null>(null);
   const [config, setConfig] = useState<Record<string, string>>({});
 
   useEffect(() => {
@@ -211,7 +213,7 @@ export default function DineInOrderBoard() {
                 </div>
               ) : null
             ))}
-            <OrderDetail orders={selected.orders} />
+            <OrderDetail orders={selected.orders} onWeigh={(orderId, item) => setWeighTarget({ orderId, item })} />
             {/* Cancel buttons only for pending orders */}
             <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
               {selected.orders.filter(o => o.status === 'pending').map(o => (
@@ -229,6 +231,29 @@ export default function DineInOrderBoard() {
           </div>
         </div>
       )}
+      <WeighMarketDialog
+        open={!!weighTarget}
+        title={weighTarget?.item.itemName || t('cashier.weigh')}
+        menuItemId={weighTarget?.item.menuItemId}
+        initialKg={weighTarget?.item.weightKg}
+        initialPricePerKg={weighTarget?.item.pricePerKg}
+        onClose={() => setWeighTarget(null)}
+        onSave={async (kg, rate) => {
+          if (!weighTarget) return;
+          const res = await apiFetch(`/api/orders/${weighTarget.orderId}/weigh-line`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ lineId: weighTarget.item._id, weightKg: kg, pricePerKg: rate }),
+          });
+          if (!res.ok) {
+            const d = await res.json().catch(() => null) as { error?: { message?: string } } | null;
+            alert(d?.error?.message || t('common.error'));
+            return;
+          }
+          setWeighTarget(null);
+          await fetchOrders();
+        }}
+      />
     </div>
   );
 }

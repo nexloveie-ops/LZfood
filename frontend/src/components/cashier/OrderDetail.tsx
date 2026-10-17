@@ -12,6 +12,9 @@ export interface OrderItem {
   lineKind?: string;
   refunded?: boolean;
   settledQty?: number;
+  isMarketPrice?: boolean;
+  weightKg?: number;
+  pricePerKg?: number;
   selectedOptions?: {
     groupName: string;
     groupNameEn?: string;
@@ -34,9 +37,10 @@ export interface Order {
 
 interface OrderDetailProps {
   orders: Order[];
+  onWeigh?: (orderId: string, item: OrderItem) => void;
 }
 
-export default function OrderDetail({ orders }: OrderDetailProps) {
+export default function OrderDetail({ orders, onWeigh }: OrderDetailProps) {
   const { t, i18n } = useTranslation();
   const isEn = (i18n.language || '').toLowerCase().startsWith('en');
 
@@ -67,8 +71,20 @@ export default function OrderDetail({ orders }: OrderDetailProps) {
                     <div style={{
                       display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 13,
                     }}>
-                      <span style={{ fontWeight: 500 }}>{cashierOrderItemDisplayName(item, isEn)}</span>
+                      <span style={{ fontWeight: 500 }}>
+                        {item.isMarketPrice && Number(item.weightKg) > 0 && Number(item.pricePerKg) > 0
+                          ? `${cashierOrderItemDisplayName(item, isEn)} ${Number(item.weightKg).toFixed(2)}kg × €${Number(item.pricePerKg).toFixed(2)}/kg`
+                          : cashierOrderItemDisplayName(item, isEn)}
+                        {item.isMarketPrice && !(Number(item.weightKg) > 0) ? (
+                          <em style={{ marginLeft: 6, color: '#E65100', fontSize: 12 }}>{isEn ? 'await weigh' : '待称重'}</em>
+                        ) : null}
+                      </span>
                       <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+                        {item.isMarketPrice && onWeigh ? (
+                          <button type="button" className="btn btn-outline" style={{ fontSize: 11, padding: '1px 8px' }} onClick={() => onWeigh(order._id, item)}>
+                            {t('cashier.weigh')}
+                          </button>
+                        ) : null}
                         <span style={{ color: 'var(--text-light)' }}>×{item.quantity}</span>
                         <span style={{ fontWeight: 600, color: 'var(--red-primary)', minWidth: 50, textAlign: 'right' }}>
                           €{((item.unitPrice + (item.selectedOptions || []).reduce((s, o) => s + (o.extraPrice || 0), 0)) * item.quantity).toFixed(2)}

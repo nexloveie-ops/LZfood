@@ -287,6 +287,7 @@ export default function CheckoutFlow() {
           body.paymentMethod = 'cash';
         }
       }
+      body.skipCloudPrint = true;
 
       const meta = { total: displayTotal, cashReceived: cashReceivedNum, change: changeAmount };
 

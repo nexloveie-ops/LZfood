@@ -14,6 +14,7 @@ export type QrOrderEditLike = {
     refunded?: boolean;
     quantity: number;
     kitchenPrintedQty?: number;
+    placedBy?: 'staff' | 'customer_qr';
   }>;
 };
 
@@ -28,7 +29,7 @@ export function orderKitchenSubmitted(order: QrOrderEditLike): boolean {
 export function orderUnpaidForQrEdit(order: QrOrderEditLike): boolean {
   const st = String(order.status || '');
   if (st !== 'pending') return false;
-  if (String(order.stripePaymentIntentId || '').trim()) return false;
+  /** Stripe PI 可能只是收银台 Terminal 预建单，成功付清会改 status/paymentStatus；不能单凭 PI 判定已付。 */
   if (order.phoneCardPaidAtPlacement) return false;
   if (order.placementPrepaidMethod) return false;
   if ((Number(order.memberCreditUsed) || 0) > 0.001) return false;
@@ -38,7 +39,12 @@ export function orderUnpaidForQrEdit(order: QrOrderEditLike): boolean {
 }
 
 export function isCustomerQrOrderForEdit(order: QrOrderEditLike): boolean {
-  if (order.type === 'dine_in') return true;
+  if (order.type === 'dine_in') {
+    const food = (order.items || []).filter((it) => it.lineKind !== 'delivery_fee' && !it.refunded);
+    if (food.some((it) => it.placedBy === 'customer_qr')) return true;
+    if (food.some((it) => it.placedBy === 'staff')) return false;
+    return true;
+  }
   if (order.type === 'takeout' && order.takeoutPlacementSource !== 'cashier') return true;
   return false;
 }
