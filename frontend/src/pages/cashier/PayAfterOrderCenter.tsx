@@ -691,23 +691,20 @@ export default function PayAfterOrderCenter() {
                 </button>
               </div>
             </div>
-            {selected.orders.map((o) => {
-              const cols = buildTableDishColumns([o]);
-              const bands: TableDishColumn[][] = [];
-              for (let i = 0; i < cols.length; i += 5) bands.push(cols.slice(i, i + 5));
-              const addOnlyIds = unprintedFoodLineIds(o.items);
-              const printIds = hasGuestQrAdd(o) || addOnlyIds.length < foodLineIds(o.items).length
-                ? addOnlyIds
-                : foodLineIds(o.items);
-              const printAppend = hasGuestQrAdd(o) || addOnlyIds.length < foodLineIds(o.items).length;
-              return (
-                <div key={o._id} className="pay-after-cover-block">
-                  <div className="pay-after-cover-toolbar">
+            <div className="pay-after-cover-block">
+              {selected.orders.map((o) => {
+                const addOnlyIds = unprintedFoodLineIds(o.items);
+                const printIds = hasGuestQrAdd(o) || addOnlyIds.length < foodLineIds(o.items).length
+                  ? addOnlyIds
+                  : foodLineIds(o.items);
+                const printAppend = hasGuestQrAdd(o) || addOnlyIds.length < foodLineIds(o.items).length;
+                return (
+                  <div key={o._id} className="pay-after-cover-toolbar">
                     <div className="pay-after-cover-head">
                       {hasGuestIdentity(o) ? <strong>{guestTitle(o, isEn)}</strong> : null}
-                      {hasGuestQrAdd(o) ? <span className="pay-after-badge guest">{isEn ? 'Guest add' : '客人加菜'}</span> : null}
                       {kitchenUnprintedQty(o) > 0 ? <span className="pay-after-badge warn">{isEn ? 'Awaiting kitchen' : '待出厨房'}</span> : null}
                       <span className="pay-after-cover-amt">€{dineInPayable(o).toFixed(2)}</span>
+                      {hasGuestQrAdd(o) ? <span className="pay-after-badge guest">{isEn ? 'Guest add' : '客人加菜'}</span> : null}
                     </div>
                     <div className="pay-after-cover-actions">
                       <button
@@ -745,42 +742,48 @@ export default function PayAfterOrderCenter() {
                       </button>
                     </div>
                   </div>
-                  {bands.map((band) => (
-                    <div
-                      key={band.map((c) => c.key).join('|')}
-                      className="pay-after-dish-grid is-columns"
-                      style={{ ['--pay-after-cols' as string]: Math.min(5, Math.max(1, band.length)) }}
-                    >
-                      {band.map((col, colIdx) => {
-                        const newRound = colIdx > 0 && col.round !== band[colIdx - 1].round;
-                        const pad = Math.max(0, DISHES_PER_COL - col.items.length);
-                        return (
-                          <div
-                            key={col.key}
-                            className={`pay-after-round-col${newRound ? ' is-new-round' : ''}`}
-                          >
-                            {col.items.map((it, lineIdx) => (
-                              <PayAfterDishCard
-                                key={it._id}
-                                it={it}
-                                lineIdx={col.startIdx + lineIdx}
-                                isEn={isEn}
-                                weighLabel={t('cashier.weigh')}
-                                onWeigh={() => setWeighTarget({ orderId: o._id, item: it })}
-                                onVoid={() => void voidLine(o, it._id)}
-                              />
-                            ))}
-                            {Array.from({ length: pad }, (_, i) => (
-                              <div key={`${col.key}-pad-${i}`} className="pay-after-dish-pad" aria-hidden />
-                            ))}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ))}
-                </div>
-              );
-            })}
+                );
+              })}
+              {(() => {
+                const cols = buildTableDishColumns(selected.orders);
+                const bands: TableDishColumn[][] = [];
+                for (let i = 0; i < cols.length; i += 5) bands.push(cols.slice(i, i + 5));
+                return bands.map((band, bandIdx) => (
+                  <div
+                    key={band.map((c) => c.key).join('|')}
+                    className="pay-after-dish-grid is-columns"
+                    style={{ ['--pay-after-cols' as string]: Math.min(5, Math.max(1, band.length)) }}
+                  >
+                    {band.map((col, colIdx) => {
+                      const prev = colIdx > 0 ? band[colIdx - 1] : (bandIdx > 0 ? bands[bandIdx - 1][bands[bandIdx - 1].length - 1] : undefined);
+                      const newRound = !!prev && (prev.order._id !== col.order._id || prev.round !== col.round);
+                      const pad = Math.max(0, DISHES_PER_COL - col.items.length);
+                      return (
+                        <div
+                          key={col.key}
+                          className={`pay-after-round-col${newRound ? ' is-new-round' : ''}`}
+                        >
+                          {col.items.map((it, lineIdx) => (
+                            <PayAfterDishCard
+                              key={it._id}
+                              it={it}
+                              lineIdx={col.startIdx + lineIdx}
+                              isEn={isEn}
+                              weighLabel={t('cashier.weigh')}
+                              onWeigh={() => setWeighTarget({ orderId: col.order._id, item: it })}
+                              onVoid={() => void voidLine(col.order, it._id)}
+                            />
+                          ))}
+                          {Array.from({ length: pad }, (_, i) => (
+                            <div key={`${col.key}-pad-${i}`} className="pay-after-dish-pad" aria-hidden />
+                          ))}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ));
+              })()}
+            </div>
           </div>
         ) : (
           <div className="pay-after-table-detail">
