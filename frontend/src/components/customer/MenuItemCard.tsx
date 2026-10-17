@@ -95,6 +95,21 @@ export default function MenuItemCard({
     setShowOptions(false);
   };
 
+  const waitMeta = avgWaitMinutes != null ? (
+    <span>⏱ {avgWaitMinutes} {t('customer.waitTime')}</span>
+  ) : null;
+  const calorieMeta = calories != null ? (
+    <span>🔥 {calories} {t('customer.calories')}</span>
+  ) : null;
+  const allergenMeta = allergenIcons && allergenIcons.length > 0 ? (
+    <span className="menu-item-card__allergens">
+      {allergenIcons.map((icon, i) => <span key={i}>{icon}</span>)}
+    </span>
+  ) : null;
+  const bodyFacts = showThumb
+    ? (calorieMeta || allergenMeta ? <>{calorieMeta}{allergenMeta}</> : null)
+    : (waitMeta || calorieMeta || allergenMeta ? <>{waitMeta}{calorieMeta}{allergenMeta}</> : null);
+
   return (
     <>
       <div className={`menu-item-card${quantity && quantity > 0 ? ' menu-item-card--selected' : ''}`} style={{
@@ -120,40 +135,47 @@ export default function MenuItemCard({
         )}
 
         {showThumb ? (
-          <div
-            className="menu-item-card__thumb"
-            onClick={(e) => { e.stopPropagation(); setShowPhoto(true); }}
-            style={{
-              cursor: 'zoom-in',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              filter: unavailable ? 'grayscale(60%)' : 'none',
-            }}
-          >
-            {!photoLoaded ? <span aria-hidden className="menu-item-thumb-shimmer" /> : null}
-            <img
-              src={photoSrc}
-              alt=""
-              width={100}
-              height={100}
-              loading="lazy"
-              decoding="async"
-              fetchPriority={photoFetchPriority}
-              sizes="100px"
-              onLoad={() => setPhotoLoaded(true)}
-              onError={() => setPhotoFailed(true)}
+          <div className="menu-item-card__media">
+            <div
+              className="menu-item-card__thumb"
+              onClick={(e) => { e.stopPropagation(); setShowPhoto(true); }}
               style={{
-                position: 'absolute',
-                inset: 0,
-                width: '100%',
-                height: '100%',
-                objectFit: 'cover',
-                objectPosition: 'center',
-                opacity: photoLoaded ? 1 : 0,
-                transition: 'opacity 0.2s ease-out',
+                cursor: 'zoom-in',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                filter: unavailable ? 'grayscale(60%)' : 'none',
               }}
-            />
+            >
+              {!photoLoaded ? <span aria-hidden className="menu-item-thumb-shimmer" /> : null}
+              <img
+                src={photoSrc}
+                alt=""
+                width={100}
+                height={100}
+                loading="lazy"
+                decoding="async"
+                fetchPriority={photoFetchPriority}
+                sizes="100px"
+                onLoad={() => setPhotoLoaded(true)}
+                onError={() => setPhotoFailed(true)}
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'cover',
+                  objectPosition: 'center',
+                  opacity: photoLoaded ? 1 : 0,
+                  transition: 'opacity 0.2s ease-out',
+                }}
+              />
+            </div>
+            {waitMeta ? (
+              <div className="menu-item-card__media-meta">
+                {waitMeta}
+              </div>
+            ) : null}
           </div>
         ) : null}
 
@@ -196,16 +218,11 @@ export default function MenuItemCard({
             </div>
           )}
 
-          <div style={{ display: 'flex', gap: 10, fontSize: 11, color: 'var(--text-light)', marginBottom: 8 }}>
-            {calories != null && <span>🔥 {calories} {t('customer.calories')}</span>}
-            {avgWaitMinutes != null && <span>⏱ {avgWaitMinutes} {t('customer.waitTime')}</span>}
-          </div>
-
-          {allergenIcons && allergenIcons.length > 0 && (
-            <div style={{ display: 'flex', gap: 3, fontSize: 14, marginBottom: 6, opacity: 0.7 }}>
-              {allergenIcons.map((icon, i) => <span key={i}>{icon}</span>)}
+          {bodyFacts ? (
+            <div className="menu-item-card__facts">
+              {bodyFacts}
             </div>
-          )}
+          ) : null}
 
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 'auto' }}>
             <div className="menu-item-card__price">

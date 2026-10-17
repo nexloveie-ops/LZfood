@@ -705,6 +705,15 @@
   background: transparent;
 }
 
+.customer-order-app .menu-item-card__media {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  flex-shrink: 0;
+  width: 88px;
+}
+
 .customer-order-app .menu-item-card__thumb {
   width: 88px;
   height: 88px;
@@ -713,6 +722,35 @@
   position: relative;
   overflow: hidden;
   background: #f1f5f9;
+}
+
+.customer-order-app .menu-item-card__media-meta {
+  display: flex;
+  justify-content: center;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--co-muted, #64748b);
+  word-break: break-word;
+}
+
+.customer-order-app .menu-item-card__facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-light, #64748b);
+  margin-bottom: 8px;
+}
+
+.customer-order-app .menu-item-card__allergens {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 14px;
+  opacity: 0.7;
 }
 
 .customer-order-app .menu-item-card__name {
