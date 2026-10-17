@@ -4,6 +4,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useStoreSlug } from '../../context/StoreContext';
 import QRCode from 'qrcode';
 import { apiFetch } from '../../api/client';
+import { encodeQRParams } from '../../utils/qrCode';
 
 interface QRItem { label: string; url: string; dataUrl: string; }
 
@@ -25,7 +26,10 @@ export default function QRCodeManager() {
   useEffect(() => {
     apiFetch('/api/admin/config').then(r => r.ok ? r.json() : {}).then((cfg: Record<string, string>) => {
       if (cfg.qr_tables) setTables(parseInt(cfg.qr_tables, 10) || 5);
-      if (cfg.qr_seats_per_table) setSeatsPerTable(parseInt(cfg.qr_seats_per_table, 10) || 4);
+      if (cfg.qr_seats_per_table != null && cfg.qr_seats_per_table !== '') {
+        const seats = parseInt(cfg.qr_seats_per_table, 10);
+        if (Number.isFinite(seats) && seats >= 0) setSeatsPerTable(seats);
+      }
       setConfigLoaded(true);
     }).catch(() => setConfigLoaded(true));
   }, []);
@@ -35,8 +39,14 @@ export default function QRCodeManager() {
     const items: QRItem[] = [];
 
     for (let table = 1; table <= tables; table++) {
+      if (seatsPerTable < 1) {
+        const url = `${baseUrl}/${storeSlug}/customer?${encodeQRParams(table)}`;
+        const dataUrl = await QRCode.toDataURL(url, { width: 200, margin: 1 });
+        items.push({ label: `Table ${table}`, url, dataUrl });
+        continue;
+      }
       for (let seat = 1; seat <= seatsPerTable; seat++) {
-        const url = `${baseUrl}/${storeSlug}/customer?table=${table}&seat=${seat}`;
+        const url = `${baseUrl}/${storeSlug}/customer?${encodeQRParams(table, seat)}`;
         const dataUrl = await QRCode.toDataURL(url, { width: 200, margin: 1 });
         items.push({ label: `Table ${table} · Seat ${seat}`, url, dataUrl });
       }
@@ -120,7 +130,7 @@ export default function QRCodeManager() {
         </div>
         <div>
           <label style={{ fontSize: 12, color: 'var(--text-light)', display: 'block', marginBottom: 4 }}>每桌座位数</label>
-          <input className="input" type="number" min={1} value={seatsPerTable} onChange={e => setSeatsPerTable(Number(e.target.value))} style={{ width: 100 }} />
+          <input className="input" type="number" min={0} value={seatsPerTable} onChange={e => setSeatsPerTable(Math.max(0, Number(e.target.value) || 0))} style={{ width: 100 }} />
         </div>
         <button className="btn btn-gold" onClick={generate} disabled={generating}>
           {generating ? t('common.loading') : '生成 QR 码'}

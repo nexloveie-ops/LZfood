@@ -17,9 +17,11 @@ import {
   dineInPayable,
   guestTitle,
   groupItemsByRound,
+  hasGuestIdentity,
   hasGuestQrAdd,
   isOpenDineIn,
   kitchenUnprintedQty,
+  unprintedFoodLineIds,
   type PayAfterOrder,
   type PayAfterOrderItem,
 } from '../../utils/payAfterBoard';
@@ -144,7 +146,6 @@ function PayAfterDishCard({
   return (
     <div className={`pay-after-line pay-after-dish${it.refunded ? ' is-void' : ''}`}>
       <div className="pay-after-line-main">
-        <span className="pay-after-line-seq">{lineIdx + 1}</span>
         <span className="pay-after-line-name">
           {it.isMarketPrice ? formatMarketLineTitle(it.itemName, it.weightKg, it.pricePerKg) : `${it.quantity}× ${it.itemName}`}
           {it.isMarketPrice && isUnweighedMarketLine(it) ? <em className="is-warn"> · {isEn ? 'await weigh' : '待称重'}</em> : null}
@@ -154,18 +155,21 @@ function PayAfterDishCard({
         </span>
         <span className="pay-after-line-price">€{lineTotal(it).toFixed(2)}</span>
       </div>
-      {!it.refunded ? (
-        <div className="pay-after-line-actions">
-          {it.isMarketPrice ? (
-            <button type="button" className="btn btn-outline" onClick={onWeigh}>
-              {weighLabel}
+      <div className="pay-after-dish-foot">
+        {!it.refunded ? (
+          <div className="pay-after-line-actions">
+            {it.isMarketPrice ? (
+              <button type="button" className="btn btn-outline" onClick={onWeigh}>
+                {weighLabel}
+              </button>
+            ) : null}
+            <button type="button" className="btn btn-outline pay-after-btn-danger" onClick={onVoid}>
+              {isEn ? 'Void' : '退菜'}
             </button>
-          ) : null}
-          <button type="button" className="btn btn-outline pay-after-btn-danger" onClick={onVoid}>
-            {isEn ? 'Void' : '退菜'}
-          </button>
-        </div>
-      ) : null}
+          </div>
+        ) : null}
+        <span className="pay-after-line-seq">{lineIdx + 1}</span>
+      </div>
     </div>
   );
 }
@@ -275,10 +279,11 @@ export default function PayAfterOrderCenter() {
     const increments: { lineId: string; qty: number }[] = [];
     for (const item of order.items) {
       if (!idSet.has(item._id) || item.lineKind === 'delivery_fee' || item.refunded) continue;
-      receiptItems.push(mapItem(item, item.quantity));
       const printed = Math.max(0, Math.min(Number(item.kitchenPrintedQty) || 0, item.quantity));
       const unprinted = item.quantity - printed;
-      if (unprinted > 0) increments.push({ lineId: item._id, qty: unprinted });
+      if (unprinted <= 0) continue;
+      receiptItems.push(mapItem(item, unprinted));
+      increments.push({ lineId: item._id, qty: unprinted });
     }
     if (receiptItems.length === 0) {
       alert(isEn ? 'No kitchen items to print.' : '没有可打印的菜品。');
@@ -386,7 +391,7 @@ export default function PayAfterOrderCenter() {
     }
   }, [fetchAll, isEn, printKitchenTableLocal, t]);
 
-  const printKitchenCloud = useCallback(async (order: PayAfterOrder, lineIds: string[], roundIndex?: number) => {
+  const printKitchenCloud = useCallback(async (order: PayAfterOrder, lineIds: string[], roundIndex?: number, append?: boolean) => {
     if (lineIds.length === 0) {
       alert(isEn ? 'No kitchen items to print.' : '没有可打印的菜品。');
       return;
@@ -394,7 +399,11 @@ export default function PayAfterOrderCenter() {
     const res = await apiFetch(`/api/orders/${order._id}/kitchen-cloud-print`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify(roundIndex != null ? { roundIndex } : { lineIds }),
+      body: JSON.stringify({
+        lineIds,
+        ...(roundIndex != null ? { roundIndex } : {}),
+        ...(append ? { append: true } : {}),
+      }),
     });
     const d = await res.json().catch(() => null) as { kitchenPrint?: string; error?: { message?: string } } | null;
     if (res.ok && d?.kitchenPrint === 'cloud') return;
@@ -404,7 +413,7 @@ export default function PayAfterOrderCenter() {
     await printKitchenLocal(order, lineIds);
   }, [isEn, printKitchenLocal, token]);
 
-  const runKitchenPrint = useCallback(async (busyKey: string, jobs: Array<{ order: PayAfterOrder; lineIds: string[]; roundIndex?: number }>) => {
+  const runKitchenPrint = useCallback(async (busyKey: string, jobs: Array<{ order: PayAfterOrder; lineIds: string[]; roundIndex?: number; append?: boolean }>) => {
     if (jobs.length === 0) {
       alert(isEn ? 'No kitchen items to print.' : '没有可打印的菜品。');
       return;
@@ -412,7 +421,7 @@ export default function PayAfterOrderCenter() {
     setBusyId(busyKey);
     try {
       for (const job of jobs) {
-        await printKitchenCloud(job.order, job.lineIds, job.roundIndex);
+        await printKitchenCloud(job.order, job.lineIds, job.roundIndex, job.append);
       }
       await fetchAll();
     } catch (e) {
@@ -682,73 +691,96 @@ export default function PayAfterOrderCenter() {
                 </button>
               </div>
             </div>
-            <div className="pay-after-dish-grid is-columns">
-              {buildTableDishColumns(selected.orders).map((col) => {
-                const o = col.order;
-                return (
-                  <div key={col.key} className="pay-after-round-col">
-                    {col.showCoverHead ? (
-                      <>
-                        <div className="pay-after-cover-head">
-                          <strong>{guestTitle(o, isEn, col.coverIdx + 1)}</strong>
-                          {hasGuestQrAdd(o) ? <span className="pay-after-badge guest">{isEn ? 'Guest add' : '客人加菜'}</span> : null}
-                          {kitchenUnprintedQty(o) > 0 ? <span className="pay-after-badge warn">{isEn ? 'Awaiting kitchen' : '待出厨房'}</span> : null}
-                          <span className="pay-after-cover-amt">€{dineInPayable(o).toFixed(2)}</span>
-                        </div>
-                        <div className="pay-after-cover-actions">
-                          <button
-                            type="button"
-                            className="btn btn-outline"
-                            disabled={busyId != null || foodLineIds(o.items).length === 0}
-                            onClick={() => void runKitchenPrint(o._id, [{ order: o, lineIds: foodLineIds(o.items) }])}
-                          >
-                            {isEn ? 'Print order' : '打印整单'}
-                          </button>
-                          <button type="button" className="btn btn-outline pay-after-btn-quiet" disabled={busyId === o._id} onClick={() => void cancelOrder(o)}>
-                            {isEn ? 'Cancel order' : '整单取消'}
-                          </button>
-                          <button
-                            type="button"
-                            className="btn btn-primary"
-                            disabled={busyId != null || dineInPayable(o) <= 0.02 || o.items.some(isUnweighedMarketLine)}
-                            onClick={() => {
-                              if (o.items.some(isUnweighedMarketLine)) {
-                                alert(t('cashier.unweighedCannotCheckout'));
-                                return;
-                              }
-                              if (waiterMode) {
-                                alert(isEn ? 'Take payment on the cashier POS.' : '请在收银台结账。');
-                                return;
-                              }
-                              setPayMethod('cash');
-                              setCashReceived('');
-                              setMemberPhone('');
-                              setMemberPreview(null);
-                              setCheckoutTarget({ kind: 'order', tableNumber: selected.tableNumber, orderId: o._id });
-                            }}
-                          >
-                            {isEn ? 'Checkout round' : '结账'}
-                          </button>
-                        </div>
-                      </>
-                    ) : null}
-                    <div className="pay-after-round-col-items">
-                      {col.items.map((it, lineIdx) => (
-                        <PayAfterDishCard
-                          key={it._id}
-                          it={it}
-                          lineIdx={col.startIdx + lineIdx}
-                          isEn={isEn}
-                          weighLabel={t('cashier.weigh')}
-                          onWeigh={() => setWeighTarget({ orderId: o._id, item: it })}
-                          onVoid={() => void voidLine(o, it._id)}
-                        />
-                      ))}
+            {selected.orders.map((o) => {
+              const cols = buildTableDishColumns([o]);
+              const bands: TableDishColumn[][] = [];
+              for (let i = 0; i < cols.length; i += 5) bands.push(cols.slice(i, i + 5));
+              const addOnlyIds = unprintedFoodLineIds(o.items);
+              const printIds = hasGuestQrAdd(o) || addOnlyIds.length < foodLineIds(o.items).length
+                ? addOnlyIds
+                : foodLineIds(o.items);
+              const printAppend = hasGuestQrAdd(o) || addOnlyIds.length < foodLineIds(o.items).length;
+              return (
+                <div key={o._id} className="pay-after-cover-block">
+                  <div className="pay-after-cover-toolbar">
+                    <div className="pay-after-cover-head">
+                      {hasGuestIdentity(o) ? <strong>{guestTitle(o, isEn)}</strong> : null}
+                      {hasGuestQrAdd(o) ? <span className="pay-after-badge guest">{isEn ? 'Guest add' : '客人加菜'}</span> : null}
+                      {kitchenUnprintedQty(o) > 0 ? <span className="pay-after-badge warn">{isEn ? 'Awaiting kitchen' : '待出厨房'}</span> : null}
+                      <span className="pay-after-cover-amt">€{dineInPayable(o).toFixed(2)}</span>
+                    </div>
+                    <div className="pay-after-cover-actions">
+                      <button
+                        type="button"
+                        className="btn btn-outline"
+                        disabled={busyId != null || printIds.length === 0}
+                        onClick={() => void runKitchenPrint(o._id, [{ order: o, lineIds: printIds, append: printAppend }])}
+                      >
+                        {isEn ? 'Print order' : '打印整单'}
+                      </button>
+                      <button type="button" className="btn btn-outline pay-after-btn-quiet" disabled={busyId === o._id} onClick={() => void cancelOrder(o)}>
+                        {isEn ? 'Cancel order' : '整单取消'}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-primary"
+                        disabled={busyId != null || dineInPayable(o) <= 0.02 || o.items.some(isUnweighedMarketLine)}
+                        onClick={() => {
+                          if (o.items.some(isUnweighedMarketLine)) {
+                            alert(t('cashier.unweighedCannotCheckout'));
+                            return;
+                          }
+                          if (waiterMode) {
+                            alert(isEn ? 'Take payment on the cashier POS.' : '请在收银台结账。');
+                            return;
+                          }
+                          setPayMethod('cash');
+                          setCashReceived('');
+                          setMemberPhone('');
+                          setMemberPreview(null);
+                          setCheckoutTarget({ kind: 'order', tableNumber: selected.tableNumber, orderId: o._id });
+                        }}
+                      >
+                        {isEn ? 'Checkout round' : '结账'}
+                      </button>
                     </div>
                   </div>
-                );
-              })}
-            </div>
+                  {bands.map((band) => (
+                    <div
+                      key={band.map((c) => c.key).join('|')}
+                      className="pay-after-dish-grid is-columns"
+                      style={{ ['--pay-after-cols' as string]: Math.min(5, Math.max(1, band.length)) }}
+                    >
+                      {band.map((col, colIdx) => {
+                        const newRound = colIdx > 0 && col.round !== band[colIdx - 1].round;
+                        const pad = Math.max(0, DISHES_PER_COL - col.items.length);
+                        return (
+                          <div
+                            key={col.key}
+                            className={`pay-after-round-col${newRound ? ' is-new-round' : ''}`}
+                          >
+                            {col.items.map((it, lineIdx) => (
+                              <PayAfterDishCard
+                                key={it._id}
+                                it={it}
+                                lineIdx={col.startIdx + lineIdx}
+                                isEn={isEn}
+                                weighLabel={t('cashier.weigh')}
+                                onWeigh={() => setWeighTarget({ orderId: o._id, item: it })}
+                                onVoid={() => void voidLine(o, it._id)}
+                              />
+                            ))}
+                            {Array.from({ length: pad }, (_, i) => (
+                              <div key={`${col.key}-pad-${i}`} className="pay-after-dish-pad" aria-hidden />
+                            ))}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
           </div>
         ) : (
           <div className="pay-after-table-detail">

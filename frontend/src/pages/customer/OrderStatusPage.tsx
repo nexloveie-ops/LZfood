@@ -73,8 +73,17 @@ function dineInKitchenOrSettlementStarted(o: Order): boolean {
   return false;
 }
 
-/** pending 且未付：顾客可自助取消（与 DELETE /api/orders/:id 一致） */
-function customerMaySelfCancelOrder(o: Order): boolean {
+function dineInHasKitchenPrint(o: Order): boolean {
+  if (o.type !== 'dine_in') return false;
+  for (const it of o.items || []) {
+    if (it.lineKind === 'delivery_fee' || it.refunded) continue;
+    if ((Number(it.kitchenPrintedQty) || 0) > 0) return true;
+  }
+  return false;
+}
+
+/** pending 且未付：顾客可自助取消（与 DELETE /api/orders/:id 一致）。跑单出厨后不可取消。 */
+function customerMaySelfCancelOrder(o: Order, dineInWorkflowMode?: string): boolean {
   if (o.status !== 'pending') return false;
   if (o.stripePaymentIntentId) return false;
   if (o.phoneCardPaidAtPlacement) return false;
@@ -82,6 +91,7 @@ function customerMaySelfCancelOrder(o: Order): boolean {
   if ((Number(o.memberCreditUsed) || 0) > 0.001) return false;
   const ps = String(o.paymentStatus || 'unpaid');
   if (ps === 'paid' || ps === 'partial') return false;
+  if (dineInWorkflowMode === 'pay_after' && dineInHasKitchenPrint(o)) return false;
   return true;
 }
 
@@ -246,9 +256,12 @@ export default function OrderStatusPage() {
       const res = await apiFetch(`/api/orders/${orderId}`);
       if (!res.ok) throw new Error();
       setOrder(await res.json());
-    } catch { setOrder(null); }
+    } catch {
+      setOrder(null);
+      clearCart();
+    }
     finally { setLoading(false); }
-  }, [orderId]);
+  }, [orderId, clearCart]);
 
   useEffect(() => { fetchOrder(); }, [fetchOrder]);
 
@@ -290,9 +303,10 @@ export default function OrderStatusPage() {
   const handleModifyOrder = async () => {
     if (!order) return;
     try {
+      const payAfterDineIn = order.type === 'dine_in' && config.dine_in_workflow_mode === 'pay_after';
       if (
+        !payAfterDineIn &&
         order.type === 'dine_in' &&
-        config.dine_in_workflow_mode === 'pay_after' &&
         order.status === 'pending' &&
         !order.dineInStaffLockedAt
       ) {
@@ -323,8 +337,9 @@ export default function OrderStatusPage() {
       const useLockedLineBaselines =
         order.type === 'dine_in' &&
         order.status === 'pending' &&
-        (dineInKitchenOrSettlementStarted(order) ||
-          (config.dine_in_workflow_mode === 'pay_after' && !!order.dineInStaffLockedAt));
+        (payAfterDineIn ||
+          dineInKitchenOrSettlementStarted(order) ||
+          !!order.dineInStaffLockedAt);
 
       const cartItems: CartItem[] = order.items
         .filter(
@@ -411,12 +426,13 @@ export default function OrderStatusPage() {
   }
 
   const isPending = order.status === 'pending';
-  const maySelfCancel = customerMaySelfCancelOrder(order);
+  const maySelfCancel = customerMaySelfCancelOrder(order, config.dine_in_workflow_mode);
   const showDineInPrimaryAsAddDishes =
     order.type === 'dine_in' &&
     isPending &&
-    (dineInKitchenOrSettlementStarted(order) ||
-      (config.dine_in_workflow_mode === 'pay_after' && !!order.dineInStaffLockedAt));
+    (config.dine_in_workflow_mode === 'pay_after' ||
+      dineInKitchenOrSettlementStarted(order) ||
+      !!order.dineInStaffLockedAt);
   const hideBackToMenu =
     order.type === 'takeout' ||
     order.type === 'delivery' ||
@@ -481,6 +497,16 @@ export default function OrderStatusPage() {
           <div style={{ fontWeight: 700, marginBottom: 6, fontSize: 14 }}>✅ {t('customer.orderPlacedSuccessTitle')}</div>
           <p style={{ margin: 0 }}>{orderPlacedHint}</p>
         </div>
+      ) : null}
+
+      {showDineInPrimaryAsAddDishes ? (
+        <button
+          className="btn btn-primary"
+          style={{ width: '100%', marginBottom: 12 }}
+          onClick={handleModifyOrder}
+        >
+          {modifyOrderLabel}
+        </button>
       ) : null}
 
       {showOrderPaidBanner ? (
@@ -650,33 +676,50 @@ export default function OrderStatusPage() {
               </button>
             ) : null}
             {hideBackToMenu ? (
-              <div style={{ display: 'flex', gap: 10 }}>
-                <button
-                  className="btn btn-primary"
-                  style={{ flex: maySelfCancel ? 1 : undefined, width: maySelfCancel ? undefined : '100%' }}
-                  onClick={handleModifyOrder}
-                >
-                  {modifyOrderLabel}
-                </button>
-                {maySelfCancel ? (
+              showDineInPrimaryAsAddDishes ? (
+                maySelfCancel ? (
                   <button
                     onClick={handleCancelOrder}
                     style={{
-                      flex: 1, padding: '10px 0', fontSize: 13, fontWeight: 600,
+                      width: '100%', padding: '10px 0', fontSize: 13, fontWeight: 600,
                       background: 'none', border: '1px dashed #F44336', borderRadius: 10,
                       color: '#F44336', cursor: 'pointer',
                     }}
                   >
                     ✕ {t('customer.cancelOrder')}
                   </button>
-                ) : null}
-              </div>
+                ) : null
+              ) : (
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <button
+                    className="btn btn-primary"
+                    style={{ flex: maySelfCancel ? 1 : undefined, width: maySelfCancel ? undefined : '100%' }}
+                    onClick={handleModifyOrder}
+                  >
+                    {modifyOrderLabel}
+                  </button>
+                  {maySelfCancel ? (
+                    <button
+                      onClick={handleCancelOrder}
+                      style={{
+                        flex: 1, padding: '10px 0', fontSize: 13, fontWeight: 600,
+                        background: 'none', border: '1px dashed #F44336', borderRadius: 10,
+                        color: '#F44336', cursor: 'pointer',
+                      }}
+                    >
+                      ✕ {t('customer.cancelOrder')}
+                    </button>
+                  ) : null}
+                </div>
+              )
             ) : (
               <>
                 <div style={{ display: 'flex', gap: 10 }}>
-                  <button className="btn btn-primary" style={{ flex: 1 }} onClick={handleModifyOrder}>
-                    {modifyOrderLabel}
-                  </button>
+                  {showDineInPrimaryAsAddDishes ? null : (
+                    <button className="btn btn-primary" style={{ flex: 1 }} onClick={handleModifyOrder}>
+                      {modifyOrderLabel}
+                    </button>
+                  )}
                   {maySelfCancel ? (
                     <button
                       onClick={handleCancelOrder}

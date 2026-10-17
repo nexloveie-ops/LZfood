@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { parseQRParams } from '../../utils/qrCode';
+import { encodeQRParams, parseQRParams } from '../../utils/qrCode';
 import { useRestaurantConfig } from '../../hooks/useRestaurantConfig';
 import { useStoreSlug } from '../../context/StoreContext';
 import { useBusinessStatus } from '../../hooks/useBusinessStatus';
@@ -21,7 +21,7 @@ export default function ScanLanding() {
   useEffect(() => {
     if (loading || !isOpen) return;
     if (params.type === 'dine_in') {
-      navigate(`menu?table=${params.tableNumber}&seat=${params.seatNumber}`, { replace: true });
+      navigate(`menu?${encodeQRParams(params.tableNumber, params.seatNumber)}`, { replace: true });
     } else if (params.type === 'takeout') {
       navigate('menu?type=takeout', { replace: true });
     } else if (params.type === 'delivery') {

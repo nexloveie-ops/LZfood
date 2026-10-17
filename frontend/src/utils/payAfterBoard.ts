@@ -55,6 +55,17 @@ export type PayAfterOrder = {
   appliedBundles?: { discount: number; name?: string; nameEn?: string }[];
 };
 
+export function unprintedFoodLineIds(items: PayAfterOrderItem[]): string[] {
+  return (items || [])
+    .filter((it) => {
+      if (it.lineKind === 'delivery_fee' || it.refunded) return false;
+      const q = Number(it.quantity) || 0;
+      const printed = Math.max(0, Math.min(Number(it.kitchenPrintedQty) || 0, q));
+      return q > 0 && printed < q;
+    })
+    .map((it) => it._id);
+}
+
 export function kitchenUnprintedQty(o: PayAfterOrder): number {
   let s = 0;
   for (const it of o.items || []) {

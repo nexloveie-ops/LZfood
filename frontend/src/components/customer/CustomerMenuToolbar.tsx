@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import LanguageSwitcher from '../LanguageSwitcher';
-import { useCart } from '../../context/CartContext';
+import { cartItemOpenQty, isLockedCartBaseline, useCart } from '../../context/CartContext';
 import { useRestaurantConfig } from '../../hooks/useRestaurantConfig';
 import { useStoreSlug } from '../../context/StoreContext';
 import { useCustomerMenuBootstrap } from '../../context/CustomerMenuBootstrapContext';
@@ -20,7 +20,7 @@ export default function CustomerMenuToolbar({ variant = 'full' }: Props) {
   const storeSlug = useStoreSlug();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { totalItems, totalAmount, items: cartItems, getItemKey } = useCart();
+  const { openCartTotalItems, openCartTotalAmount, items: cartItems, getItemKey } = useCart();
   const { displayName, config } = useRestaurantConfig();
   const logoUrl = config.restaurant_logo?.trim();
   const menuBootstrap = useCustomerMenuBootstrap();
@@ -36,27 +36,32 @@ export default function CustomerMenuToolbar({ variant = 'full' }: Props) {
 
   const finalTotal = useMemo(() => {
     const offers = menuBootstrap.offers;
-    if (offers.length === 0 || cartItems.length === 0) return totalAmount;
-    const entries = cartItems.map(ci => ({
+    const openItems = cartItems.filter((ci) => cartItemOpenQty(ci) > 0);
+    if (offers.length === 0 || openItems.length === 0) return openCartTotalAmount;
+    const entries = openItems.map(ci => ({
       key: getItemKey(ci),
       menuItemId: ci.menuItemId,
       categoryId: menuItemCats[ci.menuItemId] || '',
       basePrice: ci.price,
       optionExtra: (ci.options || []).reduce((s, o) => s + o.extraPrice, 0),
-      quantity: ci.quantity,
+      quantity: isLockedCartBaseline(ci) ? cartItemOpenQty(ci) : ci.quantity,
     }));
     const matched = matchBundles(entries, offers);
     return calcBundleTotal(entries, matched).finalTotal;
-  }, [cartItems, menuBootstrap.offers, menuItemCats, totalAmount, getItemKey]);
+  }, [cartItems, menuBootstrap.offers, menuItemCats, openCartTotalAmount, getItemKey]);
 
-  const hasDiscount = finalTotal < totalAmount;
+  const hasDiscount = finalTotal < openCartTotalAmount;
   const showLogo = variant === 'full';
   const dineInTableSeat = useMemo(() => {
     if (!isDineInCustomerFlow(searchParams)) return null;
     const table = searchParams.get('table');
-    const seat = searchParams.get('seat');
-    if (!table || !seat) return null;
-    return { table, seat };
+    if (!table) return null;
+    const seatRaw = searchParams.get('seat');
+    const seatNum = seatRaw != null && seatRaw !== '' ? Number(seatRaw) : 0;
+    return {
+      table,
+      seat: Number.isFinite(seatNum) && seatNum > 0 ? String(seatNum) : '',
+    };
   }, [searchParams]);
 
   const isDineIn = isDineInCustomerFlow(searchParams);
@@ -78,8 +83,12 @@ export default function CustomerMenuToolbar({ variant = 'full' }: Props) {
     if (variant !== 'full') return null;
     if (dineInTableSeat) {
       return (
-        <span className="menu-hero-toolbar__dine-in-seat" aria-label={t('customer.dineInTableSeatBadge', dineInTableSeat)}>
-          {t('customer.dineInTableSeatBadge', dineInTableSeat)}
+        <span className="menu-hero-toolbar__dine-in-seat" aria-label={dineInTableSeat.seat
+          ? t('customer.dineInTableSeatBadge', dineInTableSeat)
+          : t('customer.dineInTableBadge', { table: dineInTableSeat.table })}>
+          {dineInTableSeat.seat
+            ? t('customer.dineInTableSeatBadge', dineInTableSeat)
+            : t('customer.dineInTableBadge', { table: dineInTableSeat.table })}
         </span>
       );
     }
@@ -125,7 +134,7 @@ export default function CustomerMenuToolbar({ variant = 'full' }: Props) {
     navigate(`/${storeSlug}/customer/cart${tail}`);
   };
 
-  if (variant === 'actions' && totalItems === 0) {
+  if (variant === 'actions' && openCartTotalItems === 0) {
     return null;
   }
 
@@ -161,15 +170,15 @@ export default function CustomerMenuToolbar({ variant = 'full' }: Props) {
       )}
       <div className="menu-hero-toolbar__right">
         {variant === 'full' ? <LanguageSwitcher /> : null}
-        {totalItems > 0 ? (
+        {openCartTotalItems > 0 ? (
           <button type="button" onClick={goToCart} className="customer-order-cart menu-hero-toolbar__cart">
             <span className="menu-hero-toolbar__cart-icon-wrap" aria-hidden>
               <span className="menu-hero-toolbar__cart-icon">🛒</span>
-              <span className="menu-hero-toolbar__cart-badge">{totalItems}</span>
+              <span className="menu-hero-toolbar__cart-badge">{openCartTotalItems}</span>
             </span>
             <span className="menu-hero-toolbar__cart-total">
               {hasDiscount ? (
-                <span className="menu-hero-toolbar__cart-was">€{totalAmount.toFixed(2)}</span>
+                <span className="menu-hero-toolbar__cart-was">€{openCartTotalAmount.toFixed(2)}</span>
               ) : null}
               €{finalTotal.toFixed(2)}
             </span>

@@ -12,6 +12,11 @@ describe('qrCode utilities', () => {
       const result = encodeQRParams(3, 1);
       expect(result).toBe('table=3&seat=1');
     });
+
+    it('omits seat when seat is 0 or omitted', () => {
+      expect(encodeQRParams(3)).toBe('table=3');
+      expect(encodeQRParams(3, 0)).toBe('table=3');
+    });
   });
 
   describe('encodeTakeoutQRParams', () => {
@@ -60,8 +65,12 @@ describe('qrCode utilities', () => {
       expect(parseQRParams('table=1&seat=-1')).toEqual({ type: 'invalid' });
     });
 
-    it('returns invalid when only table is provided', () => {
-      expect(parseQRParams('table=1')).toEqual({ type: 'invalid' });
+    it('parses table-only dine-in as seat 0', () => {
+      expect(parseQRParams('table=1')).toEqual({
+        type: 'dine_in',
+        tableNumber: 1,
+        seatNumber: 0,
+      });
     });
 
     it('returns invalid when only seat is provided', () => {
@@ -88,6 +97,10 @@ describe('qrCode utilities', () => {
   describe('isDineInCustomerFlow', () => {
     it('returns true for valid table/seat without type', () => {
       expect(isDineInCustomerFlow('table=3&seat=1')).toBe(true);
+    });
+
+    it('returns true for table-only dine-in', () => {
+      expect(isDineInCustomerFlow('table=3')).toBe(true);
     });
 
     it('returns false when type=takeout even with table/seat', () => {

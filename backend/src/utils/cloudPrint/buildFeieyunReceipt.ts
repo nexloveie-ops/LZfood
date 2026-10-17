@@ -27,6 +27,7 @@ export type CloudPrintLine = {
   isMarketPrice?: boolean;
   weightKg?: number;
   pricePerKg?: number;
+  kitchenPrintedQty?: number;
 };
 
 export type CloudPrintOrder = {

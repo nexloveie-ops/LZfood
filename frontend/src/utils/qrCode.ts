@@ -3,6 +3,7 @@
  *
  * URL formats (after store path prefix):
  *   Dine-in:  /{storeSlug}/customer?table={tableNumber}&seat={seatNumber}
+ *   Dine-in (no seats): /{storeSlug}/customer?table={tableNumber}
  *   Takeout:  /{storeSlug}/customer?type=takeout
  */
 
@@ -28,12 +29,15 @@ export type QRParams = DineInParams | TakeoutParams | DeliveryParams | InvalidPa
 
 /**
  * Encode dine-in QR parameters into a URL search params string.
- * @returns e.g. "table=3&seat=1"
+ * seatNumber 0 / omitted → only table (per-table QR, no seats).
+ * @returns e.g. "table=3&seat=1" or "table=3"
  */
-export function encodeQRParams(tableNumber: number, seatNumber: number): string {
+export function encodeQRParams(tableNumber: number, seatNumber?: number): string {
   const params = new URLSearchParams();
   params.set('table', String(tableNumber));
-  params.set('seat', String(seatNumber));
+  if (seatNumber != null && seatNumber > 0) {
+    params.set('seat', String(seatNumber));
+  }
   return params.toString();
 }
 
@@ -77,16 +81,16 @@ export function parseQRParams(searchParams: URLSearchParams | string): QRParams 
   const tableStr = params.get('table');
   const seatStr = params.get('seat');
 
-  if (tableStr !== null && seatStr !== null) {
+  if (tableStr !== null) {
     const tableNumber = Number(tableStr);
+    if (!Number.isInteger(tableNumber) || tableNumber <= 0) {
+      return { type: 'invalid' };
+    }
+    if (seatStr === null || seatStr === '') {
+      return { type: 'dine_in', tableNumber, seatNumber: 0 };
+    }
     const seatNumber = Number(seatStr);
-
-    if (
-      Number.isInteger(tableNumber) &&
-      Number.isInteger(seatNumber) &&
-      tableNumber > 0 &&
-      seatNumber > 0
-    ) {
+    if (Number.isInteger(seatNumber) && seatNumber >= 0) {
       return { type: 'dine_in', tableNumber, seatNumber };
     }
   }
@@ -104,14 +108,11 @@ export function isDineInCustomerFlow(searchParams: URLSearchParams | string): bo
     return false;
   }
   const tableStr = params.get('table');
-  const seatStr = params.get('seat');
-  if (tableStr === null || seatStr === null) return false;
+  if (tableStr === null) return false;
   const tableNumber = Number(tableStr);
+  if (!Number.isInteger(tableNumber) || tableNumber <= 0) return false;
+  const seatStr = params.get('seat');
+  if (seatStr === null || seatStr === '') return true;
   const seatNumber = Number(seatStr);
-  return (
-    Number.isInteger(tableNumber) &&
-    Number.isInteger(seatNumber) &&
-    tableNumber > 0 &&
-    seatNumber > 0
-  );
+  return Number.isInteger(seatNumber) && seatNumber >= 0;
 }

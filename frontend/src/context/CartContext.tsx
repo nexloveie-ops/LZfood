@@ -22,6 +22,16 @@ export interface CartItem {
 
 export type CartAddMeta = { isMarketPrice?: boolean };
 
+/** 已下单锁定量之外、购物车里还能加减的份数 */
+export function cartItemOpenQty(item: CartItem): number {
+  const floor = typeof item.lockedBaselineQty === 'number' ? Math.max(0, item.lockedBaselineQty) : 0;
+  return Math.max(0, item.quantity - floor);
+}
+
+export function isLockedCartBaseline(item: CartItem): boolean {
+  return typeof item.lockedBaselineQty === 'number';
+}
+
 /** Bump when option group id strategy changes so stale groupId/choiceId are not reused */
 const STORAGE_KEY = 'cart_items_v2';
 
@@ -29,6 +39,15 @@ function cartItemKey(menuItemId: string, options?: CartItemOption[], lineId?: st
   if (lineId) return lineId;
   if (!options || options.length === 0) return menuItemId;
   return menuItemId + '|' + JSON.stringify(options.map(o => ({ g: o.groupId, c: o.choiceId })));
+}
+
+function dishOptionKey(menuItemId: string, options?: CartItemOption[]): string {
+  if (!options || options.length === 0) return menuItemId;
+  return menuItemId + '|' + JSON.stringify(options.map(o => ({ g: o.groupId, c: o.choiceId })));
+}
+
+function newAddLineId(): string {
+  return `add-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 function loadCart(): CartItem[] {
@@ -61,6 +80,8 @@ interface CartContextValue {
   setEditOrderId: (id: string | null) => void;
   totalAmount: number;
   totalItems: number;
+  openCartTotalItems: number;
+  openCartTotalAmount: number;
   getItemKey: (item: CartItem) => string;
 }
 
@@ -88,13 +109,21 @@ export function CartProvider({ children }: { children: ReactNode }) {
       setItemsState((prev) => [...prev, { menuItemId, names, price: 0, quantity: 1, options, isMarketPrice: true, lineId }]);
       return;
     }
-    const key = cartItemKey(menuItemId, options);
+    const dishKey = dishOptionKey(menuItemId, options);
     setItemsState((prev) => {
-      const existing = prev.find((i) => !i.isMarketPrice && cartItemKey(i.menuItemId, i.options, i.lineId) === key);
-      if (existing) {
+      const existingOpen = prev.find((i) =>
+        !i.isMarketPrice && !isLockedCartBaseline(i) && dishOptionKey(i.menuItemId, i.options) === dishKey,
+      );
+      if (existingOpen) {
         return prev.map((i) =>
-          !i.isMarketPrice && cartItemKey(i.menuItemId, i.options, i.lineId) === key ? { ...i, quantity: i.quantity + 1 } : i,
+          !i.isMarketPrice && !isLockedCartBaseline(i) && dishOptionKey(i.menuItemId, i.options) === dishKey
+            ? { ...i, quantity: i.quantity + 1 }
+            : i,
         );
+      }
+      const hasLockedSame = prev.some((i) => isLockedCartBaseline(i) && dishOptionKey(i.menuItemId, i.options) === dishKey);
+      if (hasLockedSame) {
+        return [...prev, { menuItemId, names, price, quantity: 1, options, lineId: newAddLineId() }];
       }
       return [...prev, { menuItemId, names, price, quantity: 1, options }];
     });
@@ -146,10 +175,15 @@ export function CartProvider({ children }: { children: ReactNode }) {
     return sum + (i.price + optExtra) * i.quantity;
   }, 0);
   const totalItems = items.reduce((sum, i) => sum + i.quantity, 0);
+  const openCartTotalItems = items.reduce((sum, i) => sum + cartItemOpenQty(i), 0);
+  const openCartTotalAmount = items.reduce((sum, i) => {
+    const optExtra = (i.options || []).reduce((s, o) => s + o.extraPrice, 0);
+    return sum + (i.price + optExtra) * cartItemOpenQty(i);
+  }, 0);
 
   return (
     <CartContext.Provider
-      value={{ items, addItem, removeItem, increaseQuantity, decreaseQuantity, clearCart, setItems, editOrderId, setEditOrderId, totalAmount, totalItems, getItemKey }}
+      value={{ items, addItem, removeItem, increaseQuantity, decreaseQuantity, clearCart, setItems, editOrderId, setEditOrderId, totalAmount, totalItems, openCartTotalItems, openCartTotalAmount, getItemKey }}
     >
       {children}
     </CartContext.Provider>

@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef, useCallback, useMemo, useLayoutEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSearchParams, useNavigate, useParams } from 'react-router-dom';
-import { useCart } from '../../context/CartContext';
+import { cartItemOpenQty, useCart } from '../../context/CartContext';
 import MenuItemCard from '../../components/customer/MenuItemCard';
 import OfferSelectModal from '../../components/customer/OfferSelectModal';
 import type { OfferData } from '../../utils/bundleMatcher';
@@ -47,7 +47,7 @@ interface MenuItemData {
 
 export default function MenuView({ storeFrontEmbed = false }: { storeFrontEmbed?: boolean }) {
   const { i18n, t } = useTranslation();
-  const { addItem, items: cartItems, decreaseQuantity, getItemKey, editOrderId } = useCart();
+  const { addItem, items: cartItems, decreaseQuantity, getItemKey, editOrderId, clearCart } = useCart();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { storeSlug } = useParams<{ storeSlug: string }>();
@@ -67,6 +67,8 @@ export default function MenuView({ storeFrontEmbed = false }: { storeFrontEmbed?
   const seat = searchParams.get('seat');
   const qs = searchParams.toString();
   const skipActiveOrderRedirectRef = useRef(searchParams.get('fromOrder') === '1');
+  const cartItemsRef = useRef(cartItems);
+  cartItemsRef.current = cartItems;
 
   useEffect(() => {
     if (searchParams.get('fromOrder') !== '1') return;
@@ -90,17 +92,22 @@ export default function MenuView({ storeFrontEmbed = false }: { storeFrontEmbed?
   // Skip if we're in edit mode (user came back from modifying an order)
   // or if user explicitly returned from order status (fromOrder=1)
   useEffect(() => {
-    if (!table || !seat || editOrderId || skipActiveOrderRedirectRef.current) return;
-    apiFetch(`/api/orders/dine-in/active?table=${table}&seat=${seat}`)
+    if (!table || editOrderId || skipActiveOrderRedirectRef.current) return;
+    const seatQ = seat != null && seat !== '' ? seat : '0';
+    apiFetch(`/api/orders/dine-in/active?table=${table}&seat=${seatQ}`)
       .then(r => r.ok ? r.json() : [])
       .then((orders: { _id: string }[]) => {
         if (orders.length > 0 && storeSlug) {
           const search = qs ? `?${qs}` : '';
           navigate(`/${storeSlug}/customer/order/${String(orders[0]._id)}${search}`, { replace: true });
+          return;
+        }
+        if (cartItemsRef.current.some((it) => typeof it.lockedBaselineQty === 'number')) {
+          clearCart();
         }
       })
       .catch(() => {});
-  }, [table, seat, qs, editOrderId, navigate, storeSlug]);
+  }, [table, seat, qs, editOrderId, navigate, storeSlug, clearCart]);
 
   // Active offers for banner
   const [activeOffers, setActiveOffers] = useState<OfferData[]>([]);
@@ -310,16 +317,15 @@ export default function MenuView({ storeFrontEmbed = false }: { storeFrontEmbed?
   }, []);
 
   const cartBomLines = useMemo(
-    () => cartItems.map((i) => ({
-      menuItemId: i.menuItemId,
-      quantity: i.quantity,
-      options: i.options?.map((o) => ({ groupId: o.groupId, choiceId: o.choiceId })),
-    })),
+    () => cartItems
+      .map((i) => ({
+        menuItemId: i.menuItemId,
+        quantity: cartItemOpenQty(i),
+        options: i.options?.map((o) => ({ groupId: o.groupId, choiceId: o.choiceId })),
+      }))
+      .filter((i) => i.quantity > 0),
     [cartItems],
   );
-
-  // Get cart quantity for a menu item
-  const getCartQty = (menuItemId: string) => cartItems.filter(ci => ci.menuItemId === menuItemId).reduce((s, ci) => s + ci.quantity, 0);
 
   /** 该菜品在购物车中仍可被减掉的份数（已锁定订单行只计超出 lockedBaselineQty 的部分） */
   const reducibleQtyForMenuItem = (menuItemId: string) =>
@@ -329,6 +335,8 @@ export default function MenuView({ storeFrontEmbed = false }: { storeFrontEmbed?
         const floor = typeof ci.lockedBaselineQty === 'number' ? ci.lockedBaselineQty : 0;
         return sum + Math.max(0, ci.quantity - floor);
       }, 0);
+
+  const getCartQty = (menuItemId: string) => reducibleQtyForMenuItem(menuItemId);
 
   const handleDecrease = (menuItemId: string) => {
     for (let i = cartItems.length - 1; i >= 0; i--) {

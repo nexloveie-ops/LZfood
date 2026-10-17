@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useNavigate, useSearchParams, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { useCart } from '../../context/CartContext';
+import { isLockedCartBaseline, useCart } from '../../context/CartContext';
 import { matchBundles, calcBundleTotal, type OfferData, type MatchedBundle } from '../../utils/bundleMatcher';
 import {
   DELIVERY_FEE_RULES_CONFIG_KEY,
@@ -18,7 +18,7 @@ import { buildPickupSlotGroups, flattenPickupSlotGroups } from '../../utils/pick
 import { isDineInCustomerFlow } from '../../utils/qrCode';
 
 export default function CartPage() {
-  const { items, increaseQuantity, decreaseQuantity, removeItem, clearCart, totalAmount, totalItems, getItemKey, editOrderId, setEditOrderId } = useCart();
+  const { items, increaseQuantity, decreaseQuantity, removeItem, clearCart, getItemKey, editOrderId, setEditOrderId } = useCart();
   const navigate = useNavigate();
   const { storeSlug } = useParams<{ storeSlug: string }>();
   const [searchParams] = useSearchParams();
@@ -52,6 +52,9 @@ export default function CartPage() {
   const table = searchParams.get('table');
   const seat = searchParams.get('seat');
   const orderType = searchParams.get('type');
+  const isDineInCart = isDineInCustomerFlow(searchParams);
+  const isPayAfterAdd = isDineInCart && !!editOrderId && config.dine_in_workflow_mode === 'pay_after';
+  const cartDisplayItems = isPayAfterAdd ? items.filter((i) => !isLockedCartBaseline(i)) : items;
 
   useEffect(() => {
     if (statusLoading) return;
@@ -150,8 +153,8 @@ export default function CartPage() {
 
   // Bundle matching
   const matchedBundles: MatchedBundle[] = useMemo(() => {
-    if (offers.length === 0 || items.length === 0) return [];
-    const cartEntries = items.map(item => {
+    if (offers.length === 0 || cartDisplayItems.length === 0) return [];
+    const cartEntries = cartDisplayItems.map(item => {
       const optExtra = (item.options || []).reduce((s, o) => s + o.extraPrice, 0);
       return {
         key: getItemKey(item),
@@ -163,10 +166,10 @@ export default function CartPage() {
       };
     });
     return matchBundles(cartEntries, offers);
-  }, [items, offers, menuItemCategories, getItemKey]);
+  }, [cartDisplayItems, offers, menuItemCategories, getItemKey]);
 
   const bundleTotals = useMemo(() => {
-    const cartEntries = items.map(item => {
+    const cartEntries = cartDisplayItems.map(item => {
       const optExtra = (item.options || []).reduce((s, o) => s + o.extraPrice, 0);
       return {
         key: getItemKey(item),
@@ -178,7 +181,7 @@ export default function CartPage() {
       };
     });
     return calcBundleTotal(cartEntries, matchedBundles);
-  }, [items, matchedBundles, menuItemCategories, getItemKey]);
+  }, [cartDisplayItems, matchedBundles, menuItemCategories, getItemKey]);
 
   const finalTotal = bundleTotals.finalTotal;
 
@@ -202,7 +205,6 @@ export default function CartPage() {
     [pickupSlotOptions],
   );
 
-  const isDineInCart = isDineInCustomerFlow(searchParams);
   const showDineInGuestLabel =
     isDineInCart && !editOrderId && config.dine_in_workflow_mode === 'pay_after';
   const takeoutContactReady = pickupCustomerPhone.trim().length > 0;
@@ -230,7 +232,7 @@ export default function CartPage() {
   };
 
   const handleSubmit = async () => {
-    if (items.length === 0) return;
+    if (cartDisplayItems.length === 0) return;
     if (submitting) return;
 
     if (orderType === 'takeout' && !editOrderId && !takeoutContactReady) {
@@ -272,7 +274,7 @@ export default function CartPage() {
         if (isDineInCart) {
           body.type = 'dine_in';
           body.tableNumber = Number(table);
-          body.seatNumber = Number(seat);
+          body.seatNumber = seat != null && seat !== '' ? Number(seat) : 0;
           if (config.dine_in_workflow_mode === 'pay_after') {
             body.dineInGuestLabel = dineInGuestLabel.trim().slice(0, 40);
           }
@@ -367,7 +369,7 @@ export default function CartPage() {
     }
   };
 
-  if (items.length === 0) {
+  if (cartDisplayItems.length === 0) {
     return (
       <div className="cart-page">
         {cartHeader}
@@ -395,7 +397,7 @@ export default function CartPage() {
         </h2>
 
         <div className="cart-items">
-        {items.map(item => {
+        {cartDisplayItems.map(item => {
           const key = getItemKey(item);
           const optExtra = (item.options || []).reduce((s, o) => s + o.extraPrice, 0);
           const lockedFloor = typeof item.lockedBaselineQty === 'number' ? item.lockedBaselineQty : null;
@@ -625,9 +627,12 @@ export default function CartPage() {
 
       <div className="cart-footer">
         <div>
-          <div style={{ fontSize: 12, color: 'var(--text-light)' }}>{t('customer.totalAmount')} · {totalItems} {t('customer.quantity')}</div>
+          <div style={{ fontSize: 12, color: 'var(--text-light)' }}>{t('customer.totalAmount')} · {cartDisplayItems.reduce((s, i) => s + i.quantity, 0)} {t('customer.quantity')}</div>
           {bundleTotals.bundleDiscount > 0 && (
-            <div style={{ fontSize: 12, color: 'var(--text-light)', textDecoration: 'line-through' }}>€{totalAmount.toFixed(2)}</div>
+            <div style={{ fontSize: 12, color: 'var(--text-light)', textDecoration: 'line-through' }}>€{cartDisplayItems.reduce((s, i) => {
+              const extra = (i.options || []).reduce((x, o) => x + o.extraPrice, 0);
+              return s + (i.price + extra) * i.quantity;
+            }, 0).toFixed(2)}</div>
           )}
           {orderType === 'delivery' && deliveryFeeAmount > 0 ? (
             <div style={{ fontSize: 11, color: 'var(--text-light)' }}>
@@ -639,10 +644,10 @@ export default function CartPage() {
         <button
           className="btn btn-primary"
           onClick={handleSubmit}
-          disabled={submitting || !offersLoaded}
+          disabled={submitting || !offersLoaded || cartDisplayItems.length === 0}
           style={{ padding: '12px 28px', fontSize: 15, letterSpacing: 1 }}
         >
-          {!offersLoaded ? '...' : submitting ? t('common.loading') : editOrderId ? t('customer.saveChanges') : t('customer.submitOrder')}
+          {!offersLoaded ? '...' : submitting ? t('common.loading') : isPayAfterAdd ? t('customer.addDishes') : editOrderId ? t('customer.saveChanges') : t('customer.submitOrder')}
         </button>
       </div>
     </div>

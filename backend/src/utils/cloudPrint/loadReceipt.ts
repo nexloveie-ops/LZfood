@@ -243,12 +243,24 @@ export async function loadCloudPrintOrderTicket(
 
   const only = (opts?.onlyLineIds || []).map((id) => String(id)).filter(Boolean);
   const onlySet = new Set(only);
+  const picked = onlySet.size > 0
+    ? (order.items || []).filter((it) => it._id && onlySet.has(String(it._id)))
+    : (order.items || []);
+  const isAppend = opts?.ticketKind === 'append';
+  const lines = isAppend
+    ? picked
+      .map((it) => {
+        const q = Number(it.quantity) || 0;
+        const printed = Math.max(0, Math.min(Number(it.kitchenPrintedQty) || 0, q));
+        const delta = q - printed;
+        return delta > 0 ? { ...it, quantity: delta } : null;
+      })
+      .filter((it): it is CloudPrintLine => Boolean(it))
+    : picked;
   const filtered: LeanOrder = {
     ...order,
-    items: onlySet.size > 0
-      ? (order.items || []).filter((it) => it._id && onlySet.has(String(it._id)))
-      : (order.items || []),
-    appliedBundles: opts?.ticketKind === 'append' ? [] : order.appliedBundles,
+    items: lines,
+    appliedBundles: isAppend ? [] : order.appliedBundles,
   };
   if ((filtered.items || []).length === 0) return null;
 

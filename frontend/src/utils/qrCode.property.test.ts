@@ -35,6 +35,24 @@ describe('Feature: restaurant-ordering-system, Property 1: QR码参数解析正�
     );
   });
 
+  it('table-only roundtrip: parse(encode(table)) has no seat param and seatNumber 0', () => {
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 1, max: 10000 }),
+        (tableNumber) => {
+          const encoded = encodeQRParams(tableNumber);
+          expect(encoded).toBe(`table=${tableNumber}`);
+          expect(parseQRParams(encoded)).toEqual({
+            type: 'dine_in',
+            tableNumber,
+            seatNumber: 0,
+          });
+        },
+      ),
+      { numRuns: 100 },
+    );
+  });
+
   it('takeout roundtrip: parse(encodeTakeout()) === { type: "takeout" }', () => {
     fc.assert(
       fc.property(
