@@ -148,6 +148,8 @@ export async function loadCloudPrintReceipt(
     memberCreditUsed?: number;
     checkedOutAt?: Date;
     dineInPartialLineSettlements?: { orderLineItemId: mongoose.Types.ObjectId; quantity: number; amountEuro: number }[];
+    couponName?: string;
+    couponAmount?: number;
   } | null;
   if (!checkout) return null;
 
@@ -172,6 +174,8 @@ export async function loadCloudPrintReceipt(
     cashReceived: checkout.cashReceived,
     changeAmount: checkout.changeAmount,
     memberCreditUsed: checkout.memberCreditUsed,
+    couponName: checkout.couponName,
+    couponAmount: checkout.couponAmount,
     checkedOutAt: checkout.checkedOutAt || new Date(),
     ...(partial.length > 0 ? { dineInPartialLineSettlements: partial } : {}),
     restaurant,

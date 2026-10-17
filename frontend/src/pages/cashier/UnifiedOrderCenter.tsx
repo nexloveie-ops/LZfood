@@ -21,6 +21,8 @@ import { isWaiterMode } from '../../utils/waiterMode';
 import { resolveReceiptPaymentMethodFromOrder } from '../../utils/receiptPaymentMethod';
 import WeighMarketDialog from '../../components/cashier/WeighMarketDialog';
 import { formatMarketLineTitle, isUnweighedMarketLine } from '../../utils/marketPriceDisplay';
+import { applyStaffZheToAmount, parseStaffZheInput, staffZheCouponPayload } from '../../utils/staffZheDiscount';
+import CashierStaffZheDiscountField from '../../components/cashier/CashierStaffZheDiscountField';
 
 type OrderType = 'dine_in' | 'takeout' | 'phone' | 'delivery';
 type OrderStatus = 'pending' | 'paid_online' | 'checked_out' | 'completed' | 'refunded' | 'checked_out-hide' | 'completed-hide';
@@ -491,6 +493,7 @@ export default function UnifiedOrderCenter() {
   const [voucherPreview, setVoucherPreview] = useState<NumberedVoucherPreview | null>(null);
   const [availableCoupons, setAvailableCoupons] = useState<{ _id: string; name: string; nameEn: string; amount: number }[]>([]);
   const [selectedCoupon, setSelectedCoupon] = useState<{ _id: string; name: string; nameEn: string; amount: number } | null>(null);
+  const [discountZhe, setDiscountZhe] = useState('');
   /** 外卖自提 paid_online：先厨房小票再完结。checked_out 且 takeoutPlacementSource=cashier 则视同厨房小票已在点单结账时完成 */
   const [takeoutKitchenTicketPrintedIds, setTakeoutKitchenTicketPrintedIds] = useState<Record<string, true>>({});
   /** 电话单「电话刷卡」已付：先厨房小票再调 complete-placement（与外卖 paid_online 两步类似） */
@@ -661,12 +664,16 @@ export default function UnifiedOrderCenter() {
     mixed?: { cashAmount: number; cardAmount: number },
     cashMeta?: { cashReceived: number; changeAmount: number },
     memberPay?: { phone: string },
+    coupon?: { name: string; amount: number },
   ) => {
     const busyKey = `table-${tableNumber}`;
     setBusyId(busyKey);
     try {
       const tableOrders = orders.filter((o) => o.type === 'dine_in' && o.tableNumber === tableNumber && o.status === 'pending');
-      const total = tableOrders.reduce((sum, o) => sum + counterPayable(o, dineInPayAfter), 0);
+      let total = tableOrders.reduce((sum, o) => sum + counterPayable(o, dineInPayAfter), 0);
+      if (coupon && coupon.amount > 0) {
+        total = Math.max(0, Math.round((total - coupon.amount) * 100) / 100);
+      }
       const body: Record<string, unknown> =
         paymentMethod === 'member' && memberPay
           ? buildMemberFullWalletCheckoutBody(total, memberPay.phone)
@@ -682,6 +689,10 @@ export default function UnifiedOrderCenter() {
           body.cashReceived = cashMeta.cashReceived;
           body.changeAmount = cashMeta.changeAmount;
         }
+      }
+      if (coupon && coupon.amount > 0) {
+        body.couponName = coupon.name;
+        body.couponAmount = coupon.amount;
       }
       const res = await apiFetch(`/api/checkout/table/${tableNumber}`, {
         method: 'POST',
@@ -708,6 +719,7 @@ export default function UnifiedOrderCenter() {
       mixed?: { cashAmount: number; cardAmount: number },
       cashMeta?: { cashReceived: number; changeAmount: number },
       memberPay?: { phone: string },
+      coupon?: { name: string; amount: number },
     ) => {
       const busyKey = `table-${tableNumber}`;
       setBusyId(busyKey);
@@ -727,6 +739,10 @@ export default function UnifiedOrderCenter() {
             body.cashReceived = cashMeta.cashReceived;
             body.changeAmount = cashMeta.changeAmount;
           }
+        }
+        if (coupon && coupon.amount > 0) {
+          body.couponName = coupon.name;
+          body.couponAmount = coupon.amount;
         }
         const res = await apiFetch(`/api/checkout/dine-in-partial-table/${tableNumber}`, {
           method: 'POST',
@@ -773,6 +789,7 @@ export default function UnifiedOrderCenter() {
     setVoucherCode('');
     setVoucherPreview(null);
     setSelectedCoupon(null);
+    setDiscountZhe('');
     void fetchCheckoutCoupons();
   };
 
@@ -796,6 +813,7 @@ export default function UnifiedOrderCenter() {
     setVoucherCode('');
     setVoucherPreview(null);
     setSelectedCoupon(null);
+    setDiscountZhe('');
   };
 
   const resolveSeatVoucherForCheckout = async (
@@ -823,13 +841,15 @@ export default function UnifiedOrderCenter() {
   const checkoutModalOrderPayable = useMemo(() => {
     if (!checkoutModalOrder) return 0;
     const base = counterPayable(checkoutModalOrder, dineInPayAfter);
+    const zheFilled = parseStaffZheInput(discountZhe).status !== 'empty';
+    if (zheFilled) return base;
     const hasBundle = (checkoutModalOrder.appliedBundles || []).some((b) => (Number(b.discount) || 0) > 0.001);
     if (voucherPreview && !hasBundle) return voucherPreview.payableEuro;
     if (selectedCoupon && !voucherPreview && !voucherCode.trim()) {
       return Math.max(0, base - selectedCoupon.amount);
     }
     return base;
-  }, [checkoutModalOrder, dineInPayAfter, voucherPreview, voucherCode, selectedCoupon]);
+  }, [checkoutModalOrder, dineInPayAfter, voucherPreview, voucherCode, selectedCoupon, discountZhe]);
 
   const checkoutModalOrderBaseEuro = useMemo(() => {
     if (!checkoutModalOrder) return 0;
@@ -876,7 +896,7 @@ export default function UnifiedOrderCenter() {
     };
   }, [checkoutModalTable, dineInPayAfter, tablePartialQtyByLineKey]);
 
-  const checkoutModalPayableEuro = useMemo(() => {
+  const checkoutModalPreZheEuro = useMemo(() => {
     if (checkoutModalOrder) return checkoutModalOrderPayable;
     if (checkoutModalTable && dineInPayAfter && tableCheckoutStep === 'pay' && tablePartialPickPreview?.ok) {
       return tablePartialPickPreview.payable;
@@ -886,6 +906,9 @@ export default function UnifiedOrderCenter() {
     }
     return 0;
   }, [checkoutModalOrder, checkoutModalOrderPayable, checkoutModalTable, dineInPayAfter, tableCheckoutStep, tablePartialPickPreview]);
+
+  const checkoutZhe = applyStaffZheToAmount(checkoutModalPreZheEuro, discountZhe);
+  const checkoutModalPayableEuro = checkoutZhe.status === 'ok' ? checkoutZhe.payableEuro : checkoutModalPreZheEuro;
 
   const checkoutVoucherAwaitingValidate = Boolean(
     checkoutModalOrder &&
@@ -902,6 +925,7 @@ export default function UnifiedOrderCenter() {
     setVoucherCode('');
     setVoucherPreview(null);
     setSelectedCoupon(null);
+    setDiscountZhe('');
     setCashReceived('');
     setMixedCash('');
     setMixedCard('');
@@ -918,19 +942,20 @@ export default function UnifiedOrderCenter() {
       alert(t('cashier.numberedVoucher.singleOrderOnly'));
       return;
     }
-    if (checkoutVoucherAwaitingValidate) {
+    if (checkoutZhe.status === 'invalid') {
+      alert(isEn ? 'Enter a valid discount, e.g. 9 or 85' : '请输入有效折扣，例如 9 或 85');
+      return;
+    }
+    if (checkoutVoucherAwaitingValidate && checkoutZhe.status !== 'ok') {
       alert(t('cashier.numberedVoucher.validateFirstCheckout'));
       return;
     }
-    let total = targetOrder
-      ? counterPayable(targetOrder, dineInPayAfter)
-      : targetTable && dineInPayAfter && tableCheckoutStep === 'pay' && tablePartialPickPreview?.ok
-        ? tablePartialPickPreview.payable
-        : targetTable?.orders.reduce((sum, o) => sum + counterPayable(o, dineInPayAfter), 0) || 0;
+    let total = checkoutModalPayableEuro;
     let seatVoucher: { code: string; payableEuro: number } | undefined;
-    const seatCoupon =
-      targetOrder && selectedCoupon && !voucherCode.trim() ? selectedCoupon : undefined;
-    if (targetOrder) {
+    let seatCoupon: { name: string; amount: number } | undefined;
+    if (checkoutZhe.status === 'ok') {
+      seatCoupon = staffZheCouponPayload(checkoutZhe);
+    } else if (targetOrder) {
       try {
         if (voucherCode.trim()) {
           const resolved = await resolveSeatVoucherForCheckout(targetOrder);
@@ -938,6 +963,7 @@ export default function UnifiedOrderCenter() {
           seatVoucher = resolved.voucher;
         } else {
           total = checkoutModalOrderPayable;
+          if (selectedCoupon && !voucherCode.trim()) seatCoupon = selectedCoupon;
         }
       } catch (e) {
         alert(e instanceof Error ? e.message : t('cashier.numberedVoucher.validateFailedCheckout'));
@@ -959,10 +985,10 @@ export default function UnifiedOrderCenter() {
             alert(isEn ? 'Select items to checkout.' : '请勾选本次要结账的菜品。');
             return;
           }
-          const ok = await checkoutPartialTable(targetTable.tableNumber, prev.settlements, prev.payable, 'member', undefined, undefined, mp);
+          const ok = await checkoutPartialTable(targetTable.tableNumber, prev.settlements, total, 'member', undefined, undefined, mp, seatCoupon);
           if (!ok) return;
         } else {
-          await checkoutTable(targetTable.tableNumber, 'member', undefined, undefined, mp);
+          await checkoutTable(targetTable.tableNumber, 'member', undefined, undefined, mp, seatCoupon);
         }
       }
       setCheckoutModalOrder(null);
@@ -991,10 +1017,10 @@ export default function UnifiedOrderCenter() {
             alert(isEn ? 'Select items to checkout.' : '请勾选本次要结账的菜品。');
             return;
           }
-          const ok = await checkoutPartialTable(targetTable.tableNumber, prev.settlements, prev.payable, 'mixed', { cashAmount: cash, cardAmount: card });
+          const ok = await checkoutPartialTable(targetTable.tableNumber, prev.settlements, total, 'mixed', { cashAmount: cash, cardAmount: card }, undefined, undefined, seatCoupon);
           if (!ok) return;
         } else {
-          await checkoutTable(targetTable.tableNumber, 'mixed', { cashAmount: cash, cardAmount: card });
+          await checkoutTable(targetTable.tableNumber, 'mixed', { cashAmount: cash, cardAmount: card }, undefined, undefined, seatCoupon);
         }
       }
       setCheckoutModalOrder(null);
@@ -1023,10 +1049,10 @@ export default function UnifiedOrderCenter() {
             alert(isEn ? 'Select items to checkout.' : '请勾选本次要结账的菜品。');
             return;
           }
-          const ok = await checkoutPartialTable(targetTable.tableNumber, prev.settlements, prev.payable, 'cash', undefined, { cashReceived: paid, changeAmount });
+          const ok = await checkoutPartialTable(targetTable.tableNumber, prev.settlements, total, 'cash', undefined, { cashReceived: paid, changeAmount }, undefined, seatCoupon);
           if (!ok) return;
         } else {
-          await checkoutTable(targetTable.tableNumber, 'cash', undefined, { cashReceived: paid, changeAmount });
+          await checkoutTable(targetTable.tableNumber, 'cash', undefined, { cashReceived: paid, changeAmount }, undefined, seatCoupon);
         }
       }
       setCheckoutModalOrder(null);
@@ -1044,10 +1070,10 @@ export default function UnifiedOrderCenter() {
           alert(isEn ? 'Select items to checkout.' : '请勾选本次要结账的菜品。');
           return;
         }
-        const ok = await checkoutPartialTable(targetTable.tableNumber, prev.settlements, prev.payable, checkoutMethod);
+        const ok = await checkoutPartialTable(targetTable.tableNumber, prev.settlements, total, checkoutMethod, undefined, undefined, undefined, seatCoupon);
         if (!ok) return;
       } else {
-        await checkoutTable(targetTable.tableNumber, checkoutMethod);
+        await checkoutTable(targetTable.tableNumber, checkoutMethod, undefined, undefined, undefined, seatCoupon);
       }
     }
     setCheckoutModalOrder(null);
@@ -2797,8 +2823,27 @@ export default function UnifiedOrderCenter() {
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: 20, marginBottom: 12 }}>
                   <span>{L.total}</span>
-                  <span style={{ color: 'var(--red-primary)' }}>€{checkoutModalPayableEuro.toFixed(2)}</span>
+                  <span style={{ color: 'var(--red-primary)', textAlign: 'right' }}>
+                    {checkoutZhe.status === 'ok' ? (
+                      <div style={{ fontSize: 13, fontWeight: 600, color: '#94a3b8', textDecoration: 'line-through' }}>€{checkoutModalPreZheEuro.toFixed(2)}</div>
+                    ) : null}
+                    €{checkoutModalPayableEuro.toFixed(2)}
+                  </span>
                 </div>
+                <CashierStaffZheDiscountField
+                  value={discountZhe}
+                  onChange={(v) => {
+                    setDiscountZhe(v);
+                    setCashReceived('');
+                    if (v.trim()) {
+                      setSelectedCoupon(null);
+                      setVoucherCode('');
+                      setVoucherPreview(null);
+                    }
+                  }}
+                  applied={checkoutZhe}
+                  isEn={isEn}
+                />
                 {checkoutModalOrder?.items.filter(isUnweighedMarketLine).map((it) => (
                   <div key={it._id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 13, marginBottom: 8, padding: '8px 10px', background: '#FFF8E1', borderRadius: 8 }}>
                     <span>{it.itemName} · {t('customer.marketPriceAwaitWeigh')}</span>
@@ -2953,6 +2998,7 @@ export default function UnifiedOrderCenter() {
                     selectedCoupon={selectedCoupon}
                     onSelectCoupon={(c) => {
                       setSelectedCoupon(c);
+                      setDiscountZhe('');
                       setCashReceived('');
                     }}
                     voucherCode={voucherCode}
@@ -3058,7 +3104,8 @@ export default function UnifiedOrderCenter() {
                     style={{ flex: 1 }}
                     disabled={
                       busyId === (checkoutModalOrder?._id || `table-${checkoutModalTable?.tableNumber ?? '-'}`) ||
-                      checkoutVoucherAwaitingValidate ||
+                      checkoutZhe.status === 'invalid' ||
+                      (checkoutVoucherAwaitingValidate && checkoutZhe.status !== 'ok') ||
                       (checkoutMethod === 'member' && !canMemberFullWalletPay(memberPreview, checkoutModalPayableEuro)) ||
                       !!(checkoutModalOrder?.items.some(isUnweighedMarketLine) || checkoutModalTable?.orders.some((o) => o.items.some(isUnweighedMarketLine)))
                     }

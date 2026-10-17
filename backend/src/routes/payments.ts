@@ -29,6 +29,50 @@ function paymentModels() {
   };
 }
 
+function round2Euro(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+function paymentOrderIdsFromBody(body: Record<string, unknown>): string[] {
+  const ids: string[] = [];
+  if (Array.isArray(body.orderIds)) {
+    for (const x of body.orderIds) ids.push(String(x || '').trim());
+  }
+  if (body.orderId != null) ids.push(String(body.orderId).trim());
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const id of ids) {
+    if (!mongoose.Types.ObjectId.isValid(id) || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  return out;
+}
+
+function paymentOrderIdsFromIntentMetadata(meta: Record<string, string> | undefined, fallback: string[]): string[] {
+  const raw = String(meta?.orderIds || '').trim();
+  if (!raw) return fallback;
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const part of raw.split(',')) {
+    const id = part.trim();
+    if (!mongoose.Types.ObjectId.isValid(id) || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  return out.length > 0 ? out : fallback;
+}
+
+function payableEuroForStripeOrder(
+  order: Parameters<typeof computeDineInUnsettledPayableEuro>[0] & { type?: string; status?: string },
+  wf: string | undefined,
+): number {
+  if (order.type === 'dine_in' && order.status === 'pending' && wf === 'pay_after') {
+    return computeDineInUnsettledPayableEuro(order);
+  }
+  return computeOrderPayableTotalEuro(order);
+}
+
 export function createPaymentsRouter(io: SocketIOServer): Router {
   const router = Router();
 
@@ -38,24 +82,31 @@ export function createPaymentsRouter(io: SocketIOServer): Router {
 router.post('/create-intent', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { Order } = paymentModels();
-    const { orderId } = req.body;
-
-    if (!orderId || !mongoose.Types.ObjectId.isValid(orderId)) {
+    const ids = paymentOrderIdsFromBody(req.body as Record<string, unknown>);
+    if (ids.length === 0) {
       throw createAppError('VALIDATION_ERROR', 'Valid orderId is required');
     }
 
-    const order = await Order.findOne({ _id: orderId, storeId: req.storeId });
-    if (!order) throw createAppError('NOT_FOUND', 'Order not found');
-    if (order.status !== 'pending') throw createAppError('VALIDATION_ERROR', 'Order is already checked out');
-    assertNoUnweighedMarketLines(order.items);
-
-    let totalEuro = computeOrderPayableTotalEuro(order);
-    if (order.type === 'dine_in' && order.status === 'pending') {
-      const wf = await getDineInWorkflowModeForStore(req.storeId!);
-      if (wf === 'pay_after') {
-        totalEuro = computeDineInUnsettledPayableEuro(order);
+    const orders = await Order.find({ _id: { $in: ids }, storeId: req.storeId });
+    if (orders.length !== ids.length) throw createAppError('NOT_FOUND', 'Order not found');
+    for (const order of orders) {
+      if (order.status !== 'pending') throw createAppError('VALIDATION_ERROR', 'Order is already checked out');
+      assertNoUnweighedMarketLines(order.items);
+    }
+    if (orders.length > 1) {
+      if (!orders.every((o) => o.type === 'dine_in')) {
+        throw createAppError('VALIDATION_ERROR', '多笔合并支付仅支持堂食');
+      }
+      const tableNumber = orders[0].tableNumber;
+      if (tableNumber == null || !orders.every((o) => o.tableNumber === tableNumber)) {
+        throw createAppError('VALIDATION_ERROR', '合并支付必须是同一桌的订单');
       }
     }
+
+    const wf = orders.some((o) => o.type === 'dine_in')
+      ? await getDineInWorkflowModeForStore(req.storeId!)
+      : undefined;
+    const totalEuro = round2Euro(orders.reduce((s, o) => s + payableEuroForStripeOrder(o, wf), 0));
     const totalAmount = Math.round(totalEuro * 100);
 
     if (totalAmount <= 0) throw createAppError('VALIDATION_ERROR', 'Order total must be greater than 0');
@@ -65,7 +116,12 @@ router.post('/create-intent', async (req: Request, res: Response, next: NextFunc
       amount: totalAmount,
       currency: 'eur',
       automatic_payment_methods: { enabled: true },
-      metadata: { orderId, orderType: order.type },
+      metadata: {
+        orderId: String(orders[0]._id),
+        orderIds: orders.map((o) => String(o._id)).join(','),
+        orderType: String(orders[0].type || ''),
+        tableNumber: orders[0].tableNumber != null ? String(orders[0].tableNumber) : '',
+      },
     });
 
     res.json({ clientSecret: paymentIntent.client_secret, amount: totalAmount / 100 });
@@ -80,45 +136,60 @@ router.post('/create-intent', async (req: Request, res: Response, next: NextFunc
 router.post('/confirm', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { Order } = paymentModels();
-    const { orderId, paymentIntentId } = req.body;
-
-    if (!orderId || !mongoose.Types.ObjectId.isValid(orderId)) {
+    const body = req.body as Record<string, unknown>;
+    const { paymentIntentId } = body;
+    const idsFromBody = paymentOrderIdsFromBody(body);
+    if (idsFromBody.length === 0) {
       throw createAppError('VALIDATION_ERROR', 'Valid orderId is required');
     }
 
-    const order = await Order.findOne({ _id: orderId, storeId: req.storeId });
-    if (!order) throw createAppError('NOT_FOUND', 'Order not found');
-
-    if (order.status !== 'pending') {
-      res.json({ message: 'Order already processed' });
-      return;
-    }
-    assertNoUnweighedMarketLines(order.items);
-
     const stripe = await createStripeClient(req.storeId!);
-    const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+    const paymentIntent = await stripe.paymentIntents.retrieve(String(paymentIntentId || ''));
     if (paymentIntent.status !== 'succeeded') {
       throw createAppError('VALIDATION_ERROR', 'Payment not completed');
     }
 
-    const totalChargedEuro = paymentIntent.amount / 100;
-    order.customerOnlinePaymentAt = new Date();
-    order.stripePaymentIntentId = String(paymentIntentId);
+    const ids = paymentOrderIdsFromIntentMetadata(
+      paymentIntent.metadata as Record<string, string> | undefined,
+      idsFromBody,
+    );
+    const orders = await Order.find({ _id: { $in: ids }, storeId: req.storeId });
+    if (orders.length !== ids.length) throw createAppError('NOT_FOUND', 'Order not found');
 
-    if (order.type === 'delivery') {
+    const pending = orders.filter((o) => o.status === 'pending');
+    if (pending.length === 0) {
+      res.json({ message: 'Order already processed', orderId: orders[0]._id });
+      return;
+    }
+    if (pending.length !== orders.length) {
+      throw createAppError('VALIDATION_ERROR', '部分订单已处理，请刷新后重试');
+    }
+    for (const order of pending) {
+      assertNoUnweighedMarketLines(order.items);
+    }
+
+    const wf = pending.some((o) => o.type === 'dine_in')
+      ? await getDineInWorkflowModeForStore(req.storeId!)
+      : undefined;
+    const expectedTotal = round2Euro(pending.reduce((s, o) => s + payableEuroForStripeOrder(o, wf), 0));
+    const totalChargedEuro = paymentIntent.amount / 100;
+    if (Math.abs(expectedTotal - totalChargedEuro) > 0.02) {
+      throw createAppError('VALIDATION_ERROR', '实付金额与订单应付不一致，请核对后重试', {
+        expectedTotal,
+        charged: totalChargedEuro,
+      });
+    }
+
+    const paidAt = new Date();
+    const piId = String(paymentIntentId);
+
+    if (pending.length === 1 && pending[0].type === 'delivery') {
+      const order = pending[0];
       const { Checkout } = paymentModels();
-      const expectedTotal = computeOrderPayableTotalEuro(order);
-      if (Math.abs(expectedTotal - totalChargedEuro) > 0.02) {
-        throw createAppError('VALIDATION_ERROR', '实付金额与订单合计不一致，请核对后重试', {
-          expectedTotal,
-          charged: totalChargedEuro,
-        });
-      }
       const checkout = await Checkout.create({
         storeId: req.storeId,
         type: 'seat',
         totalAmount: totalChargedEuro,
-        // 顾客端 Stripe 网上支付：与堂食/自取 finalize 一致，报表记 online
         paymentMethod: 'online',
         orderIds: [order._id],
         tableNumber: order.tableNumber,
@@ -126,63 +197,69 @@ router.post('/confirm', async (req: Request, res: Response, next: NextFunction) 
       if (req.storeId && checkout?._id) {
         scheduleStampAwardForCheckout(req.storeId, checkout._id as mongoose.Types.ObjectId);
       }
+      order.customerOnlinePaymentAt = paidAt;
+      order.stripePaymentIntentId = piId;
       order.status = 'checked_out';
-    } else {
-      if (order.type === 'dine_in') {
-        const wf = await getDineInWorkflowModeForStore(req.storeId!);
-        if (wf === 'pay_after') {
-          // 改单流程曾将 dineInExposedToStaff=false；顾客在线付清后必须回到收银订单中心
-          order.dineInExposedToStaff = true;
-          const expectedTotal = computeDineInUnsettledPayableEuro(order);
-          if (Math.abs(expectedTotal - totalChargedEuro) > 0.02) {
-            throw createAppError('VALIDATION_ERROR', '实付金额与订单应付不一致，请核对后重试', {
-              expectedTotal,
-              charged: totalChargedEuro,
-            });
-          }
-          for (const line of order.items as { lineKind?: string; refunded?: boolean; quantity: number; settledQty?: number }[]) {
-            if (line.lineKind === 'delivery_fee') continue;
-            if (line.refunded) continue;
-            line.settledQty = line.quantity;
-          }
-          order.markModified('items');
-        }
+      syncDualTrackBeforeSave(order, { dineInWorkflowMode: wf });
+      await order.save();
+      if (req.storeId) {
+        await tryKitchenCloudPrintAndMark({
+          storeId: req.storeId,
+          orderId: order._id as mongoose.Types.ObjectId,
+          trigger: 'placement',
+        });
+        const fresh = await Order.findOne({ _id: order._id, storeId: req.storeId });
+        io.to(storeIoRoom(req.storeId!)).emit('order:updated', fresh || order);
       }
-      // 堂食 / 外卖：保持 paid_online，由收银 finalize 生成 Checkout
-      order.status = 'paid_online';
-    }
-
-    const wfSync = order.type === 'dine_in' ? await getDineInWorkflowModeForStore(req.storeId!) : undefined;
-    syncDualTrackBeforeSave(order, { dineInWorkflowMode: wfSync });
-    await order.save();
-
-    if (req.storeId && (order.type === 'takeout' || order.type === 'delivery')) {
-      await tryKitchenCloudPrintAndMark({
-        storeId: req.storeId,
-        orderId: order._id as mongoose.Types.ObjectId,
-        trigger: 'placement',
-      });
-      const { Order } = paymentModels();
-      const fresh = await Order.findOne({ _id: order._id, storeId: req.storeId });
-      if (fresh) {
-        io.to(storeIoRoom(req.storeId!)).emit('order:updated', fresh);
-      } else {
-        io.to(storeIoRoom(req.storeId!)).emit('order:updated', order);
-      }
-    } else {
-      io.to(storeIoRoom(req.storeId!)).emit('order:updated', order);
-    }
-
-    if (order.type === 'phone' || order.type === 'delivery') {
       const orderLean = typeof order.toObject === 'function' ? order.toObject() : order;
       voidNotifyCustomerOrderEvent({
         storeId: req.storeId!,
         order: orderLean,
         event: 'payment_confirmed',
       });
+      res.json({ message: 'Payment confirmed', orderId: order._id, totalAmount: totalChargedEuro });
+      return;
     }
 
-    res.json({ message: 'Payment confirmed', orderId: order._id, totalAmount: totalChargedEuro });
+    for (const order of pending) {
+      order.customerOnlinePaymentAt = paidAt;
+      order.stripePaymentIntentId = piId;
+      if (order.type === 'dine_in' && wf === 'pay_after') {
+        order.dineInExposedToStaff = true;
+        for (const line of order.items as { lineKind?: string; refunded?: boolean; quantity: number; settledQty?: number }[]) {
+          if (line.lineKind === 'delivery_fee') continue;
+          if (line.refunded) continue;
+          line.settledQty = line.quantity;
+        }
+        order.markModified('items');
+      }
+      order.status = 'paid_online';
+      syncDualTrackBeforeSave(order, { dineInWorkflowMode: wf });
+      await order.save();
+
+      if (req.storeId && order.type === 'takeout') {
+        await tryKitchenCloudPrintAndMark({
+          storeId: req.storeId,
+          orderId: order._id as mongoose.Types.ObjectId,
+          trigger: 'placement',
+        });
+        const fresh = await Order.findOne({ _id: order._id, storeId: req.storeId });
+        io.to(storeIoRoom(req.storeId!)).emit('order:updated', fresh || order);
+      } else {
+        io.to(storeIoRoom(req.storeId!)).emit('order:updated', order);
+      }
+
+      if (order.type === 'phone') {
+        const orderLean = typeof order.toObject === 'function' ? order.toObject() : order;
+        voidNotifyCustomerOrderEvent({
+          storeId: req.storeId!,
+          order: orderLean,
+          event: 'payment_confirmed',
+        });
+      }
+    }
+
+    res.json({ message: 'Payment confirmed', orderId: pending[0]._id, totalAmount: totalChargedEuro });
   } catch (err: unknown) {
     next(err);
   }

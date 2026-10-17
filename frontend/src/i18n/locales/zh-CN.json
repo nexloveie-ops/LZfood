@@ -101,6 +101,7 @@
     "paymentConfirmFailed": "支付结果未能确认，请前往吧台结账。",
     "statusPaidOnline": "已在线支付 ✓",
     "totalAmount": "合计",
+    "orderRound": "第{{n}}轮",
     "orderNumber": "订单号",
     "orderTypeLabelDineIn": "堂食",
     "orderTypeLabelTakeout": "到店自取",

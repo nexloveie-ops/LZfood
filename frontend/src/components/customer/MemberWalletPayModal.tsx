@@ -4,6 +4,8 @@ import { apiFetch } from '../../api/client';
 
 interface Props {
   orderId: string;
+  orderIds?: string[];
+  tableNumber?: number;
   amount: number;
   onSuccess: () => void;
   onClose: () => void;
@@ -11,7 +13,7 @@ interface Props {
 
 type Verified = { memberNo: number; displayName: string };
 
-export default function MemberWalletPayModal({ orderId, amount, onSuccess, onClose }: Props) {
+export default function MemberWalletPayModal({ orderId, orderIds, tableNumber, amount, onSuccess, onClose }: Props) {
   const { t } = useTranslation();
   const [step, setStep] = useState<'phone' | 'pin'>('phone');
   const [phone, setPhone] = useState('');
@@ -48,13 +50,16 @@ export default function MemberWalletPayModal({ orderId, amount, onSuccess, onClo
     setError('');
     setBusy(true);
     try {
-      const r = await apiFetch(`/api/checkout/seat/${orderId}`, {
+      const ids = orderIds && orderIds.length > 0 ? orderIds : [orderId];
+      const useTable = ids.length > 1 && tableNumber != null && tableNumber > 0;
+      const r = await apiFetch(useTable ? `/api/checkout/table/${tableNumber}` : `/api/checkout/seat/${orderId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         omitStaffToken: true,
         body: JSON.stringify({
           memberPhone: phone.trim(),
           memberPin: pin.trim(),
+          skipCloudPrint: true,
         }),
       });
       const d = (await r.json().catch(() => null)) as { error?: { message?: string } } | null;

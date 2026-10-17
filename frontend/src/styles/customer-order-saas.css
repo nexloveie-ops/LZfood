@@ -614,6 +614,19 @@
   padding: 12px 16px 24px;
 }
 
+.order-status-round-head {
+  padding: 10px 16px 8px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: #8b1a1a;
+  background: #faf6eb;
+}
+
+.order-status-round-head.is-next {
+  border-top: 2px dashed #d4a853;
+}
+
 .cart-footer {
   flex-shrink: 0;
   padding: 16px 20px calc(16px + env(safe-area-inset-bottom, 0px));

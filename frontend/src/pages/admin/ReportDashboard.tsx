@@ -255,12 +255,50 @@ export default function ReportDashboard() {
 
   const euro = (v: number) => `€${v.toFixed(2)}`;
 
+  const orderNetLineSum = (o: DetailOrder) =>
+    o.items.reduce((s, i) => {
+      const optExtra = (i.selectedOptions || []).reduce((x, op) => x + (op.extraPrice || 0), 0);
+      return s + (i.unitPrice + optExtra) * i.quantity;
+    }, 0);
+
+  /** 整桌一笔 Checkout 挂多张单时，按行小计把实收分摊到各单（含折扣） */
+  const allocatedCheckoutShare = (o: DetailOrder): number => {
+    const c = o.checkout;
+    if (!c) {
+      return orderNetLineSum(o);
+    }
+    const same = modalOrders.filter((r) => r.checkout?.checkoutId === c.checkoutId);
+    if (same.length <= 1) return c.totalAmount;
+    const weights = same.map((x) => orderNetLineSum(x));
+    const group = weights.reduce((s, w) => s + w, 0);
+    const idx = same.findIndex((x) => x._id === o._id);
+    if (idx < 0) return c.totalAmount;
+    if (group <= 0) {
+      const even = Math.round((c.totalAmount / same.length) * 100) / 100;
+      return idx === same.length - 1
+        ? Math.round((c.totalAmount - even * (same.length - 1)) * 100) / 100
+        : even;
+    }
+    let used = 0;
+    for (let i = 0; i < same.length; i++) {
+      if (i === same.length - 1) {
+        const rest = Math.round((c.totalAmount - used) * 100) / 100;
+        if (i === idx) return rest;
+      } else {
+        const a = Math.round(((c.totalAmount * weights[i]) / group) * 100) / 100;
+        used += a;
+        if (i === idx) return a;
+      }
+    }
+    return 0;
+  };
+
   /** Calculate refund amount for an order, considering bundle discounts */
   const calcOrderRefund = (o: DetailOrder) => {
     const refundedItems = o.items.filter(i => i.refunded);
     if (refundedItems.length === 0) return 0;
     const allRefunded = o.items.length > 0 && o.items.every(i => i.refunded);
-    if (allRefunded && o.checkout) return o.checkout.totalAmount;
+    if (allRefunded && o.checkout) return allocatedCheckoutShare(o);
     // Partial refund: proportionally distribute bundle discount
     let refundedTotal = 0;
     let allTotal = 0;
@@ -275,14 +313,7 @@ export default function ReportDashboard() {
     return refundedTotal;
   };
 
-  const orderTotal = (o: DetailOrder) =>
-    o.checkout?.totalAmount ?? o.items.reduce((s, i) => s + (i.unitPrice + (i.selectedOptions || []).reduce((x, op) => x + (op.extraPrice || 0), 0)) * i.quantity, 0);
-
-  const orderNetLineSum = (o: DetailOrder) =>
-    o.items.reduce((s, i) => {
-      const optExtra = (i.selectedOptions || []).reduce((x, op) => x + (op.extraPrice || 0), 0);
-      return s + (i.unitPrice + optExtra) * i.quantity;
-    }, 0);
+  const orderTotal = (o: DetailOrder) => allocatedCheckoutShare(o);
 
   const laneDisplayAmount = (o: DetailOrder, lane: 'cash' | 'card') => {
     const c = o.checkout;

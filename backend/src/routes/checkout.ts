@@ -1046,6 +1046,8 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
         cardAmount?: number;
         checkedOutAt?: Date;
         dineInPartialLineSettlements?: { orderLineItemId: mongoose.Types.ObjectId; quantity: number; amountEuro: number }[];
+        couponName?: string;
+        couponAmount?: number;
       } | null;
       if (!checkout) {
         throw createAppError('NOT_FOUND', 'Checkout not found');
@@ -1134,6 +1136,8 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
         changeAmount: checkout.changeAmount,
         memberCreditUsed: (checkout as { memberCreditUsed?: number }).memberCreditUsed,
         memberPhoneSnapshot: (checkout as { memberPhoneSnapshot?: string }).memberPhoneSnapshot,
+        couponName: checkout.couponName,
+        couponAmount: checkout.couponAmount,
         checkedOutAt: checkout.checkedOutAt,
         ...(partial.length > 0 ? { dineInPartialLineSettlements: partial } : {}),
         orders: orders.map((o) => ({

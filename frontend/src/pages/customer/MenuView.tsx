@@ -96,10 +96,15 @@ export default function MenuView({ storeFrontEmbed = false }: { storeFrontEmbed?
     const seatQ = seat != null && seat !== '' ? seat : '0';
     apiFetch(`/api/orders/dine-in/active?table=${table}&seat=${seatQ}`)
       .then(r => r.ok ? r.json() : [])
-      .then((orders: { _id: string }[]) => {
+      .then((orders: { _id: string; createdAt?: string }[]) => {
         if (orders.length > 0 && storeSlug) {
           const search = qs ? `?${qs}` : '';
-          navigate(`/${storeSlug}/customer/order/${String(orders[0]._id)}${search}`, { replace: true });
+          const pick = [...orders].sort((a, b) => {
+            const ta = new Date(a.createdAt || 0).getTime();
+            const tb = new Date(b.createdAt || 0).getTime();
+            return ta - tb;
+          })[0] || orders[0];
+          navigate(`/${storeSlug}/customer/order/${String(pick._id)}${search}`, { replace: true });
           return;
         }
         if (cartItemsRef.current.some((it) => typeof it.lockedBaselineQty === 'number')) {

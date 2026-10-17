@@ -102,6 +102,7 @@
     "paymentConfirmFailed": "We couldn’t confirm your payment. Please pay at the counter.",
     "statusPaidOnline": "Payment Received ✓",
     "totalAmount": "Total",
+    "orderRound": "Round {{n}}",
     "orderNumber": "Order #",
     "orderTypeLabelDineIn": "Dine-in",
     "orderTypeLabelTakeout": "Pickup",

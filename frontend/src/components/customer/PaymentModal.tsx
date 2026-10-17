@@ -6,6 +6,8 @@ import { apiFetch } from '../../api/client';
 
 interface PaymentModalProps {
   orderId: string;
+  /** 同桌多笔未结堂食单：与 amount 一起提交，Stripe 按合计收款 */
+  orderIds?: string[];
   amount: number;
   onSuccess: (checkoutId: string) => void;
   onClose: () => void;
@@ -23,7 +25,9 @@ function PaymentErrorBlock({ message }: { message: string }) {
   );
 }
 
-function PaymentContent({ orderId, amount, onSuccess, onClose }: PaymentModalProps) {
+function PaymentContent({ orderId, orderIds, amount, onSuccess, onClose }: PaymentModalProps) {
+  const payIds = orderIds && orderIds.length > 0 ? orderIds : [orderId];
+  const payBody = { orderId, orderIds: payIds };
   const { t } = useTranslation();
   const stripe = useStripe();
   const elements = useElements();
@@ -52,7 +56,7 @@ function PaymentContent({ orderId, amount, onSuccess, onClose }: PaymentModalPro
         const res = await apiFetch('/api/payments/create-intent', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ orderId }),
+          body: JSON.stringify(payBody),
         });
         const data = await res.json().catch(() => ({}));
         if (cancelled) return;
@@ -75,7 +79,7 @@ function PaymentContent({ orderId, amount, onSuccess, onClose }: PaymentModalPro
       cancelled = true;
       window.clearTimeout(intentTimer);
     };
-  }, [orderId, t]);
+  }, [orderId, t, payIds.join(',')]);
 
   // Setup Payment Request (Apple Pay / Google Pay)
   useEffect(() => {
@@ -113,7 +117,7 @@ function PaymentContent({ orderId, amount, onSuccess, onClose }: PaymentModalPro
         const res = await apiFetch('/api/payments/confirm', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ orderId, paymentIntentId: paymentIntent.id }),
+          body: JSON.stringify({ ...payBody, paymentIntentId: paymentIntent.id }),
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
@@ -130,7 +134,7 @@ function PaymentContent({ orderId, amount, onSuccess, onClose }: PaymentModalPro
         setProcessing(false);
       }
     });
-  }, [stripe, clientSecret, amount, orderId, onSuccess, restaurantLabel, t]);
+  }, [stripe, clientSecret, amount, orderId, onSuccess, restaurantLabel, t, payIds.join(',')]);
 
   // Card payment handler
   const handleCardPay = async () => {
@@ -155,7 +159,7 @@ function PaymentContent({ orderId, amount, onSuccess, onClose }: PaymentModalPro
       const res = await apiFetch('/api/payments/confirm', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ orderId, paymentIntentId: paymentIntent.id }),
+        body: JSON.stringify({ ...payBody, paymentIntentId: paymentIntent.id }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -236,7 +240,7 @@ function PaymentContent({ orderId, amount, onSuccess, onClose }: PaymentModalPro
 
 const STRIPE_BOOT_TIMEOUT_MS = 28000;
 
-export default function PaymentModal({ orderId, amount, onSuccess, onClose }: PaymentModalProps) {
+export default function PaymentModal({ orderId, orderIds, amount, onSuccess, onClose }: PaymentModalProps) {
   const { t } = useTranslation();
   const [stripeReady, setStripeReady] = useState(false);
   const [stripePromiseForElements, setStripePromiseForElements] = useState<Promise<Stripe | null> | null>(null);
@@ -339,7 +343,7 @@ export default function PaymentModal({ orderId, amount, onSuccess, onClose }: Pa
         )}
         {stripeReady && !stripeBootError && stripePromiseForElements && (
           <Elements stripe={stripePromiseForElements}>
-            <PaymentContent orderId={orderId} amount={amount} onSuccess={onSuccess} onClose={onClose} />
+            <PaymentContent orderId={orderId} orderIds={orderIds} amount={amount} onSuccess={onSuccess} onClose={onClose} />
           </Elements>
         )}
       </div>

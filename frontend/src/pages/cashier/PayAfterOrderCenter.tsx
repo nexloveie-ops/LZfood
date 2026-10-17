@@ -27,6 +27,8 @@ import {
 } from '../../utils/payAfterBoard';
 import WeighMarketDialog from '../../components/cashier/WeighMarketDialog';
 import { formatMarketLineTitle, isUnweighedMarketLine } from '../../utils/marketPriceDisplay';
+import { applyStaffZheToAmount, staffZheCouponPayload } from '../../utils/staffZheDiscount';
+import CashierStaffZheDiscountField from '../../components/cashier/CashierStaffZheDiscountField';
 
 type FulfillTab = 'takeout' | 'delivery';
 type PayMethod = 'cash' | 'card' | 'member';
@@ -206,6 +208,7 @@ export default function PayAfterOrderCenter() {
   const [cashReceived, setCashReceived] = useState('');
   const [memberPhone, setMemberPhone] = useState('');
   const [memberPreview, setMemberPreview] = useState<CashierMemberPreview | null>(null);
+  const [discountZhe, setDiscountZhe] = useState('');
   const [weighTarget, setWeighTarget] = useState<{ orderId: string; item: PayAfterOrderItem } | null>(null);
   const fetchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -513,7 +516,7 @@ export default function PayAfterOrderCenter() {
     await fetchAll();
   }, [fetchAll, isEn, token]);
 
-  const checkoutPayable = useMemo(() => {
+  const checkoutSubtotal = useMemo(() => {
     if (!checkoutTarget) return 0;
     if (checkoutTarget.kind === 'order') {
       const o = orders.find((x) => x._id === checkoutTarget.orderId);
@@ -522,11 +525,19 @@ export default function PayAfterOrderCenter() {
     return dineInOpen.filter((o) => (o.tableNumber ?? 0) === checkoutTarget.tableNumber).reduce((s, o) => s + dineInPayable(o), 0);
   }, [checkoutTarget, dineInOpen, orders]);
 
+  const checkoutZhe = applyStaffZheToAmount(checkoutSubtotal, discountZhe);
+  const checkoutPayable = checkoutZhe.status === 'ok' ? checkoutZhe.payableEuro : checkoutSubtotal;
+
+  useEffect(() => {
+    setDiscountZhe('');
+  }, [checkoutTarget]);
+
   const cashNum = parseFloat(cashReceived) || 0;
   const changeAmt = payMethod === 'cash' ? Math.max(0, cashNum - checkoutPayable) : 0;
 
   const submitCheckout = useCallback(async () => {
     if (!checkoutTarget) return;
+    if (checkoutZhe.status === 'invalid') return;
     if (payMethod === 'cash' && cashNum + 0.001 < checkoutPayable) return;
     if (payMethod === 'member' && !canMemberFullWalletPay(memberPreview, checkoutPayable)) return;
     const busyKey = checkoutTarget.orderId || `table-${checkoutTarget.tableNumber}`;
@@ -541,6 +552,11 @@ export default function PayAfterOrderCenter() {
         body.changeAmount = changeAmt;
       }
       if (payMethod === 'card') body.cardAmount = checkoutPayable;
+      if (checkoutZhe.status === 'ok') {
+        const coupon = staffZheCouponPayload(checkoutZhe);
+        body.couponName = coupon.name;
+        body.couponAmount = coupon.amount;
+      }
       body.skipCloudPrint = true;
       const url = checkoutTarget.kind === 'order' && checkoutTarget.orderId
         ? `/api/checkout/seat/${checkoutTarget.orderId}`
@@ -571,7 +587,7 @@ export default function PayAfterOrderCenter() {
     } finally {
       setBusyId(null);
     }
-  }, [cashNum, changeAmt, checkoutPayable, checkoutTarget, config, fetchAll, isEn, memberPhone, memberPreview, payMethod, token]);
+  }, [cashNum, changeAmt, checkoutPayable, checkoutTarget, checkoutZhe, config, fetchAll, isEn, memberPhone, memberPreview, payMethod, token]);
 
   const finishTakeout = useCallback(async (order: PayAfterOrder) => {
     setBusyId(order._id);
@@ -855,7 +871,16 @@ export default function PayAfterOrderCenter() {
         <div className="pay-after-modal-backdrop" onClick={() => setCheckoutTarget(null)}>
           <div className="pay-after-modal" onClick={(e) => e.stopPropagation()}>
             <h3>{checkoutTarget.kind === 'table' ? (isEn ? 'Checkout table' : '整桌结账') : (isEn ? 'Checkout this round' : '结账当前轮次')}</h3>
-            <div className="pay-after-modal-amt">€{checkoutPayable.toFixed(2)}</div>
+            <div className="pay-after-modal-amt">
+              {checkoutZhe.status === 'ok' ? <div className="pay-after-modal-amt-was">€{checkoutSubtotal.toFixed(2)}</div> : null}
+              €{checkoutPayable.toFixed(2)}
+            </div>
+            <CashierStaffZheDiscountField
+              value={discountZhe}
+              onChange={setDiscountZhe}
+              applied={checkoutZhe}
+              isEn={isEn}
+            />
             <div className="pay-after-pay-methods">
               {(['cash', 'card'] as const).map((m) => (
                 <button key={m} type="button" className={`btn ${payMethod === m ? 'btn-primary' : 'btn-outline'}`} onClick={() => setPayMethod(m)}>
@@ -887,7 +912,7 @@ export default function PayAfterOrderCenter() {
             ) : null}
             <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
               <button type="button" className="btn btn-outline" onClick={() => setCheckoutTarget(null)}>{isEn ? 'Back' : '返回'}</button>
-              <button type="button" className="btn btn-primary" disabled={busyId != null} onClick={() => void submitCheckout()}>
+              <button type="button" className="btn btn-primary" disabled={busyId != null || checkoutZhe.status === 'invalid'} onClick={() => void submitCheckout()}>
                 {isEn ? 'Confirm' : '确认结账'}
               </button>
             </div>

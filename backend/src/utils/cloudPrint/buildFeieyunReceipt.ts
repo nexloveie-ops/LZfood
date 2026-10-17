@@ -65,6 +65,8 @@ export type CloudPrintReceipt = {
   cashReceived?: number;
   changeAmount?: number;
   memberCreditUsed?: number;
+  couponName?: string;
+  couponAmount?: number;
   checkedOutAt: string | Date;
   dineInPartialLineSettlements?: { orderLineItemId: string; quantity: number; amountEuro: number }[];
   restaurant: {
@@ -444,18 +446,23 @@ export function buildFeieyunReceiptContent(receipt: CloudPrintReceipt): string {
   const { deliveryAmt, showLegacy } = deliveryBreakdown(receipt.orders);
   const bundles = receipt.orders.flatMap((o) => o.appliedBundles || []);
   const totalBundle = bundles.reduce((s, b) => s + (Number(b.discount) || 0), 0);
+  const couponAmt = Number(receipt.couponAmount) || 0;
+  const couponLabel = String(receipt.couponName || '').trim() || 'Discount / 折扣';
   if (partial) {
     lines.push(padRow('Subtotal (lines)', euro(partial.subtotal)));
-    if (partial.adjust > 0.001) lines.push(padRow('Bundle/coupon', euro(partial.adjust, true)));
+    if (partial.adjust > 0.001) {
+      lines.push(padRow(couponAmt > 0.001 ? couponLabel : 'Bundle/coupon', euro(partial.adjust, true)));
+    }
     if (showLegacy) lines.push(padRow('Delivery', euro(deliveryAmt)));
     lines.push(`<BOLD>${padRow('Total', euro(receipt.totalAmount))}</BOLD>`);
-  } else if (totalBundle > 0.001) {
+  } else if (totalBundle > 0.001 || couponAmt > 0.001) {
     const foodAfter = receipt.totalAmount - deliveryAmt;
-    const subtotal = foodAfter + totalBundle;
+    const subtotal = foodAfter + totalBundle + couponAmt;
     lines.push(padRow('Subtotal', euro(subtotal)));
     for (const bd of bundles) {
       lines.push(padRow(`Disc ${bd.nameEn || bd.name || ''}`, euro(bd.discount, true)));
     }
+    if (couponAmt > 0.001) lines.push(padRow(couponLabel, euro(couponAmt, true)));
     if (showLegacy) lines.push(padRow('Delivery', euro(deliveryAmt)));
     lines.push(`<BOLD>${padRow('Total', euro(receipt.totalAmount))}</BOLD>`);
   } else {

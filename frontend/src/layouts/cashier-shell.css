@@ -1332,6 +1332,64 @@
   color: var(--portal-text);
 }
 
+.pay-after-modal-amt-was {
+  font-size: 14px;
+  font-weight: 600;
+  color: #94a3b8;
+  text-decoration: line-through;
+  margin-bottom: 2px;
+}
+
+.cashier-zhe {
+  display: block;
+  margin: 0 0 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #475569;
+}
+
+.cashier-zhe-label {
+  display: block;
+  margin-bottom: 6px;
+}
+
+.cashier-zhe-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cashier-zhe-row .input {
+  flex: 1;
+}
+
+.cashier-zhe-suffix {
+  font-size: 15px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.cashier-zhe-hint {
+  margin-top: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  color: #94a3b8;
+}
+
+.cashier-zhe-err {
+  margin-top: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #c62828;
+}
+
+.cashier-zhe-ok {
+  margin-top: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #0369a1;
+}
+
 .pay-after-pay-methods {
   display: flex;
   gap: 8px;

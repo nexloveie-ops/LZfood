@@ -23,6 +23,7 @@ interface OrderItem {
   refunded?: boolean;
   /** 与后端 DELETE 堂食取消规则、收银 dineInAllowCancelPending 一致 */
   kitchenPrintedQty?: number;
+  roundIndex?: number;
   isMarketPrice?: boolean;
   weightKg?: number;
   pricePerKg?: number;
@@ -43,6 +44,7 @@ interface Order {
   placementPrepaidMethod?: string;
   memberCreditUsed?: number;
   paymentStatus?: string;
+  createdAt?: string;
 }
 
 interface PostOrderSlide {
@@ -127,6 +129,82 @@ function formatCustomerOrderNumber(order: Order): string {
     return `#${order.dailyOrderNumber}`;
   }
   return order._id.slice(-8).toUpperCase();
+}
+
+function itemLineEuro(item: OrderItem): number {
+  const extra = (item.selectedOptions || []).reduce((a, o) => a + (o.extraPrice || 0), 0);
+  return (item.unitPrice + extra) * item.quantity;
+}
+
+type TableRoundSection = { round: number; items: OrderItem[] };
+
+function OrderStatusLine({
+  item,
+  lang,
+  qtyLabel,
+  awaitWeighLabel,
+}: {
+  item: OrderItem;
+  lang: string;
+  qtyLabel: string;
+  awaitWeighLabel: string;
+}) {
+  const title = item.isMarketPrice && Number(item.weightKg) > 0 && Number(item.pricePerKg) > 0
+    ? `${lang === 'en-US' && item.itemNameEn ? item.itemNameEn : item.itemName} ${Number(item.weightKg).toFixed(2)}kg × €${Number(item.pricePerKg).toFixed(2)}/kg`
+    : (lang === 'en-US' && item.itemNameEn ? item.itemNameEn : item.itemName);
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px',
+      borderBottom: '1px solid #f0f0f0',
+    }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontWeight: 600, fontSize: 14 }}>
+          {title}
+          {item.isMarketPrice && !(Number(item.weightKg) > 0) ? (
+            <span style={{ marginLeft: 8, fontSize: 12, fontWeight: 600, color: '#E65100' }}>{awaitWeighLabel}</span>
+          ) : null}
+        </div>
+        {item.selectedOptions && item.selectedOptions.length > 0 && (
+          <div style={{ fontSize: 11, color: 'var(--text-light)', marginTop: 2 }}>
+            {item.selectedOptions.map((o, i) => (
+              <span key={i}>{i > 0 && ' · '}
+                {lang === 'en-US' ? (o.groupNameEn || o.groupName) : o.groupName}: {lang === 'en-US' ? (o.choiceNameEn || o.choiceName) : o.choiceName}
+                {o.extraPrice > 0 && ` +€${o.extraPrice}`}
+              </span>
+            ))}
+          </div>
+        )}
+        <div style={{ fontSize: 12, color: 'var(--text-light)' }}>€{item.unitPrice} / {qtyLabel}</div>
+      </div>
+      <span style={{ fontSize: 14, fontWeight: 600 }}>×{item.quantity}</span>
+      <span style={{ fontWeight: 700, color: 'var(--red-primary)', minWidth: 50, textAlign: 'right', fontFamily: "'Noto Serif SC', serif" }}>
+        €{itemLineEuro(item).toFixed(2)}
+      </span>
+    </div>
+  );
+}
+
+function groupTableOrdersIntoRounds(orders: Order[]): TableRoundSection[] {
+  const sorted = [...orders].sort((a, b) => {
+    const ta = new Date(a.createdAt || 0).getTime();
+    const tb = new Date(b.createdAt || 0).getTime();
+    if (ta !== tb) return ta - tb;
+    return String(a._id).localeCompare(String(b._id));
+  });
+  const sections: TableRoundSection[] = [];
+  for (const o of sorted) {
+    const byRound = new Map<number, OrderItem[]>();
+    for (const it of o.items || []) {
+      if (it.lineKind === 'delivery_fee') continue;
+      const r = Math.max(1, Math.floor(Number(it.roundIndex) || 1));
+      if (!byRound.has(r)) byRound.set(r, []);
+      byRound.get(r)!.push(it);
+    }
+    for (const r of [...byRound.keys()].sort((a, b) => a - b)) {
+      sections.push({ round: sections.length + 1, items: byRound.get(r)! });
+    }
+  }
+  return sections;
 }
 
 function PostOrderAdCarousel({ slides, lang }: { slides: PostOrderSlide[]; lang: string }) {
@@ -239,6 +317,7 @@ export default function OrderStatusPage() {
   const storePhone = (config.restaurant_phone || '').trim();
   const { clearCart, setItems, setEditOrderId } = useCart();
   const [order, setOrder] = useState<Order | null>(null);
+  const [tableOrders, setTableOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [showPayment, setShowPayment] = useState(false);
   const [showMemberWallet, setShowMemberWallet] = useState(false);
@@ -251,17 +330,40 @@ export default function OrderStatusPage() {
     return `/${storeSlug}/customer/menu${q ? `?${q}` : ''}`;
   }, [storeSlug, searchParams]);
 
+  const tableQs = searchParams.get('table');
+  const seatQs = searchParams.get('seat');
+
   const fetchOrder = useCallback(async () => {
     try {
       const res = await apiFetch(`/api/orders/${orderId}`);
       if (!res.ok) throw new Error();
-      setOrder(await res.json());
+      const primary = (await res.json()) as Order;
+      setOrder(primary);
+      const tableNum = primary.tableNumber ?? Number(tableQs || 0);
+      const seatQ = seatQs != null && seatQs !== '' ? seatQs : '0';
+      if (primary.type === 'dine_in' && tableNum > 0) {
+        const listRes = await apiFetch(`/api/orders/dine-in/active?table=${tableNum}&seat=${seatQ}`);
+        const list = listRes.ok ? ((await listRes.json()) as Order[]) : [];
+        const byId = new Map<string, Order>();
+        for (const o of Array.isArray(list) ? list : []) byId.set(String(o._id), o);
+        byId.set(String(primary._id), primary);
+        const sorted = [...byId.values()].sort((a, b) => {
+          const ta = new Date(a.createdAt || 0).getTime();
+          const tb = new Date(b.createdAt || 0).getTime();
+          if (ta !== tb) return ta - tb;
+          return String(a._id).localeCompare(String(b._id));
+        });
+        setTableOrders(sorted);
+      } else {
+        setTableOrders([primary]);
+      }
     } catch {
       setOrder(null);
+      setTableOrders([]);
       clearCart();
     }
     finally { setLoading(false); }
-  }, [orderId, clearCart]);
+  }, [orderId, clearCart, tableQs, seatQs]);
 
   useEffect(() => { fetchOrder(); }, [fetchOrder]);
 
@@ -426,6 +528,19 @@ export default function OrderStatusPage() {
   }
 
   const isPending = order.status === 'pending';
+  const displayOrders = tableOrders.length > 0 ? tableOrders : [order];
+  const roundSections = order.type === 'dine_in' ? groupTableOrdersIntoRounds(displayOrders) : [];
+  const payAfter = config.dine_in_workflow_mode === 'pay_after';
+  const pendingPayOrders = displayOrders.filter((o) => o.status === 'pending');
+  const combinedPayable = pendingPayOrders.reduce(
+    (s, o) => s + computeCustomerFacingPayableEuro(o, o.type === 'dine_in' && payAfter),
+    0,
+  );
+  const payOrderIds = pendingPayOrders.map((o) => String(o._id));
+  const payBlockedWeigh = pendingPayOrders.some((o) =>
+    o.items.some((it) => it.isMarketPrice && !(Number(it.weightKg) > 0) && !it.refunded),
+  );
+  const allBundles = displayOrders.flatMap((o) => o.appliedBundles || []);
   const maySelfCancel = customerMaySelfCancelOrder(order, config.dine_in_workflow_mode);
   const showDineInPrimaryAsAddDishes =
     order.type === 'dine_in' &&
@@ -467,7 +582,9 @@ export default function OrderStatusPage() {
         <div style={{ minWidth: 0, textAlign: 'left' }}>
           <div style={{ fontSize: 11, color: 'var(--text-light)', lineHeight: 1.2, marginBottom: 2 }}>{t('customer.orderNumber')}</div>
           <div style={{ fontSize: 15, fontWeight: 700, fontFamily: "'Noto Serif SC', serif", lineHeight: 1.2 }}>
-            {orderNumberDisplay}
+            {displayOrders.length > 1
+              ? displayOrders.map(formatCustomerOrderNumber).join(' · ')
+              : orderNumberDisplay}
           </div>
           {order.type === 'dine_in' && order.dineInGuestLabel?.trim() ? (
             <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>
@@ -585,41 +702,36 @@ export default function OrderStatusPage() {
 
       {/* Items */}
       <div style={{ background: 'var(--bg-white)', borderRadius: 12, border: '1px solid rgba(232,213,184,0.5)', overflow: 'hidden' }}>
-        {order.items.map((item, idx) => (
-          <div key={item._id || idx} style={{
-            display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px',
-            borderBottom: '1px solid #f0f0f0',
-          }}>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontWeight: 600, fontSize: 14 }}>
-                {item.isMarketPrice && Number(item.weightKg) > 0 && Number(item.pricePerKg) > 0
-                  ? `${lang === 'en-US' && item.itemNameEn ? item.itemNameEn : item.itemName} ${Number(item.weightKg).toFixed(2)}kg × €${Number(item.pricePerKg).toFixed(2)}/kg`
-                  : (lang === 'en-US' && item.itemNameEn ? item.itemNameEn : item.itemName)}
-                {item.isMarketPrice && !(Number(item.weightKg) > 0) ? (
-                  <span style={{ marginLeft: 8, fontSize: 12, fontWeight: 600, color: '#E65100' }}>{t('customer.marketPriceAwaitWeigh')}</span>
-                ) : null}
-              </div>
-              {item.selectedOptions && item.selectedOptions.length > 0 && (
-                <div style={{ fontSize: 11, color: 'var(--text-light)', marginTop: 2 }}>
-                  {item.selectedOptions.map((o, i) => (
-                    <span key={i}>{i > 0 && ' · '}
-                      {lang === 'en-US' ? (o.groupNameEn || o.groupName) : o.groupName}: {lang === 'en-US' ? (o.choiceNameEn || o.choiceName) : o.choiceName}
-                      {o.extraPrice > 0 && ` +€${o.extraPrice}`}
-                    </span>
-                  ))}
-                </div>
-              )}
-              <div style={{ fontSize: 12, color: 'var(--text-light)' }}>€{item.unitPrice} / {t('customer.quantity')}</div>
-            </div>
-            <span style={{ fontSize: 14, fontWeight: 600 }}>×{item.quantity}</span>
-            <span style={{ fontWeight: 700, color: 'var(--red-primary)', minWidth: 50, textAlign: 'right', fontFamily: "'Noto Serif SC', serif" }}>
-              €{((item.unitPrice + (item.selectedOptions || []).reduce((a, o) => a + (o.extraPrice || 0), 0)) * item.quantity).toFixed(2)}
-            </span>
-          </div>
-        ))}
-        {order.appliedBundles && order.appliedBundles.length > 0 && (
+        {roundSections.length > 0
+          ? roundSections.flatMap((section) => [
+            <div
+              key={`round-${section.round}`}
+              className={`order-status-round-head${section.round > 1 ? ' is-next' : ''}`}
+            >
+              {t('customer.orderRound', { n: section.round })}
+            </div>,
+            ...section.items.map((item, idx) => (
+              <OrderStatusLine
+                key={item._id || `r${section.round}-${idx}`}
+                item={item}
+                lang={lang}
+                qtyLabel={t('customer.quantity')}
+                awaitWeighLabel={t('customer.marketPriceAwaitWeigh')}
+              />
+            )),
+          ])
+          : order.items.map((item, idx) => (
+            <OrderStatusLine
+              key={item._id || idx}
+              item={item}
+              lang={lang}
+              qtyLabel={t('customer.quantity')}
+              awaitWeighLabel={t('customer.marketPriceAwaitWeigh')}
+            />
+          ))}
+        {allBundles.length > 0 && (
           <div style={{ padding: '0 16px 12px' }}>
-            {order.appliedBundles.map((b, i) => (
+            {allBundles.map((b, i) => (
               <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: '#2E7D32', padding: '2px 0' }}>
                 <span>🎁 {b.name}{b.nameEn ? ` ${b.nameEn}` : ''}</span>
                 <span style={{ fontWeight: 600 }}>-€{b.discount.toFixed(2)}</span>
@@ -629,13 +741,13 @@ export default function OrderStatusPage() {
         )}
         <div style={{ display: 'flex', justifyContent: 'space-between', padding: '14px 16px', fontWeight: 700, fontSize: 16 }}>
           <span>{t('customer.totalAmount')}</span>
-          <span style={{ color: 'var(--red-primary)', fontFamily: "'Noto Serif SC', serif" }}>€{computeCustomerFacingPayableEuro(order, config.dine_in_workflow_mode === 'pay_after').toFixed(2)}</span>
+          <span style={{ color: 'var(--red-primary)', fontFamily: "'Noto Serif SC', serif" }}>€{combinedPayable.toFixed(2)}</span>
         </div>
       </div>
 
       {/* Actions */}
       <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {isPending && order.items.some((it) => it.isMarketPrice && !(Number(it.weightKg) > 0) && !it.refunded) ? (
+        {isPending && payBlockedWeigh ? (
           <div style={{ padding: '12px 14px', background: '#FFF8E1', borderRadius: 10, fontSize: 13, color: '#E65100', fontWeight: 600 }}>
             {t('customer.payBlockedAwaitWeigh')}
           </div>
@@ -644,18 +756,18 @@ export default function OrderStatusPage() {
           <>
             {/* Online Payment Button */}
             <button className="btn" onClick={() => setShowPayment(true)}
-              disabled={order.items.some((it) => it.isMarketPrice && !(Number(it.weightKg) > 0) && !it.refunded)}
+              disabled={payBlockedWeigh}
               style={{
                 width: '100%', padding: '14px 0', fontSize: 16, fontWeight: 700,
                 background: '#000', color: '#fff', border: 'none', borderRadius: 12,
                 display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
               }}>
-              <span style={{ fontSize: 20 }}>💳</span> {t('customer.payNow')} · €{computeCustomerFacingPayableEuro(order, config.dine_in_workflow_mode === 'pay_after').toFixed(2)}
+              <span style={{ fontSize: 20 }}>💳</span> {t('customer.payNow')} · €{combinedPayable.toFixed(2)}
             </button>
             {canMemberWallet ? (
               <button
                 className="btn btn-outline"
-                disabled={order.items.some((it) => it.isMarketPrice && !(Number(it.weightKg) > 0) && !it.refunded)}
+                disabled={payBlockedWeigh}
                 onClick={() => setShowMemberWallet(true)}
                 style={{
                   width: '100%',
@@ -672,7 +784,7 @@ export default function OrderStatusPage() {
                   gap: 8,
                 }}
               >
-                <span style={{ fontSize: 20 }}>👛</span> {t('customer.memberWalletPay')} · €{computeCustomerFacingPayableEuro(order, config.dine_in_workflow_mode === 'pay_after').toFixed(2)}
+                <span style={{ fontSize: 20 }}>👛</span> {t('customer.memberWalletPay')} · €{combinedPayable.toFixed(2)}
               </button>
             ) : null}
             {hideBackToMenu ? (
@@ -819,7 +931,8 @@ export default function OrderStatusPage() {
       {showPayment && order && (
         <PaymentModal
           orderId={order._id}
-          amount={computeCustomerFacingPayableEuro(order, config.dine_in_workflow_mode === 'pay_after')}
+          orderIds={payOrderIds}
+          amount={combinedPayable}
           onSuccess={() => {
             setShowPayment(false);
             fetchOrder(); // Refresh to show checked_out status
@@ -830,7 +943,9 @@ export default function OrderStatusPage() {
       {canMemberWallet && showMemberWallet && order && (
         <MemberWalletPayModal
           orderId={order._id}
-          amount={computeCustomerFacingPayableEuro(order, config.dine_in_workflow_mode === 'pay_after')}
+          orderIds={payOrderIds}
+          tableNumber={order.tableNumber}
+          amount={combinedPayable}
           onSuccess={() => {
             setShowMemberWallet(false);
             fetchOrder();
