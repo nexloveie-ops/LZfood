@@ -54,7 +54,10 @@ export default function MenuItemCard({
   const [showOptions, setShowOptions] = useState(false);
   const [showPhoto, setShowPhoto] = useState(false);
   const [photoLoaded, setPhotoLoaded] = useState(false);
+  const [photoFailed, setPhotoFailed] = useState(false);
   const descRef = useRef<HTMLDivElement>(null);
+  const photoSrc = String(photoUrl || '').trim();
+  const showThumb = Boolean(photoSrc) && !photoFailed;
 
   useEffect(() => {
     const el = descRef.current;
@@ -65,6 +68,7 @@ export default function MenuItemCard({
 
   useEffect(() => {
     setPhotoLoaded(false);
+    setPhotoFailed(false);
   }, [photoUrl]);
 
   const hasOptions = optionGroups && optionGroups.length > 0;
@@ -115,48 +119,43 @@ export default function MenuItemCard({
           }}>{t('customer.soldOut')}</span>
         )}
 
-        {/* Image — <img> + lazy so off-screen rows don’t download full photos; background-image loads everything eagerly */}
-        <div
-          className="menu-item-card__thumb"
-          onClick={photoUrl ? (e) => { e.stopPropagation(); setShowPhoto(true); } : undefined}
-          style={{
-            cursor: photoUrl ? 'zoom-in' : undefined,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontSize: 36,
-            filter: unavailable ? 'grayscale(60%)' : 'none',
-          }}
-        >
-          {!photoUrl ? (
-            '🍽️'
-          ) : (
-            <>
-              {!photoLoaded ? <span aria-hidden className="menu-item-thumb-shimmer" /> : null}
-              <img
-                src={photoUrl}
-                alt=""
-                width={100}
-                height={100}
-                loading="lazy"
-                decoding="async"
-                fetchPriority={photoFetchPriority}
-                sizes="100px"
-                onLoad={() => setPhotoLoaded(true)}
-                style={{
-                  position: 'absolute',
-                  inset: 0,
-                  width: '100%',
-                  height: '100%',
-                  objectFit: 'cover',
-                  objectPosition: 'center',
-                  opacity: photoLoaded ? 1 : 0,
-                  transition: 'opacity 0.2s ease-out',
-                }}
-              />
-            </>
-          )}
-        </div>
+        {showThumb ? (
+          <div
+            className="menu-item-card__thumb"
+            onClick={(e) => { e.stopPropagation(); setShowPhoto(true); }}
+            style={{
+              cursor: 'zoom-in',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              filter: unavailable ? 'grayscale(60%)' : 'none',
+            }}
+          >
+            {!photoLoaded ? <span aria-hidden className="menu-item-thumb-shimmer" /> : null}
+            <img
+              src={photoSrc}
+              alt=""
+              width={100}
+              height={100}
+              loading="lazy"
+              decoding="async"
+              fetchPriority={photoFetchPriority}
+              sizes="100px"
+              onLoad={() => setPhotoLoaded(true)}
+              onError={() => setPhotoFailed(true)}
+              style={{
+                position: 'absolute',
+                inset: 0,
+                width: '100%',
+                height: '100%',
+                objectFit: 'cover',
+                objectPosition: 'center',
+                opacity: photoLoaded ? 1 : 0,
+                transition: 'opacity 0.2s ease-out',
+              }}
+            />
+          </div>
+        ) : null}
 
         {/* Body */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
@@ -277,7 +276,7 @@ export default function MenuItemCard({
       )}
 
       {/* Photo lightbox */}
-      {showPhoto && photoUrl && (
+      {showPhoto && showThumb && (
         <div
           onClick={() => setShowPhoto(false)}
           style={{
@@ -288,7 +287,7 @@ export default function MenuItemCard({
           }}
         >
           <img
-            src={photoUrl}
+            src={photoSrc}
             alt={name}
             loading="eager"
             decoding="async"
