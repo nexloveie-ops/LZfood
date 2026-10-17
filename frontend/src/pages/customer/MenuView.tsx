@@ -481,6 +481,7 @@ export default function MenuView({ storeFrontEmbed = false }: { storeFrontEmbed?
             <div
               key={cat._id}
               data-cat-id={cat._id}
+              className={`menu-section${activeCategory === cat._id ? ' menu-section--active' : ''}`}
               ref={(el) => { if (el) sectionRefs.current.set(cat._id, el); }}
             >
               <h2 className="menu-section-title">{getName(cat.translations)}</h2>
