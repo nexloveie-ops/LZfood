@@ -30,6 +30,8 @@ export type CloudPrintLine = {
   weightKg?: number;
   pricePerKg?: number;
   kitchenPrintedQty?: number;
+  noteZh?: string;
+  noteEn?: string;
 };
 
 export type CloudPrintOrder = {
@@ -132,32 +134,31 @@ function extraSuffix(raw: unknown): string {
   return ep > 0.000001 ? ` +${ep.toFixed(2)} EUR` : '';
 }
 
-function extraRight(raw: unknown): string {
-  const ep = extraEuro(raw);
-  return ep > 0.000001 ? `+${ep.toFixed(2)} EUR` : '';
+function notePrintLines(noteZh?: string, noteEn?: string, kitchenEmphasis = false): string[] {
+  const zh = String(noteZh || '').trim();
+  const en = String(noteEn || '').trim();
+  if (!zh && !en) return [];
+  const primary = zh || en;
+  const secondary = zh && en && en !== zh ? en : '';
+  if (!kitchenEmphasis) {
+    const out = [`  备注 ${primary}`];
+    if (secondary) out.push(`    ${secondary}`);
+    return out;
+  }
+  const out = [`<L><B>  备注 ${primary}</B></L>`];
+  if (secondary) out.push(`<L><B>    ${secondary}</B></L>`);
+  return out;
 }
 
-function optLines(o: CloudPrintOption, kitchenEmphasis = false): string[] {
+function optLines(o: CloudPrintOption): string[] {
   const zh = String(o.choiceName || o.groupName || '').trim();
   const en = String(o.choiceNameEn || o.groupNameEn || '').trim();
   const fallback = extraEuro(o.extraPrice) > 0 ? 'Option' : '';
-  const primary = zh || en;
-  const secondary = zh && en && en !== zh ? en : undefined;
-  const main = primary || fallback;
-  if (!main && extraEuro(o.extraPrice) <= 0) return [];
-  if (!kitchenEmphasis) {
-    const price = extraSuffix(o.extraPrice);
-    if (!main && !price) return [];
-    const out = [`  · ${main}${price}`];
-    if (secondary && primary) out.push(`    ${secondary}`);
-    return out;
-  }
-  const out: string[] = [];
-  const name = main ? `  · ${main}` : '  ·';
-  const price = extraRight(o.extraPrice);
-  out.push(`<L><B>${price ? padRow(name, price) : name}</B></L>`);
-  if (secondary && primary) out.push(`<L><B>    ${secondary}</B></L>`);
-  return out;
+  const label = zh && en && en !== zh ? `${zh} ${en}` : (zh || en || fallback);
+  if (!label && extraEuro(o.extraPrice) <= 0) return [];
+  const price = extraSuffix(o.extraPrice);
+  if (!label && !price) return [];
+  return [`  · ${label}${price}`];
 }
 
 function formatCatalogHeader(meta: CatalogMeta): string {
@@ -284,6 +285,8 @@ type PartialLine = {
   qty: number;
   amountEuro: number;
   options?: CloudPrintOption[];
+  noteZh?: string;
+  noteEn?: string;
   categoryId?: string;
   categoryName?: string;
   categoryNameEn?: string;
@@ -311,6 +314,8 @@ function describePartial(receipt: CloudPrintReceipt): { lines: PartialLine[]; su
       qty: row.quantity,
       amountEuro: row.amountEuro,
       options: it?.selectedOptions,
+      noteZh: it?.noteZh,
+      noteEn: it?.noteEn,
       categoryId: it?.categoryId,
       categoryName: it?.categoryName,
       categoryNameEn: it?.categoryNameEn,
@@ -393,11 +398,26 @@ export function buildFeieyunReceiptContent(receipt: CloudPrintReceipt): string {
     }
   }
 
-  const pushItemBlock = (title: string, amount: number, titleEn?: string, options?: CloudPrintOption[]) => {
+  const pushItemBlock = (
+    title: string,
+    amount: number,
+    titleEn?: string,
+    options?: CloudPrintOption[],
+    noteZh?: string,
+    noteEn?: string,
+  ) => {
     lines.push(`<B>${title}</B>`);
-    lines.push(`<RIGHT>${euro(amount)}</RIGHT>`);
-    if (titleEn && titleEn !== title.replace(/^\d+X\s/, '')) lines.push(`  ${titleEn}`);
-    for (const o of options || []) lines.push(...optLines(o, isPayAfterKitchen));
+    const en = String(titleEn || '').trim();
+    const zhName = title.replace(/^\d+X\s/, '').trim();
+    const amountText = euro(amount);
+    if (en && en !== zhName) {
+      // <L> 只加高，一行仍是 48 列，英文和金额才能排在同一行右侧。
+      lines.push(`<L><BOLD>${padRow(en, amountText)}</BOLD></L>`);
+    } else {
+      lines.push(`<RIGHT>${amountText}</RIGHT>`);
+    }
+    for (const o of options || []) lines.push(...optLines(o));
+    lines.push(...notePrintLines(noteZh, noteEn, isPayAfterKitchen));
   };
 
   if (partial) {
@@ -414,12 +434,21 @@ export function buildFeieyunReceiptContent(receipt: CloudPrintReceipt): string {
       categorySortOrder: L.categorySortOrder,
       lineKind: L.lineKind,
       selectedOptions: L.options,
+      noteZh: L.noteZh,
+      noteEn: L.noteEn,
     })))) {
       lines.push(dash());
       lines.push(`<C>◆ ${formatCatalogHeader(section)}</C>`);
       for (const item of section.items) {
         const src = partial.lines.find((L) => L.title === item.itemName && L.qty === item.quantity);
-        pushItemBlock(itemTitle(item.quantity, item.itemName), src?.amountEuro ?? item.unitPrice * item.quantity, item.itemNameEn, item.selectedOptions);
+        pushItemBlock(
+          itemTitle(item.quantity, item.itemName),
+          src?.amountEuro ?? item.unitPrice * item.quantity,
+          item.itemNameEn,
+          item.selectedOptions,
+          item.noteZh,
+          item.noteEn,
+        );
       }
     }
   } else {
@@ -442,6 +471,8 @@ export function buildFeieyunReceiptContent(receipt: CloudPrintReceipt): string {
           item.unitPrice * item.quantity,
           item.itemNameEn,
           item.selectedOptions,
+          item.noteZh,
+          item.noteEn,
         );
       }
     }

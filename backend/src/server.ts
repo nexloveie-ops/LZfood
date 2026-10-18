@@ -35,6 +35,7 @@ import appleWalletWebServiceRouter from './routes/appleWalletWebService';
 import publicAdsRouter from './routes/publicAds';
 import publicPortalRouter from './routes/publicPortal';
 import publicWidgetRouter from './routes/publicWidget';
+import publicTranslateRouter from './routes/publicTranslate';
 import geoRouter, { guestEircodeMiddleware } from './routes/geo';
 import membersRouter, { membersScanOrderLookup } from './routes/members';
 import customerNotificationsRouter from './routes/customerNotifications';
@@ -110,6 +111,7 @@ app.use('/api/wallet', appleWalletWebServiceRouter);
 // 公开接口（不要求 X-Store-Slug）
 app.use('/api/public', publicAdsRouter);
 app.use('/api/public', publicWidgetRouter);
+app.use('/api/public', publicTranslateRouter);
 app.use('/api/public/portal', publicPortalRouter);
 
 // Menu categories routes

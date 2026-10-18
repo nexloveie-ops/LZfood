@@ -194,7 +194,14 @@ export function createOrdersRouter(io: SocketIOServer): Router {
     adHocOptions?: AdHocOptionInput[];
     weightKg?: unknown;
     pricePerKg?: unknown;
+    noteZh?: unknown;
+    noteEn?: unknown;
   };
+
+  function lineNote(raw: unknown): string {
+    if (typeof raw !== 'string') return '';
+    return raw.trim().slice(0, 200);
+  }
 
   function parseOrderItemAdHoc(raw: unknown, staffAllowed: boolean): AdHocOptionInput[] {
     const hasField = raw !== undefined && raw !== null && !(Array.isArray(raw) && raw.length === 0);
@@ -309,6 +316,8 @@ export function createOrdersRouter(io: SocketIOServer): Router {
       isMarketPrice?: boolean;
       weightKg?: number;
       pricePerKg?: number;
+      noteZh?: string;
+      noteEn?: string;
     }[] = [];
 
     const { MarketPriceDay, MenuCategory } = orderModels();
@@ -329,6 +338,8 @@ export function createOrdersRouter(io: SocketIOServer): Router {
       const enTrans = menuItem.translations?.find((t: { locale: string }) => t.locale === 'en-US');
       const itemName = zhTrans?.name || enTrans?.name || (menuItem.translations?.[0] as { name: string })?.name || 'Unknown';
       const itemNameEn = enTrans?.name || zhTrans?.name || itemName;
+      const noteZh = lineNote(item.noteZh);
+      const noteEn = lineNote(item.noteEn);
       const menuSnapshots = await snapshotSelectedOptionsFromMenuItem(storeId, menuItem, item.selectedOptions);
       const adHocSnapshots = adHocOptionsToSnapshots(parseOrderItemAdHoc(item.adHocOptions, staffAllowed));
       const selectedOptions = [
@@ -369,6 +380,7 @@ export function createOrdersRouter(io: SocketIOServer): Router {
             selectedOptions,
             isMarketPrice: true,
             ...(weightKg > 0 ? { weightKg, pricePerKg } : {}),
+            ...(noteZh || noteEn ? { noteZh, noteEn } : {}),
           });
         }
         continue;
@@ -385,6 +397,7 @@ export function createOrdersRouter(io: SocketIOServer): Router {
         itemName,
         itemNameEn,
         selectedOptions,
+        ...(noteZh || noteEn ? { noteZh, noteEn } : {}),
       });
     }
 

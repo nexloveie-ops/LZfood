@@ -18,6 +18,8 @@ export type PayAfterOrderItem = {
   isMarketPrice?: boolean;
   weightKg?: number;
   pricePerKg?: number;
+  noteZh?: string;
+  noteEn?: string;
   selectedOptions?: {
     groupName?: string;
     groupNameEn?: string;

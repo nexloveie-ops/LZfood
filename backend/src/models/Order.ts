@@ -30,6 +30,9 @@ const OrderItemSubdocSchema = new mongoose.Schema({
   isMarketPrice: { type: Boolean, default: false },
   weightKg: { type: Number, min: 0 },
   pricePerKg: { type: Number, min: 0 },
+  /** 店员行备注（中英）。手持点已选菜填写，翻译后写入，厨房票与结账小票都打。 */
+  noteZh: { type: String, default: '' },
+  noteEn: { type: String, default: '' },
 }, { _id: true });
 
 const AppliedBundleSchema = new mongoose.Schema({

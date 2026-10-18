@@ -64,6 +64,8 @@ function mapItem(item: PayAfterOrderItem, qty: number) {
     isMarketPrice: item.isMarketPrice,
     weightKg: item.weightKg,
     pricePerKg: item.pricePerKg,
+    noteZh: item.noteZh,
+    noteEn: item.noteEn,
     selectedOptions: mapOpts(item.selectedOptions),
   };
 }
@@ -136,6 +138,14 @@ function dishOptionSummary(it: PayAfterOrderItem): string {
     .join(' · ');
 }
 
+function dishNote(it: PayAfterOrderItem): string {
+  const zh = String(it.noteZh || '').trim();
+  const en = String(it.noteEn || '').trim();
+  if (!zh && !en) return '';
+  if (zh && en && zh !== en) return `${zh} / ${en}`;
+  return zh || en;
+}
+
 function PayAfterDishCard({
   it,
   lineIdx,
@@ -152,6 +162,7 @@ function PayAfterDishCard({
   onVoid: () => void;
 }) {
   const opts = dishOptionSummary(it);
+  const note = dishNote(it);
   return (
     <div className={`pay-after-line pay-after-dish${it.refunded ? ' is-void' : ''}`}>
       <div className="pay-after-line-main">
@@ -161,6 +172,7 @@ function PayAfterDishCard({
           {it.placedBy === 'customer_qr' ? <em> · {isEn ? 'guest' : '客人'}</em> : null}
           {(Number(it.kitchenPrintedQty) || 0) > 0 ? <em> · {isEn ? 'in kitchen' : '厨房中'}</em> : null}
           {opts ? <span className="pay-after-dish-opts">{opts}</span> : null}
+          {note ? <span className="pay-after-dish-opts">{isEn ? `Note ${note}` : `备注 ${note}`}</span> : null}
         </span>
         <span className="pay-after-line-price">€{lineTotal(it).toFixed(2)}</span>
       </div>

@@ -64,6 +64,8 @@ interface OrderRow {
     isMarketPrice?: boolean;
     weightKg?: number;
     pricePerKg?: number;
+    noteZh?: string;
+    noteEn?: string;
     selectedOptions?: {
       groupName?: string;
       groupNameEn?: string;
@@ -119,6 +121,8 @@ function mapOrderItemToReceipt(item: OrderRow['items'][0], qtyOverride: number) 
     isMarketPrice: item.isMarketPrice,
     weightKg: item.weightKg,
     pricePerKg: item.pricePerKg,
+    noteZh: item.noteZh,
+    noteEn: item.noteEn,
     selectedOptions: mapSelectedOptionsForReceipt(item.selectedOptions),
   };
 }

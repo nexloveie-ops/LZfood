@@ -49,6 +49,38 @@ interface ReceiptOrderItem {
   isMarketPrice?: boolean;
   weightKg?: number;
   pricePerKg?: number;
+  noteZh?: string;
+  noteEn?: string;
+}
+
+function receiptNotePlainLines(item: { noteZh?: string; noteEn?: string }): string[] {
+  const zh = String(item.noteZh || '').trim();
+  const en = String(item.noteEn || '').trim();
+  if (!zh && !en) return [];
+  const lines = [`@N@  备注 ${zh || en}`];
+  if (zh && en && zh !== en) lines.push(`@N@    ${en}`);
+  return lines;
+}
+
+function receiptNoteHtml(item: { noteZh?: string; noteEn?: string }): string {
+  const zh = String(item.noteZh || '').trim();
+  const en = String(item.noteEn || '').trim();
+  if (!zh && !en) return '';
+  let html = `<div class="item-en">备注 ${escapeReceiptHtml(zh || en)}</div>`;
+  if (zh && en && zh !== en) html += `<div class="item-en">${escapeReceiptHtml(en)}</div>`;
+  return html;
+}
+
+function ReceiptNoteLines({ item }: { item: { noteZh?: string; noteEn?: string } }) {
+  const zh = String(item.noteZh || '').trim();
+  const en = String(item.noteEn || '').trim();
+  if (!zh && !en) return null;
+  return (
+    <>
+      <div style={{ fontSize: 15, lineHeight: 1.25 }}>备注 {zh || en}</div>
+      {zh && en && zh !== en ? <div style={{ fontSize: 14, lineHeight: 1.25 }}>{en}</div> : null}
+    </>
+  );
 }
 
 interface ReceiptOrder {
@@ -109,6 +141,8 @@ function describeDineInPartialLines(receipt: ReceiptData): {
     qty: number;
     amountEuro: number;
     options: ReceiptOrderItem['selectedOptions'];
+    noteZh?: string;
+    noteEn?: string;
     itemName: string;
     itemNameEn?: string;
     menuItemId?: string;
@@ -140,6 +174,8 @@ function describeDineInPartialLines(receipt: ReceiptData): {
       qty: row.quantity,
       amountEuro: row.amountEuro,
       options: it?.selectedOptions,
+      noteZh: it?.noteZh,
+      noteEn: it?.noteEn,
       categoryId: it?.categoryId,
       categoryName: it?.categoryName,
       categoryNameEn: it?.categoryNameEn,
@@ -635,6 +671,7 @@ function buildReceiptPlainText(
         if (L.options) {
           for (const o of L.options) lines.push(...receiptOptionPrintPlain(o));
         }
+        lines.push(...receiptNotePlainLines(L));
       }
     }
   } else {
@@ -659,6 +696,7 @@ function buildReceiptPlainText(
         if (item.selectedOptions) {
           for (const o of item.selectedOptions) lines.push(...receiptOptionPrintPlain(o));
         }
+        lines.push(...receiptNotePlainLines(item));
       }
     }
   }
@@ -882,6 +920,7 @@ function buildReceiptHTML(
             html += receiptOptionPrintHtml(o, escapeReceiptHtml);
           }
         }
+        html += receiptNoteHtml(L);
         html += `</td><td class="amt">€${L.amountEuro.toFixed(2)}</td></tr>`;
       }
     }
@@ -902,6 +941,7 @@ function buildReceiptHTML(
             html += receiptOptionPrintHtml(o, escapeReceiptHtml);
           }
         }
+        html += receiptNoteHtml(item);
         html += `</td><td class="amt">€${(item.unitPrice * item.quantity).toFixed(2)}</td></tr>`;
       }
     }
@@ -1169,6 +1209,7 @@ export default function ReceiptPrint({ checkoutId, cashReceived, changeAmount, b
                     {L.options && L.options.length > 0 && L.options.map((o, oi) => (
                       <ReceiptOptionLines key={oi} o={o} />
                     ))}
+                    <ReceiptNoteLines item={L} />
                   </div>
                   <div style={{ whiteSpace: 'nowrap' }}>€{L.amountEuro.toFixed(2)}</div>
                 </div>
@@ -1201,6 +1242,7 @@ export default function ReceiptPrint({ checkoutId, cashReceived, changeAmount, b
                     {item.selectedOptions && item.selectedOptions.length > 0 && item.selectedOptions.map((o, idx) => (
                       <ReceiptOptionLines key={idx} o={o} />
                     ))}
+                    <ReceiptNoteLines item={item} />
                   </div>
                   <div style={{ whiteSpace: 'nowrap' }}>€{(item.unitPrice * item.quantity).toFixed(2)}</div>
                 </div>,
@@ -1378,6 +1420,7 @@ function buildCatalogKitchenPlainText(
     if (item.selectedOptions) {
       for (const o of item.selectedOptions) lines.push(...receiptOptionPrintPlain(o));
     }
+    lines.push(...receiptNotePlainLines(item));
   }
   lines.push(plainSolidDivider());
   lines.push(plainCenter('— end / 完 —'));
@@ -1468,6 +1511,7 @@ function buildCatalogKitchenHTML(
         html += receiptOptionPrintHtml(o, escapeReceiptHtml);
       }
     }
+    html += receiptNoteHtml(item);
     html += `</td><td class="amt">€${(item.unitPrice * item.quantity).toFixed(2)}</td></tr>`;
   }
 

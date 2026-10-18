@@ -17,6 +17,8 @@ interface OrderItem {
   quantity: number;
   unitPrice: number;
   refunded?: boolean;
+  noteZh?: string;
+  noteEn?: string;
   selectedOptions?: { groupName?: string; groupNameEn?: string; choiceName?: string; choiceNameEn?: string; extraPrice?: number }[];
 }
 
@@ -431,6 +433,12 @@ export default function ReprintReceipt() {
                                     </span>
                                   );
                                 })}
+                              </div>
+                            )}
+                            {(item.noteZh || item.noteEn) && (
+                              <div style={{ fontSize: 10, color: 'var(--text-light)' }}>
+                                备注 {String(item.noteZh || item.noteEn).trim()}
+                                {item.noteZh && item.noteEn && item.noteZh !== item.noteEn ? ` / ${item.noteEn}` : ''}
                               </div>
                             )}
                           </div>

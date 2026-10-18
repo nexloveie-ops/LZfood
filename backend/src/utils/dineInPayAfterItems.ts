@@ -99,10 +99,18 @@ export function mergeDineInRoundAndPlacedByFromPrevious(
   newLinePlacedBy: LinePlacedBy,
 ): void {
   const prevMeta = new Map<string, { roundIndex: number; placedBy: LinePlacedBy }>();
+  const prevNotes = new Map<string, Array<{ noteZh: string; noteEn: string }>>();
   for (const it of previousItems) {
     if (it.lineKind === 'delivery_fee' || it.refunded) continue;
     if (!it.menuItemId) continue;
     const k = dineInMenuLineAggregateKey(it);
+    const noteZh = String((it as { noteZh?: string }).noteZh || '').trim();
+    const noteEn = String((it as { noteEn?: string }).noteEn || '').trim();
+    if (noteZh || noteEn) {
+      const notes = prevNotes.get(k) || [];
+      notes.push({ noteZh, noteEn });
+      prevNotes.set(k, notes);
+    }
     if (prevMeta.has(k)) continue;
     const roundIndex = Math.max(1, Math.floor(Number(it.roundIndex) || 1));
     const placedBy: LinePlacedBy = it.placedBy === 'customer_qr' ? 'customer_qr' : 'staff';
@@ -120,6 +128,14 @@ export function mergeDineInRoundAndPlacedByFromPrevious(
     } else {
       raw.roundIndex = nextRound;
       raw.placedBy = newLinePlacedBy;
+    }
+    const incomingZh = String(raw.noteZh || '').trim();
+    const incomingEn = String(raw.noteEn || '').trim();
+    const queued = prevNotes.get(k);
+    if (!incomingZh && !incomingEn && queued && queued.length > 0) {
+      const note = queued.shift();
+      if (note?.noteZh) raw.noteZh = note.noteZh;
+      if (note?.noteEn) raw.noteEn = note.noteEn;
     }
   }
 }

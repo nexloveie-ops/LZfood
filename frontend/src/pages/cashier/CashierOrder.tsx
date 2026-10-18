@@ -2017,6 +2017,8 @@ export default function CashierOrder() {
           quantity: number;
           itemName?: string;
           itemNameEn?: string;
+          noteZh?: string;
+          noteEn?: string;
           selectedOptions?: { groupName?: string; choiceName?: string; extraPrice?: number }[];
         };
         const deliveryFeeCharged = Number(orderData.deliveryFeeEuro) || 0;
@@ -2028,6 +2030,8 @@ export default function CashierOrder() {
           unitPrice: item.unitPrice,
           itemName: item.itemName ?? '',
           itemNameEn: item.itemNameEn,
+          noteZh: item.noteZh,
+          noteEn: item.noteEn,
           selectedOptions: item.selectedOptions,
         });
         let receiptItems = (orderData.items as ReceiptLine[]).map((item) => {

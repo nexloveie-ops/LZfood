@@ -30,21 +30,43 @@ function sampleReceipt(over: Partial<CloudPrintReceipt> = {}): CloudPrintReceipt
 }
 
 describe('buildFeieyunReceiptContent pay_after kitchen', () => {
-  it('hides Kitchen banner and dine-in order number, enlarges right-aligned options', () => {
+  it('hides Kitchen banner and dine-in order number, puts English beside the amount', () => {
     const html = buildFeieyunReceiptContent(sampleReceipt({ dineInWorkflowMode: 'pay_after' }));
     expect(html).not.toContain('Kitchen / 厨房');
     expect(html).not.toContain('Order #174501');
     expect(html).not.toContain('Ref:');
     expect(html).toContain('Table 2');
-    expect(html).toMatch(/<L><B>· 加辣\s+\+1\.00 EUR<\/B><\/L>/);
+    expect(html).toContain('<B>1X 金牌钟水饺</B>');
+    expect(html).toMatch(/<L><BOLD>Gold dumpling\s+12\.00 EUR<\/BOLD><\/L>/);
+    expect(html).toContain('  · 加辣 Extra spicy +1.00 EUR');
+    expect(html).not.toContain('<RIGHT>12.00 EUR</RIGHT>');
+  });
+
+  it('prints bilingual line notes on the kitchen ticket', () => {
+    const html = buildFeieyunReceiptContent(sampleReceipt({
+      dineInWorkflowMode: 'pay_after',
+      orders: [{
+        type: 'dine_in',
+        items: [{
+          quantity: 1,
+          unitPrice: 12,
+          itemName: '金牌钟水饺',
+          itemNameEn: 'Gold dumpling',
+          noteZh: '少辣',
+          noteEn: 'Less spicy',
+        }],
+      }],
+    }));
+    expect(html).toContain('备注 少辣');
+    expect(html).toContain('Less spicy');
   });
 
   it('keeps Kitchen banner and order number for pay_first kitchen tickets', () => {
     const html = buildFeieyunReceiptContent(sampleReceipt({ dineInWorkflowMode: 'pay_first' }));
     expect(html).toContain('Kitchen / 厨房');
     expect(html).toContain('Order #174501');
-    expect(html).toContain('  · 加辣 +1.00 EUR');
-    expect(html).not.toContain('<L><B>  · 加辣');
+    expect(html).toContain('  · 加辣 Extra spicy +1.00 EUR');
+    expect(html).toMatch(/<L><BOLD>Gold dumpling\s+12\.00 EUR<\/BOLD><\/L>/);
   });
 
   it('merges a whole table onto one kitchen ticket without order numbers', () => {
@@ -134,7 +156,8 @@ describe('buildFeieyunReceiptContent pay_after kitchen', () => {
     }));
     expect(html).not.toContain('Kitchen / 厨房');
     expect(html).toContain('Order #174501');
-    expect(html).toContain('  · 加辣 +1.00 EUR');
+    expect(html).toContain('  · 加辣 Extra spicy +1.00 EUR');
+    expect(html).toMatch(/<L><BOLD>Gold dumpling\s+12\.00 EUR<\/BOLD><\/L>/);
   });
 
   it('prints waived service as its own line, not a discount', () => {
