@@ -48,12 +48,13 @@ import {
 import { syncWaiterModeFromSearch } from '../../utils/waiterMode';
 import RecommendedStar from '../../components/RecommendedStar';
 import SpiceLevelHint from '../../components/SpiceLevelHint';
-import { formatMenuMarketPrice } from '../../utils/marketPriceDisplay';
+import { menuItemHasDiscount, menuItemSellPriceEuro } from '../../utils/menuItemSellPrice';
+import MenuPriceLabel from '../../components/MenuPriceLabel';
 
 interface Translation { locale: string; name: string; description?: string; }
-interface Category { _id: string; sortOrder: number; translations: Translation[]; }
+interface Category { _id: string; sortOrder: number; translations: Translation[]; discountZhe?: number; }
 interface MenuItem {
-  _id: string; categoryId: string; price: number;
+  _id: string; categoryId: string; price: number; discountPrice?: number;
   translations: Translation[];
   optionGroups?: OptionGroup[];
   isSoldOut?: boolean;
@@ -1335,6 +1336,8 @@ export default function CashierOrder() {
     return true;
   }, [fetchMenu, order, t]);
 
+  const zheForItem = (item: MenuItem) => categories.find((c) => c._id === item.categoryId)?.discountZhe;
+
   const addToOrder = (item: MenuItem) => {
     if (rejectItemAdd(item)) return;
     if (item.optionGroups && item.optionGroups.length > 0) { setOptionModal(item); return; }
@@ -1344,7 +1347,7 @@ export default function CashierOrder() {
         id: nextLineId(),
         menuItemId: item._id,
         name: getName(item.translations),
-        price: item.isMarketPrice ? 0 : item.price,
+        price: item.isMarketPrice ? 0 : menuItemSellPriceEuro(item, zheForItem(item)),
         ...(item.isMarketPrice
           ? { isMarketPrice: true, todayPricePerKg: item.todayPricePerKg ?? null }
           : {}),
@@ -1367,7 +1370,7 @@ export default function CashierOrder() {
         id: nextLineId(),
         menuItemId: item._id,
         name: getName(item.translations),
-        price: item.isMarketPrice ? 0 : item.price,
+        price: item.isMarketPrice ? 0 : menuItemSellPriceEuro(item, zheForItem(item)),
         options: options.map((o) => ({ ...o })),
         ...(item.isMarketPrice
           ? { isMarketPrice: true, todayPricePerKg: item.todayPricePerKg ?? null }
@@ -1537,7 +1540,14 @@ export default function CashierOrder() {
           <SpiceLevelHint level={item.spiceLevel} />
         </div>
         <div className="cashier-menu-card-price">
-          {item.isMarketPrice ? formatMenuMarketPrice(item.todayPricePerKg, lang.startsWith('en')) : `€${item.price}`}
+          <MenuPriceLabel
+            price={item.price}
+            discountPrice={item.discountPrice}
+            categoryDiscountZhe={zheForItem(item)}
+            isMarketPrice={item.isMarketPrice}
+            todayPricePerKg={item.todayPricePerKg}
+            isEn={lang.startsWith('en')}
+          />
         </div>
         {item.optionGroups && item.optionGroups.length > 0 && (
           <div className="cashier-menu-card-meta">⚙ {t('customer.selectOptions')}</div>
@@ -3673,7 +3683,8 @@ export default function CashierOrder() {
       {optionModal && optionModal.optionGroups && optionModal.optionGroups.length > 0 && (
         <OptionSelectModal
           itemName={getName(optionModal.translations)}
-          price={optionModal.isMarketPrice ? 0 : optionModal.price}
+          price={optionModal.isMarketPrice ? 0 : menuItemSellPriceEuro(optionModal, zheForItem(optionModal))}
+          listPrice={menuItemHasDiscount(optionModal, zheForItem(optionModal)) ? optionModal.price : undefined}
           optionGroups={optionModal.optionGroups}
           menuItemId={optionModal._id}
           bomSnapshot={bomSnapshot}

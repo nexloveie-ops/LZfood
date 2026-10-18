@@ -104,6 +104,8 @@ router.get('/config', async (req: Request, res: Response, next: NextFunction) =>
     const storeDoc = (await Store.findById(req.storeId).lean()) as {
       displayName?: string;
       dineInWorkflowMode?: string;
+      dineInServiceChargePercent?: number;
+      dineInServiceChargeWaived?: boolean;
     } | null;
     const dn = storeDoc?.displayName?.trim();
     if (dn) {
@@ -112,6 +114,11 @@ router.get('/config', async (req: Request, res: Response, next: NextFunction) =>
     }
     configMap.dine_in_workflow_mode =
       storeDoc?.dineInWorkflowMode === 'pay_after' ? 'pay_after' : 'pay_first';
+    const scPct = Number(storeDoc?.dineInServiceChargePercent);
+    configMap.dine_in_service_charge_percent = Number.isFinite(scPct) && scPct > 0
+      ? String(Math.min(100, Math.round(scPct * 100) / 100))
+      : '0';
+    configMap.dine_in_service_charge_waived = storeDoc?.dineInServiceChargeWaived === true ? '1' : '0';
     res.json(configMap);
   } catch (err) {
     next(err);
@@ -179,6 +186,26 @@ router.put('/config', ...requireAuthSameStore, requirePermission('config:update'
       }
       await Store.findByIdAndUpdate(req.storeId, { $set: { dineInWorkflowMode: raw } });
       results.dine_in_workflow_mode = raw;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(updates, 'dine_in_service_charge_percent')) {
+      const raw = updates.dine_in_service_charge_percent;
+      delete updates.dine_in_service_charge_percent;
+      const n = typeof raw === 'number' ? raw : Number(String(raw ?? '').trim());
+      if (String(raw ?? '').trim() !== '' && (!Number.isFinite(n) || n < 0 || n > 100)) {
+        throw createAppError('VALIDATION_ERROR', 'dine_in_service_charge_percent must be between 0 and 100');
+      }
+      const stored = !Number.isFinite(n) || n <= 0 ? 0 : Math.round(n * 100) / 100;
+      await Store.findByIdAndUpdate(req.storeId, { $set: { dineInServiceChargePercent: stored } });
+      results.dine_in_service_charge_percent = String(stored);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(updates, 'dine_in_service_charge_waived')) {
+      const raw = updates.dine_in_service_charge_waived;
+      delete updates.dine_in_service_charge_waived;
+      const waived = raw === true || raw === 'true' || raw === 1 || raw === '1';
+      await Store.findByIdAndUpdate(req.storeId, { $set: { dineInServiceChargeWaived: waived } });
+      results.dine_in_service_charge_waived = waived ? '1' : '0';
     }
 
     for (const [key, value] of Object.entries(updates)) {

@@ -4,6 +4,7 @@ import { getModels } from '../getModels';
 import { requirePermission } from '../middleware/auth';
 import { requireAuthSameStore } from '../middleware/authForStore';
 import { createAppError } from '../middleware/errorHandler';
+import { parseMenuCategoryDiscountZheInput } from '../utils/menuItemSellPrice';
 
 const router = Router();
 
@@ -43,7 +44,7 @@ router.post(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { MenuCategory } = getModels();
-      const { sortOrder, translations } = req.body;
+      const { sortOrder, translations, discountZhe } = req.body;
 
       if (sortOrder == null || !Array.isArray(translations) || translations.length === 0) {
         throw createAppError(
@@ -61,10 +62,15 @@ router.post(
         }
       }
 
+      const zhe = discountZhe !== undefined ? parseMenuCategoryDiscountZheInput(discountZhe) : null;
+      if (zhe === undefined) {
+        throw createAppError('VALIDATION_ERROR', '目录折扣须为 1–9.99 或 11–99（如 9 或 85）');
+      }
       const category = await MenuCategory.create({
         storeId: req.storeId,
         sortOrder,
         translations,
+        ...(zhe != null ? { discountZhe: zhe } : {}),
       });
       res.status(201).json(category);
     } catch (err) {
@@ -112,9 +118,9 @@ router.put(
         throw createAppError('NOT_FOUND', 'Category not found');
       }
 
-      const { sortOrder, translations } = req.body;
+      const { sortOrder, translations, discountZhe } = req.body;
 
-      if (sortOrder == null && !translations) {
+      if (sortOrder == null && !translations && discountZhe === undefined) {
         throw createAppError('VALIDATION_ERROR', 'At least sortOrder or translations must be provided');
       }
 
@@ -132,10 +138,23 @@ router.put(
       const updateData: Record<string, unknown> = {};
       if (sortOrder != null) updateData.sortOrder = sortOrder;
       if (translations) updateData.translations = translations;
+      let unsetZhe = false;
+      if (discountZhe !== undefined) {
+        const zhe = parseMenuCategoryDiscountZheInput(discountZhe);
+        if (zhe === undefined) {
+          throw createAppError('VALIDATION_ERROR', '目录折扣须为 1–9.99 或 11–99（如 9 或 85）');
+        }
+        if (zhe == null) unsetZhe = true;
+        else updateData.discountZhe = zhe;
+      }
+
+      const mongoUpdate: Record<string, unknown> = {};
+      if (Object.keys(updateData).length > 0) mongoUpdate.$set = updateData;
+      if (unsetZhe) mongoUpdate.$unset = { discountZhe: 1 };
 
       const updated = await MenuCategory.findOneAndUpdate(
         { _id: id, storeId: req.storeId },
-        updateData,
+        mongoUpdate,
         { new: true, runValidators: true },
       );
 

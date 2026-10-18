@@ -29,6 +29,13 @@ import WeighMarketDialog from '../../components/cashier/WeighMarketDialog';
 import { formatMarketLineTitle, isUnweighedMarketLine } from '../../utils/marketPriceDisplay';
 import { applyStaffZheToAmount, staffZheCouponPayload } from '../../utils/staffZheDiscount';
 import CashierStaffZheDiscountField from '../../components/cashier/CashierStaffZheDiscountField';
+import CashierServiceChargeWaiveField from '../../components/cashier/CashierServiceChargeWaiveField';
+import {
+  computeServiceChargeEuro,
+  parseServiceChargePercent,
+  parseServiceChargeWaived,
+  payableWithServiceCharge,
+} from '../../utils/dineInServiceCharge';
 
 type FulfillTab = 'takeout' | 'delivery';
 type PayMethod = 'cash' | 'card' | 'member';
@@ -526,7 +533,11 @@ export default function PayAfterOrderCenter() {
   }, [checkoutTarget, dineInOpen, orders]);
 
   const checkoutZhe = applyStaffZheToAmount(checkoutSubtotal, discountZhe);
-  const checkoutPayable = checkoutZhe.status === 'ok' ? checkoutZhe.payableEuro : checkoutSubtotal;
+  const serviceChargePercent = parseServiceChargePercent(config.dine_in_service_charge_percent);
+  const serviceChargeAmount = computeServiceChargeEuro(checkoutSubtotal, serviceChargePercent);
+  const serviceChargeWaived = parseServiceChargeWaived(config.dine_in_service_charge_waived);
+  const foodAfterZhe = checkoutZhe.status === 'ok' ? checkoutZhe.payableEuro : checkoutSubtotal;
+  const checkoutPayable = payableWithServiceCharge(foodAfterZhe, serviceChargeAmount, serviceChargeWaived);
 
   useEffect(() => {
     setDiscountZhe('');
@@ -879,6 +890,12 @@ export default function PayAfterOrderCenter() {
               value={discountZhe}
               onChange={setDiscountZhe}
               applied={checkoutZhe}
+              isEn={isEn}
+            />
+            <CashierServiceChargeWaiveField
+              percent={serviceChargePercent}
+              amount={serviceChargeAmount}
+              waived={serviceChargeWaived}
               isEn={isEn}
             />
             <div className="pay-after-pay-methods">

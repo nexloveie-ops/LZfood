@@ -92,6 +92,8 @@ const InventorySubdocSchema = new mongoose.Schema(
 const MenuItemSchema = new mongoose.Schema({
   categoryId: { type: mongoose.Schema.Types.ObjectId, ref: 'MenuCategory', required: true },
   price: { type: Number, required: true },
+  /** 选填折扣价：填写且低于 price 时按此价销售，菜单显示原价划线。 */
+  discountPrice: { type: Number },
   calories: { type: Number },
   avgWaitMinutes: { type: Number },
   photoUrl: { type: String },

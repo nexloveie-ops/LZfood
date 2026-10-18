@@ -30,6 +30,7 @@ export interface OptionGroup {
 interface Props {
   itemName: string;
   price: number;
+  listPrice?: number;
   optionGroups: OptionGroup[];
   onConfirm: (options: CartItemOption[]) => void;
   onClose: () => void;
@@ -43,7 +44,7 @@ interface Props {
 }
 
 export default function OptionSelectModal({
-  itemName, price, optionGroups, onConfirm, onClose, layout = 'customer',
+  itemName, price, listPrice, optionGroups, onConfirm, onClose, layout = 'customer',
   menuItemId, bomSnapshot, reservedDemand = {},
 }: Props) {
   const { t, i18n } = useTranslation();
@@ -222,7 +223,13 @@ export default function OptionSelectModal({
         <div className="option-sheet__header">
           <div style={{ minWidth: 0, flex: 1 }}>
             <div id="option-modal-title" className="option-sheet__title">{itemName}</div>
-            <div className="option-sheet__price">€{price}</div>
+            <div className="option-sheet__price">
+              {listPrice != null && listPrice > price ? (
+                <><span style={{ textDecoration: 'line-through', color: 'var(--text-light, #94a3b8)', fontWeight: 500, marginRight: 6 }}>€{listPrice}</span>€{price}</>
+              ) : (
+                <>€{price}</>
+              )}
+            </div>
           </div>
           <button
             type="button"

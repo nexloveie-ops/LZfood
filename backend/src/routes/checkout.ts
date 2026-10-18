@@ -12,7 +12,13 @@ import {
   computePartialDineInSettlementPreview,
   dineInHasUnsettledFoodLineQty,
 } from '../utils/orderPayableTotal';
-import { getDineInWorkflowModeForStore } from '../utils/dineInWorkflowMode';
+import { getDineInStoreSettings, getDineInWorkflowModeForStore } from '../utils/dineInWorkflowMode';
+import {
+  applyFoldedServiceChargeToCheckoutData,
+  foldPayAfterServiceCharge,
+  isPayAfterDineInServiceCharge,
+  type FoldedServiceCharge,
+} from '../utils/dineInServiceCharge';
 import { resolveMemberPaymentForCheckout, type MemberPaymentResolution } from '../utils/checkoutMemberResolve';
 import {
   creditResolvedMemberWallet,
@@ -120,6 +126,27 @@ function staffMayDebitMemberWithoutPin(req: Request): boolean {
 
 function round2Euro(n: number): number {
   return Math.round(n * 100) / 100;
+}
+
+async function foldCheckoutServiceIfPayAfter(opts: {
+  req: Request;
+  dineInWf: 'pay_first' | 'pay_after';
+  isDineIn: boolean;
+  foodEuro: number;
+  amountAfterCoupon: number;
+  couponAmount?: number;
+  couponName?: string;
+}): Promise<FoldedServiceCharge | null> {
+  if (!isPayAfterDineInServiceCharge(opts.dineInWf, opts.isDineIn)) return null;
+  const settings = await getDineInStoreSettings(opts.req.storeId!);
+  return foldPayAfterServiceCharge({
+    foodEuro: opts.foodEuro,
+    amountAfterCoupon: opts.amountAfterCoupon,
+    percent: settings.serviceChargePercent,
+    waived: settings.serviceChargeWaived,
+    couponAmount: opts.couponAmount,
+    couponName: opts.couponName,
+  });
 }
 
 /** 订单中心结账：只打本地小票，不推飞鹅。点单台 seat 结账仍看管理员「结账自动打」。 */
@@ -342,10 +369,22 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
       }
 
       // Apply coupon discount
+      const couponAmtN = Number(couponAmount) || 0;
+      const couponNameStr = typeof couponName === 'string' ? couponName : undefined;
       let finalAmount = totalAmount;
-      if (couponAmount && couponAmount > 0) {
-        finalAmount = Math.max(0, totalAmount - couponAmount);
+      if (couponAmtN > 0) {
+        finalAmount = Math.max(0, totalAmount - couponAmtN);
       }
+      const foldedService = await foldCheckoutServiceIfPayAfter({
+        req,
+        dineInWf,
+        isDineIn: true,
+        foodEuro: totalAmount,
+        amountAfterCoupon: finalAmount,
+        couponAmount: couponAmtN,
+        couponName: couponNameStr,
+      });
+      if (foldedService) finalAmount = foldedService.finalAmount;
 
       await assertMemberWalletFeatureIfNeeded(req);
       const mp = await resolveMemberPaymentForCheckout({
@@ -374,8 +413,9 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
       } else if (mp.paymentMethod === 'card' || mp.paymentMethod === 'online') {
         checkoutData.cardAmount = mp.cardAmount;
       }
-      if (couponName) checkoutData.couponName = couponName;
-      if (couponAmount && couponAmount > 0) checkoutData.couponAmount = couponAmount;
+      if (couponNameStr) checkoutData.couponName = couponNameStr;
+      if (couponAmtN > 0) checkoutData.couponAmount = couponAmtN;
+      applyFoldedServiceChargeToCheckoutData(checkoutData, foldedService);
       attachCashTenderMeta(checkoutData, req.body as Record<string, unknown>);
 
       const checkout = await Checkout.create(checkoutData);
@@ -456,12 +496,24 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
         ? totalAmountOverride
         : autoTotal;
 
-      const { finalAmount, voucher: voucherMeta } = await resolveFinalAmountForSeatCheckout(
+      const { finalAmount: amountAfterCoupon, voucher: voucherMeta } = await resolveFinalAmountForSeatCheckout(
         req,
         order,
         req.body as Record<string, unknown>,
         totalAmount,
       );
+      const foldedService = await foldCheckoutServiceIfPayAfter({
+        req,
+        dineInWf,
+        isDineIn: order.type === 'dine_in',
+        foodEuro: totalAmount,
+        amountAfterCoupon,
+        couponAmount: voucherMeta ? voucherMeta.discountEuro : Number(couponAmount) || 0,
+        couponName: voucherMeta
+          ? `${voucherMeta.campaignName} · ${voucherMeta.code}`
+          : (typeof couponName === 'string' ? couponName : undefined),
+      });
+      const finalAmount = foldedService ? foldedService.finalAmount : amountAfterCoupon;
 
       await assertMemberWalletFeatureIfNeeded(req);
       const mp = await resolveMemberPaymentForCheckout({
@@ -583,6 +635,7 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
         checkoutData.couponName = `${voucherMeta.campaignName} · ${voucherMeta.code}`;
         checkoutData.couponAmount = voucherMeta.discountEuro;
       }
+      applyFoldedServiceChargeToCheckoutData(checkoutData, foldedService);
       attachCashTenderMeta(checkoutData, req.body as Record<string, unknown>);
 
       const checkout = await Checkout.create(checkoutData);
@@ -701,10 +754,22 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
       }
       assertNoUnweighedMarketLines(order.items, lineSettlements.map((s) => s.lineId));
       const { couponName, couponAmount } = req.body as Record<string, unknown>;
+      const couponAmtN = Number(couponAmount) || 0;
+      const couponNameStr = typeof couponName === 'string' ? couponName : undefined;
       let totalAmount = preview.payable;
-      if (couponAmount && typeof couponAmount === 'number' && couponAmount > 0) {
-        totalAmount = Math.max(0, round2Euro(totalAmount - couponAmount));
+      if (couponAmtN > 0) {
+        totalAmount = Math.max(0, round2Euro(preview.payable - couponAmtN));
       }
+      const foldedService = await foldCheckoutServiceIfPayAfter({
+        req,
+        dineInWf: wf,
+        isDineIn: true,
+        foodEuro: preview.payable,
+        amountAfterCoupon: totalAmount,
+        couponAmount: couponAmtN,
+        couponName: couponNameStr,
+      });
+      if (foldedService) totalAmount = foldedService.finalAmount;
 
       await assertMemberWalletFeatureIfNeeded(req);
       const mp = await resolveMemberPaymentForCheckout({
@@ -740,10 +805,9 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
       } else if (mp.paymentMethod === 'card' || mp.paymentMethod === 'online') {
         checkoutData.cardAmount = mp.cardAmount;
       }
-      if (couponName) checkoutData.couponName = couponName;
-      if (couponAmount && typeof couponAmount === 'number' && couponAmount > 0) {
-        checkoutData.couponAmount = couponAmount;
-      }
+      if (couponNameStr) checkoutData.couponName = couponNameStr;
+      if (couponAmtN > 0) checkoutData.couponAmount = couponAmtN;
+      applyFoldedServiceChargeToCheckoutData(checkoutData, foldedService);
       attachCashTenderMeta(checkoutData, req.body as Record<string, unknown>);
 
       const checkout = await Checkout.create(checkoutData);
@@ -894,10 +958,22 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
       }
       totalPayable = round2Euro(totalPayable);
       const { couponName, couponAmount } = req.body as Record<string, unknown>;
+      const couponAmtN = Number(couponAmount) || 0;
+      const couponNameStr = typeof couponName === 'string' ? couponName : undefined;
       let finalAmount = totalPayable;
-      if (couponAmount && typeof couponAmount === 'number' && couponAmount > 0) {
-        finalAmount = Math.max(0, round2Euro(totalPayable - couponAmount));
+      if (couponAmtN > 0) {
+        finalAmount = Math.max(0, round2Euro(totalPayable - couponAmtN));
       }
+      const foldedService = await foldCheckoutServiceIfPayAfter({
+        req,
+        dineInWf: wf,
+        isDineIn: true,
+        foodEuro: totalPayable,
+        amountAfterCoupon: finalAmount,
+        couponAmount: couponAmtN,
+        couponName: couponNameStr,
+      });
+      if (foldedService) finalAmount = foldedService.finalAmount;
 
       await assertMemberWalletFeatureIfNeeded(req);
       const mp = await resolveMemberPaymentForCheckout({
@@ -927,10 +1003,9 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
       } else if (mp.paymentMethod === 'card' || mp.paymentMethod === 'online') {
         checkoutData.cardAmount = mp.cardAmount;
       }
-      if (couponName) checkoutData.couponName = couponName;
-      if (couponAmount && typeof couponAmount === 'number' && couponAmount > 0) {
-        checkoutData.couponAmount = couponAmount;
-      }
+      if (couponNameStr) checkoutData.couponName = couponNameStr;
+      if (couponAmtN > 0) checkoutData.couponAmount = couponAmtN;
+      applyFoldedServiceChargeToCheckoutData(checkoutData, foldedService);
       attachCashTenderMeta(checkoutData, req.body as Record<string, unknown>);
 
       const checkout = await Checkout.create(checkoutData);
@@ -1048,6 +1123,9 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
         dineInPartialLineSettlements?: { orderLineItemId: mongoose.Types.ObjectId; quantity: number; amountEuro: number }[];
         couponName?: string;
         couponAmount?: number;
+        serviceChargePercent?: number;
+        serviceChargeAmount?: number;
+        serviceChargeWaived?: boolean;
       } | null;
       if (!checkout) {
         throw createAppError('NOT_FOUND', 'Checkout not found');
@@ -1138,6 +1216,9 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
         memberPhoneSnapshot: (checkout as { memberPhoneSnapshot?: string }).memberPhoneSnapshot,
         couponName: checkout.couponName,
         couponAmount: checkout.couponAmount,
+        serviceChargePercent: checkout.serviceChargePercent,
+        serviceChargeAmount: checkout.serviceChargeAmount,
+        serviceChargeWaived: checkout.serviceChargeWaived,
         checkedOutAt: checkout.checkedOutAt,
         ...(partial.length > 0 ? { dineInPartialLineSettlements: partial } : {}),
         orders: orders.map((o) => ({

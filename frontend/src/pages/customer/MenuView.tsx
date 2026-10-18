@@ -28,10 +28,10 @@ function menuDecorCssUrl(raw?: string): string | undefined {
   return undefined;
 }
 
-interface Category { _id: string; sortOrder: number; translations: { locale: string; name: string }[]; }
+interface Category { _id: string; sortOrder: number; translations: { locale: string; name: string }[]; discountZhe?: number; }
 interface AllergenData { _id: string; icon: string; }
 interface MenuItemData {
-  _id: string; categoryId: string; price: number; calories?: number;
+  _id: string; categoryId: string; price: number; discountPrice?: number; calories?: number;
   avgWaitMinutes?: number; photoUrl?: string; arFileUrl?: string; isSoldOut?: boolean; isRecommended?: boolean; spiceLevel?: number;
   isMarketPrice?: boolean; todayPricePerKg?: number | null;
   inventoryTracked?: boolean;
@@ -507,6 +507,8 @@ export default function MenuView({ storeFrontEmbed = false }: { storeFrontEmbed?
                     names={Object.fromEntries(item.translations.map(t2 => [t2.locale, t2.name]))}
                     description={getDesc(item.translations)}
                     price={item.price}
+                    discountPrice={item.discountPrice}
+                    categoryDiscountZhe={cat.discountZhe}
                     calories={item.calories}
                     avgWaitMinutes={item.avgWaitMinutes}
                     photoUrl={item.photoUrl}

@@ -20,6 +20,7 @@ import {
 import { sanitizePurchaseUnits, enrichPurchaseUnitsForResponse } from '../utils/purchaseUnits';
 import { isValidConsumptionQty, roundConsumptionQty } from '../utils/consumptionQty';
 import { dublinCalendarDate, loadTodayPricePerKgMap } from '../utils/marketPrice';
+import { menuItemListPriceEuro, parseMenuItemDiscountPriceInput } from '../utils/menuItemSellPrice';
 
 function menuModels() {
   return getModels() as {
@@ -42,6 +43,17 @@ function parseSpiceLevel(raw: unknown, fallback?: number): number | undefined {
     throw createAppError('VALIDATION_ERROR', 'spiceLevel must be 0, 1, 2, or 3');
   }
   return n;
+}
+
+function resolvedDiscountPrice(raw: unknown, listPrice: number, isMarket: boolean): number | null {
+  if (isMarket) return null;
+  const disc = parseMenuItemDiscountPriceInput(raw);
+  if (disc == null) return null;
+  const list = menuItemListPriceEuro({ price: listPrice });
+  if (list > 0 && disc >= list) {
+    throw createAppError('VALIDATION_ERROR', '折扣价必须低于原价');
+  }
+  return disc;
 }
 
 function sanitizeConsumption(raw: unknown): { rawMaterialId: mongoose.Types.ObjectId; qty: number }[] {
@@ -188,7 +200,7 @@ router.post(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { MenuItem, MenuCategory } = menuModels();
-      const { categoryId, price, calories, avgWaitMinutes, photoUrl, arFileUrl, isSoldOut, isRecommended, spiceLevel, isMarketPrice, translations, allergenIds, optionGroups, consumption } = req.body;
+      const { categoryId, price, calories, avgWaitMinutes, photoUrl, arFileUrl, isSoldOut, isRecommended, spiceLevel, isMarketPrice, discountPrice, translations, allergenIds, optionGroups, consumption } = req.body;
 
       if (!categoryId || price == null || !Array.isArray(translations) || translations.length === 0) {
         throw createAppError(
@@ -223,10 +235,16 @@ router.post(
 
       const normalizedConsumption = sanitizeConsumption(consumption);
 
+      const isMarket = typeof isMarketPrice === 'boolean' ? isMarketPrice : false;
+      const disc = discountPrice !== undefined
+        ? resolvedDiscountPrice(discountPrice, Number(price), isMarket)
+        : null;
+
       const item = await MenuItem.create({
         storeId: req.storeId,
         categoryId,
         price,
+        ...(disc != null ? { discountPrice: disc } : {}),
         calories,
         avgWaitMinutes,
         photoUrl,
@@ -281,6 +299,7 @@ router.put(
         isRecommended,
         spiceLevel,
         isMarketPrice,
+        discountPrice,
         translations,
         allergenIds,
         optionGroups,
@@ -319,6 +338,30 @@ router.put(
       const updateData: Record<string, unknown> = {};
       if (categoryId !== undefined) updateData.categoryId = categoryId;
       if (price !== undefined) updateData.price = price;
+      let unsetDiscount = false;
+      if (discountPrice !== undefined || isMarketPrice === true) {
+        const list = price !== undefined ? Number(price) : undefined;
+        const isMarket = isMarketPrice === true
+          ? true
+          : isMarketPrice === false
+            ? false
+            : undefined;
+        if (isMarket === true) {
+          unsetDiscount = true;
+        } else if (discountPrice !== undefined) {
+          let listForDisc = list;
+          if (listForDisc == null) {
+            const curPrice = await MenuItem.findOne({ _id: id, storeId: req.storeId }).select('price isMarketPrice').lean() as { price?: number; isMarketPrice?: boolean } | null;
+            listForDisc = Number(curPrice?.price);
+            if (isMarket == null && curPrice?.isMarketPrice) unsetDiscount = true;
+          }
+          if (!unsetDiscount) {
+            const disc = resolvedDiscountPrice(discountPrice, Number(listForDisc) || 0, false);
+            if (disc == null) unsetDiscount = true;
+            else updateData.discountPrice = disc;
+          }
+        }
+      }
       if (calories !== undefined) updateData.calories = calories;
       if (avgWaitMinutes !== undefined) updateData.avgWaitMinutes = avgWaitMinutes;
       if (photoUrl !== undefined) updateData.photoUrl = photoUrl;
@@ -421,7 +464,7 @@ router.put(
         }
       }
 
-      if (Object.keys(updateData).length === 0) {
+      if (Object.keys(updateData).length === 0 && !unsetDiscount) {
         throw createAppError('VALIDATION_ERROR', 'At least one field must be provided for update');
       }
 
@@ -451,7 +494,15 @@ router.put(
         );
       }
 
-      const updated = await MenuItem.findOneAndUpdate({ _id: id, storeId: req.storeId }, updateData, {
+      const mongoUpdate: Record<string, unknown> = {};
+      if (Object.keys(updateData).length > 0) mongoUpdate.$set = updateData;
+      if (unsetDiscount) {
+        if (mongoUpdate.$set && typeof mongoUpdate.$set === 'object') {
+          delete (mongoUpdate.$set as Record<string, unknown>).discountPrice;
+        }
+        mongoUpdate.$unset = { discountPrice: 1 };
+      }
+      const updated = await MenuItem.findOneAndUpdate({ _id: id, storeId: req.storeId }, mongoUpdate, {
         new: true,
         runValidators: true,
       });

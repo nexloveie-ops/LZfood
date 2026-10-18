@@ -34,6 +34,18 @@ export const StoreSchema = new mongoose.Schema(
       enum: ['pay_first', 'pay_after'],
       default: 'pay_first',
     },
+    /** 跑账堂食服务费百分比（0=关闭）。仅 dine_in + pay_after 生效。 */
+    dineInServiceChargePercent: {
+      type: Number,
+      default: 0,
+      min: 0,
+      max: 100,
+    },
+    /** 店铺统一减免服务费：收银与客人自助结账均自动免收，小票单独列示为已减免。 */
+    dineInServiceChargeWaived: {
+      type: Boolean,
+      default: false,
+    },
   },
   { timestamps: true },
 );

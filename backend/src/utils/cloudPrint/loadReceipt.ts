@@ -150,6 +150,9 @@ export async function loadCloudPrintReceipt(
     dineInPartialLineSettlements?: { orderLineItemId: mongoose.Types.ObjectId; quantity: number; amountEuro: number }[];
     couponName?: string;
     couponAmount?: number;
+    serviceChargePercent?: number;
+    serviceChargeAmount?: number;
+    serviceChargeWaived?: boolean;
   } | null;
   if (!checkout) return null;
 
@@ -176,6 +179,9 @@ export async function loadCloudPrintReceipt(
     memberCreditUsed: checkout.memberCreditUsed,
     couponName: checkout.couponName,
     couponAmount: checkout.couponAmount,
+    serviceChargePercent: checkout.serviceChargePercent,
+    serviceChargeAmount: checkout.serviceChargeAmount,
+    serviceChargeWaived: checkout.serviceChargeWaived,
     checkedOutAt: checkout.checkedOutAt || new Date(),
     ...(partial.length > 0 ? { dineInPartialLineSettlements: partial } : {}),
     restaurant,

@@ -10,6 +10,13 @@ import { resolveBackendAssetUrl } from '../../utils/backendPublicUrl';
 import { useRestaurantConfig } from '../../hooks/useRestaurantConfig';
 import { useBusinessStatus } from '../../hooks/useBusinessStatus';
 import { computeCustomerFacingPayableEuro } from '../../utils/orderPayableEuro';
+import {
+  computeServiceChargeEuro,
+  isPayAfterDineInServiceCharge,
+  parseServiceChargePercent,
+  parseServiceChargeWaived,
+  payableWithServiceCharge,
+} from '../../utils/dineInServiceCharge';
 
 interface OrderItem {
   _id: string;
@@ -532,10 +539,16 @@ export default function OrderStatusPage() {
   const roundSections = order.type === 'dine_in' ? groupTableOrdersIntoRounds(displayOrders) : [];
   const payAfter = config.dine_in_workflow_mode === 'pay_after';
   const pendingPayOrders = displayOrders.filter((o) => o.status === 'pending');
-  const combinedPayable = pendingPayOrders.reduce(
+  const combinedFoodPayable = pendingPayOrders.reduce(
     (s, o) => s + computeCustomerFacingPayableEuro(o, o.type === 'dine_in' && payAfter),
     0,
   );
+  const serviceChargePercent = isPayAfterDineInServiceCharge(config.dine_in_workflow_mode, order.type === 'dine_in')
+    ? parseServiceChargePercent(config.dine_in_service_charge_percent)
+    : 0;
+  const serviceChargeAmount = computeServiceChargeEuro(combinedFoodPayable, serviceChargePercent);
+  const serviceChargeWaived = parseServiceChargeWaived(config.dine_in_service_charge_waived);
+  const combinedPayable = payableWithServiceCharge(combinedFoodPayable, serviceChargeAmount, serviceChargeWaived);
   const payOrderIds = pendingPayOrders.map((o) => String(o._id));
   const payBlockedWeigh = pendingPayOrders.some((o) =>
     o.items.some((it) => it.isMarketPrice && !(Number(it.weightKg) > 0) && !it.refunded),
@@ -739,6 +752,12 @@ export default function OrderStatusPage() {
             ))}
           </div>
         )}
+        {serviceChargeAmount > 0.001 ? (
+          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0 16px 8px', fontSize: 14, color: serviceChargeWaived ? '#94a3b8' : '#475569' }}>
+            <span>{t(serviceChargeWaived ? 'customer.serviceChargeWaived' : 'customer.serviceCharge', { percent: serviceChargePercent })}</span>
+            <span style={serviceChargeWaived ? { textDecoration: 'line-through' } : undefined}>€{serviceChargeAmount.toFixed(2)}</span>
+          </div>
+        ) : null}
         <div style={{ display: 'flex', justifyContent: 'space-between', padding: '14px 16px', fontWeight: 700, fontSize: 16 }}>
           <span>{t('customer.totalAmount')}</span>
           <span style={{ color: 'var(--red-primary)', fontFamily: "'Noto Serif SC', serif" }}>€{combinedPayable.toFixed(2)}</span>

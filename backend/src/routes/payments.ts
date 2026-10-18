@@ -10,7 +10,13 @@ import {
   computeDineInUnsettledPayableEuro,
   dineInHasUnsettledFoodLineQty,
 } from '../utils/orderPayableTotal';
-import { getDineInWorkflowModeForStore } from '../utils/dineInWorkflowMode';
+import { getDineInStoreSettings, getDineInWorkflowModeForStore } from '../utils/dineInWorkflowMode';
+import {
+  applyFoldedServiceChargeToCheckoutData,
+  computeServiceChargeEuro,
+  foldPayAfterServiceCharge,
+  isPayAfterDineInServiceCharge,
+} from '../utils/dineInServiceCharge';
 import {
   markDineInFoodLinesFullySettled,
   markDineInKitchenPrintedQtyFull,
@@ -106,7 +112,14 @@ router.post('/create-intent', async (req: Request, res: Response, next: NextFunc
     const wf = orders.some((o) => o.type === 'dine_in')
       ? await getDineInWorkflowModeForStore(req.storeId!)
       : undefined;
-    const totalEuro = round2Euro(orders.reduce((s, o) => s + payableEuroForStripeOrder(o, wf), 0));
+    let totalEuro = round2Euro(orders.reduce((s, o) => s + payableEuroForStripeOrder(o, wf), 0));
+    if (isPayAfterDineInServiceCharge(wf, orders.some((o) => o.type === 'dine_in'))) {
+      const settings = await getDineInStoreSettings(req.storeId!);
+      const sc = computeServiceChargeEuro(totalEuro, settings.serviceChargePercent);
+      if (!settings.serviceChargeWaived) {
+        totalEuro = round2Euro(totalEuro + sc);
+      }
+    }
     const totalAmount = Math.round(totalEuro * 100);
 
     if (totalAmount <= 0) throw createAppError('VALIDATION_ERROR', 'Order total must be greater than 0');
@@ -307,7 +320,8 @@ router.post('/finalize', async (req: Request, res: Response, next: NextFunction)
     let totalAmount = Math.round((itemTotal - bundleDiscount) * 100) / 100;
 
     const wfFin = await getDineInWorkflowModeForStore(req.storeId!);
-    if (order.type === 'dine_in' && wfFin === 'pay_after') {
+    let foldedService: ReturnType<typeof foldPayAfterServiceCharge> | null = null;
+    if (isPayAfterDineInServiceCharge(wfFin, order.type === 'dine_in')) {
       const priorCheckouts = await Checkout.find({ storeId: req.storeId, orderIds: order._id }).lean();
       let partialSum = 0;
       for (const c of priorCheckouts as { totalAmount?: number; dineInPartialLineSettlements?: unknown[] }[]) {
@@ -316,6 +330,14 @@ router.post('/finalize', async (req: Request, res: Response, next: NextFunction)
         }
       }
       totalAmount = Math.max(0, Math.round((totalAmount - partialSum) * 100) / 100);
+      const settings = await getDineInStoreSettings(req.storeId!);
+      foldedService = foldPayAfterServiceCharge({
+        foodEuro: totalAmount,
+        amountAfterCoupon: totalAmount,
+        percent: settings.serviceChargePercent,
+        waived: settings.serviceChargeWaived,
+      });
+      totalAmount = foldedService.finalAmount;
     }
 
     const stripePi = String((order as { stripePaymentIntentId?: string }).stripePaymentIntentId || '').trim();
@@ -337,6 +359,9 @@ router.post('/finalize', async (req: Request, res: Response, next: NextFunction)
       orderIds: [order._id],
       tableNumber: order.tableNumber,
     };
+    if (foldedService) {
+      applyFoldedServiceChargeToCheckoutData(checkoutPayload, foldedService);
+    }
     if (memberPrepaid) {
       checkoutPayload.memberId = (order as { memberId: mongoose.Types.ObjectId }).memberId;
       checkoutPayload.memberPhoneSnapshot = String((order as { memberPhoneSnapshot?: string }).memberPhoneSnapshot || '');

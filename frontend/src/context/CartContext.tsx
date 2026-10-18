@@ -18,9 +18,11 @@ export interface CartItem {
   lockedBaselineQty?: number;
   isMarketPrice?: boolean;
   lineId?: string;
+  /** 有折扣时的目录原价，仅展示划线 */
+  listPrice?: number;
 }
 
-export type CartAddMeta = { isMarketPrice?: boolean };
+export type CartAddMeta = { isMarketPrice?: boolean; listPrice?: number };
 
 /** 已下单锁定量之外、购物车里还能加减的份数 */
 export function cartItemOpenQty(item: CartItem): number {
@@ -123,9 +125,9 @@ export function CartProvider({ children }: { children: ReactNode }) {
       }
       const hasLockedSame = prev.some((i) => isLockedCartBaseline(i) && dishOptionKey(i.menuItemId, i.options) === dishKey);
       if (hasLockedSame) {
-        return [...prev, { menuItemId, names, price, quantity: 1, options, lineId: newAddLineId() }];
+        return [...prev, { menuItemId, names, price, quantity: 1, options, lineId: newAddLineId(), listPrice: meta?.listPrice }];
       }
-      return [...prev, { menuItemId, names, price, quantity: 1, options }];
+      return [...prev, { menuItemId, names, price, quantity: 1, options, listPrice: meta?.listPrice }];
     });
   }, []);
 

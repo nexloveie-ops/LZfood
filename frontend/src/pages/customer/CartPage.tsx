@@ -419,7 +419,14 @@ export default function CartPage() {
                 <div style={{ fontSize: 13, color: 'var(--red-primary)', fontWeight: 600, fontFamily: "'Noto Serif SC', serif" }}>
                   {item.isMarketPrice
                     ? t('customer.marketPriceAwaitWeigh')
-                    : `€${item.price}${optExtra > 0 ? ` +€${optExtra}` : ''}`}
+                    : (
+                      <>
+                        {item.listPrice != null && item.listPrice > item.price ? (
+                          <span style={{ textDecoration: 'line-through', color: 'var(--text-light)', fontWeight: 500, marginRight: 6 }}>€{item.listPrice}</span>
+                        ) : null}
+                        {`€${item.price}${optExtra > 0 ? ` +€${optExtra}` : ''}`}
+                      </>
+                    )}
                 </div>
               </div>
               <div style={{

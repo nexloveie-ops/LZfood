@@ -1390,6 +1390,39 @@
   color: #0369a1;
 }
 
+.cashier-service-charge {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+}
+
+.cashier-service-charge-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.cashier-service-charge-row .is-waived {
+  text-decoration: line-through;
+  color: #94a3b8;
+}
+
+.cashier-service-waive {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #475569;
+  cursor: pointer;
+}
+
 .pay-after-pay-methods {
   display: flex;
   gap: 8px;

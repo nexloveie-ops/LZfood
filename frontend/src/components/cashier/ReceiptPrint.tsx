@@ -24,6 +24,7 @@ import {
   receiptPaymentStatusLabel,
   type ReceiptPaymentMethod,
 } from '../../utils/receiptPaymentMethod';
+import { formatServiceChargeReceiptLabel } from '../../utils/dineInServiceCharge';
 import {
   receiptOrderTypeIconDataUrl,
   receiptOrderTypeIconImgHtml,
@@ -88,6 +89,9 @@ interface ReceiptData {
   memberPhoneSnapshot?: string;
   couponName?: string;
   couponAmount?: number;
+  serviceChargePercent?: number;
+  serviceChargeAmount?: number;
+  serviceChargeWaived?: boolean;
   checkedOutAt: string;
   orders: ReceiptOrder[];
   /** 堂食后结部分结账：仅本次结账行（小票不重复打印整单未结菜品） */
@@ -156,6 +160,16 @@ function receiptManualCoupon(receipt: ReceiptData): { name: string; amount: numb
   if (amount <= 0.001) return null;
   const name = String(receipt.couponName || '').trim() || 'Discount / 折扣';
   return { name, amount };
+}
+
+function receiptServiceCharge(receipt: ReceiptData): { label: string; amount: number } | null {
+  const stored = Number(receipt.serviceChargeAmount) || 0;
+  if (stored <= 0.001) return null;
+  const waived = Boolean(receipt.serviceChargeWaived);
+  return {
+    label: formatServiceChargeReceiptLabel(Number(receipt.serviceChargePercent) || 0, waived),
+    amount: waived ? 0 : stored,
+  };
 }
 
 async function enrichReceiptWithCatalog(receipt: ReceiptData): Promise<ReceiptData> {
@@ -654,22 +668,31 @@ function buildReceiptPlainText(
   const { deliveryAmt, showLegacyDeliveryRow } = receiptDeliveryFeeBreakdown(receipt);
   const totalBundleDiscount = (bundleDiscounts || []).reduce((s, b) => s + b.discount, 0);
   const manualCoupon = receiptManualCoupon(receipt);
+  const serviceCharge = receiptServiceCharge(receipt);
   if (partialDesc) {
     lines.push(plainRow('Subtotal (lines)', formatPlainEuro(partialDesc.subtotalLinesEuro)));
-    if (partialDesc.bundleOrAdjustmentsEuro > 0.001) {
+    if (serviceCharge) {
+      lines.push(plainRow(serviceCharge.label, formatPlainEuro(serviceCharge.amount)));
+    }
+    if (manualCoupon) {
+      lines.push(plainRow(manualCoupon.name, formatPlainEuro(manualCoupon.amount, { negate: true })));
+    } else if (partialDesc.bundleOrAdjustmentsEuro > 0.001 && !serviceCharge) {
       lines.push(plainRow(
-        manualCoupon ? manualCoupon.name : 'Bundle/coupon',
+        'Bundle/coupon',
         formatPlainEuro(partialDesc.bundleOrAdjustmentsEuro, { negate: true }),
       ));
     }
     if (showLegacyDeliveryRow) lines.push(plainRow('Delivery', formatPlainEuro(deliveryAmt)));
     lines.push(plainTotalRow('Total', formatPlainEuro(receipt.totalAmount)));
-  } else if (totalBundleDiscount > 0 || manualCoupon) {
+  } else if (totalBundleDiscount > 0 || manualCoupon || serviceCharge) {
     const foodAfterBundles = receipt.totalAmount - deliveryAmt;
-    const subtotal = foodAfterBundles + totalBundleDiscount + (manualCoupon?.amount || 0);
+    const subtotal = foodAfterBundles + totalBundleDiscount + (manualCoupon?.amount || 0) - (serviceCharge?.amount || 0);
     lines.push(plainRow('Subtotal', formatPlainEuro(subtotal)));
     for (const bd of bundleDiscounts || []) {
       lines.push(plainRow(`Disc ${bd.nameEn || bd.name}`, formatPlainEuro(bd.discount, { negate: true })));
+    }
+    if (serviceCharge) {
+      lines.push(plainRow(serviceCharge.label, formatPlainEuro(serviceCharge.amount)));
     }
     if (manualCoupon) {
       lines.push(plainRow(manualCoupon.name, formatPlainEuro(manualCoupon.amount, { negate: true })));
@@ -889,22 +912,30 @@ function buildReceiptHTML(
   const { deliveryAmt, showLegacyDeliveryRow } = receiptDeliveryFeeBreakdown(receipt);
   const totalBundleDiscount = (bundleDiscounts || []).reduce((s, b) => s + b.discount, 0);
   const manualCoupon = receiptManualCoupon(receipt);
+  const serviceCharge = receiptServiceCharge(receipt);
   if (partialDesc) {
     html += `<div class="row"><span>Subtotal (lines) / 行小计</span><span>€${partialDesc.subtotalLinesEuro.toFixed(2)}</span></div>`;
-    if (partialDesc.bundleOrAdjustmentsEuro > 0.001) {
-      const adjLabel = manualCoupon ? `${manualCoupon.name}` : 'Bundle / coupon (this payment) / 本次分摊或优惠';
-      html += `<div class="row"><span>${escapeReceiptHtml(adjLabel)}</span><span>-€${partialDesc.bundleOrAdjustmentsEuro.toFixed(2)}</span></div>`;
+    if (serviceCharge) {
+      html += `<div class="row"><span>${escapeReceiptHtml(serviceCharge.label)}</span><span>€${serviceCharge.amount.toFixed(2)}</span></div>`;
+    }
+    if (manualCoupon) {
+      html += `<div class="row"><span>${escapeReceiptHtml(manualCoupon.name)}</span><span>-€${manualCoupon.amount.toFixed(2)}</span></div>`;
+    } else if (partialDesc.bundleOrAdjustmentsEuro > 0.001 && !serviceCharge) {
+      html += `<div class="row"><span>Bundle / coupon (this payment) / 本次分摊或优惠</span><span>-€${partialDesc.bundleOrAdjustmentsEuro.toFixed(2)}</span></div>`;
     }
     if (showLegacyDeliveryRow) {
       html += `<div class="row"><span>Delivery</span><span>€${deliveryAmt.toFixed(2)}</span></div>`;
     }
     html += `<div class="row" style="font-size:18px;margin-top:4px"><span>Total</span><span>€${receipt.totalAmount.toFixed(2)}</span></div>`;
-  } else if (totalBundleDiscount > 0 || manualCoupon) {
+  } else if (totalBundleDiscount > 0 || manualCoupon || serviceCharge) {
     const foodAfterBundles = receipt.totalAmount - deliveryAmt;
-    const subtotal = foodAfterBundles + totalBundleDiscount + (manualCoupon?.amount || 0);
+    const subtotal = foodAfterBundles + totalBundleDiscount + (manualCoupon?.amount || 0) - (serviceCharge?.amount || 0);
     html += `<div class="row"><span>Subtotal</span><span>€${subtotal.toFixed(2)}</span></div>`;
     for (const bd of bundleDiscounts || []) {
       html += `<div class="row"><span>🎁 ${bd.nameEn || bd.name}</span><span>-€${bd.discount.toFixed(2)}</span></div>`;
+    }
+    if (serviceCharge) {
+      html += `<div class="row"><span>${escapeReceiptHtml(serviceCharge.label)}</span><span>€${serviceCharge.amount.toFixed(2)}</span></div>`;
     }
     if (manualCoupon) {
       html += `<div class="row"><span>${escapeReceiptHtml(manualCoupon.name)}</span><span>-€${manualCoupon.amount.toFixed(2)}</span></div>`;
@@ -1185,12 +1216,18 @@ export default function ReceiptPrint({ checkoutId, cashReceived, changeAmount, b
         const { deliveryAmt, showLegacyDeliveryRow } = receiptDeliveryFeeBreakdown(receipt);
         const totalBD = (bundleDiscounts || []).reduce((s, b) => s + b.discount, 0);
         const manualCoupon = receiptManualCoupon(receipt);
+        const serviceCharge = receiptServiceCharge(receipt);
         if (partialDescPreview) {
           return (
             <>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Subtotal (lines)</span><span>€{partialDescPreview.subtotalLinesEuro.toFixed(2)}</span></div>
-              {partialDescPreview.bundleOrAdjustmentsEuro > 0.001 ? (
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}><span>{manualCoupon ? manualCoupon.name : 'Bundle / coupon (this payment)'}</span><span>-€{partialDescPreview.bundleOrAdjustmentsEuro.toFixed(2)}</span></div>
+              {serviceCharge ? (
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}><span>{serviceCharge.label}</span><span>€{serviceCharge.amount.toFixed(2)}</span></div>
+              ) : null}
+              {manualCoupon ? (
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}><span>{manualCoupon.name}</span><span>-€{manualCoupon.amount.toFixed(2)}</span></div>
+              ) : partialDescPreview.bundleOrAdjustmentsEuro > 0.001 && !serviceCharge ? (
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}><span>Bundle / coupon (this payment)</span><span>-€{partialDescPreview.bundleOrAdjustmentsEuro.toFixed(2)}</span></div>
               ) : null}
               {showLegacyDeliveryRow ? (
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Delivery</span><span>€{deliveryAmt.toFixed(2)}</span></div>
@@ -1199,15 +1236,18 @@ export default function ReceiptPrint({ checkoutId, cashReceived, changeAmount, b
             </>
           );
         }
-        if (totalBD > 0 || manualCoupon) {
+        if (totalBD > 0 || manualCoupon || serviceCharge) {
           const foodAfterBundles = receipt.totalAmount - deliveryAmt;
-          const subtotal = foodAfterBundles + totalBD + (manualCoupon?.amount || 0);
+          const subtotal = foodAfterBundles + totalBD + (manualCoupon?.amount || 0) - (serviceCharge?.amount || 0);
           return (
             <>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Subtotal</span><span>€{subtotal.toFixed(2)}</span></div>
               {(bundleDiscounts || []).map((bd, i) => (
                 <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}><span>🎁 {bd.nameEn || bd.name}</span><span>-€{bd.discount.toFixed(2)}</span></div>
               ))}
+              {serviceCharge ? (
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}><span>{serviceCharge.label}</span><span>€{serviceCharge.amount.toFixed(2)}</span></div>
+              ) : null}
               {manualCoupon ? (
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}><span>{manualCoupon.name}</span><span>-€{manualCoupon.amount.toFixed(2)}</span></div>
               ) : null}

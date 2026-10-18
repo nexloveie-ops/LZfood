@@ -49,6 +49,8 @@ export default function RestaurantInfo() {
   const [geocoding, setGeocoding] = useState(false);
   const [geocodeMsg, setGeocodeMsg] = useState<string | null>(null);
   const [dineInWorkflowMode, setDineInWorkflowMode] = useState<'pay_first' | 'pay_after'>('pay_first');
+  const [dineInServiceChargePercent, setDineInServiceChargePercent] = useState('');
+  const [dineInServiceChargeWaived, setDineInServiceChargeWaived] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
@@ -146,6 +148,10 @@ export default function RestaurantInfo() {
         if (data.dine_in_workflow_mode === 'pay_after' || data.dine_in_workflow_mode === 'pay_first') {
           setDineInWorkflowMode(data.dine_in_workflow_mode);
         }
+        if (data.dine_in_service_charge_percent !== undefined) {
+          setDineInServiceChargePercent(data.dine_in_service_charge_percent === '0' ? '' : data.dine_in_service_charge_percent);
+        }
+        setDineInServiceChargeWaived(data.dine_in_service_charge_waived === '1' || data.dine_in_service_charge_waived === 'true');
       }
     } catch { /* ignore */ }
   }, [token]);
@@ -198,6 +204,8 @@ export default function RestaurantInfo() {
       const body: Record<string, string> = {};
       CONFIG_KEYS.forEach(k => { body[k] = values[k]; });
       body.dine_in_workflow_mode = dineInWorkflowMode;
+      body.dine_in_service_charge_percent = dineInServiceChargePercent.trim() || '0';
+      body.dine_in_service_charge_waived = dineInServiceChargeWaived ? '1' : '0';
       body.restaurant_lat = restaurantLat.trim();
       body.restaurant_lng = restaurantLng.trim();
       const res = await apiFetch('/api/admin/config', {
@@ -375,6 +383,36 @@ export default function RestaurantInfo() {
         <div style={{ fontSize: 12, color: 'var(--text-light)', marginTop: 10, lineHeight: 1.5 }}>
           {t('admin.dineInWorkflowHint')}
         </div>
+        {dineInWorkflowMode === 'pay_after' ? (
+          <div style={{ marginTop: 16, fontSize: 13, fontWeight: 600 }}>
+            <div>{t('admin.dineInServiceChargePercent')}</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
+              <input
+                className="input"
+                type="number"
+                min={0}
+                max={100}
+                step="0.1"
+                placeholder="0"
+                value={dineInServiceChargePercent}
+                onChange={(e) => { setDineInServiceChargePercent(e.target.value); setSaved(false); }}
+                style={{ width: 120 }}
+              />
+              <span>%</span>
+            </div>
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginTop: 12, fontWeight: 600, cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={dineInServiceChargeWaived}
+                onChange={(e) => { setDineInServiceChargeWaived(e.target.checked); setSaved(false); }}
+              />
+              <span>{t('admin.dineInServiceChargeWaive')}</span>
+            </label>
+            <div style={{ fontSize: 12, fontWeight: 400, color: 'var(--text-light)', marginTop: 6, lineHeight: 1.5 }}>
+              {t('admin.dineInServiceChargeHint')}
+            </div>
+          </div>
+        ) : null}
       </div>
 
       {showWidgetApi && (

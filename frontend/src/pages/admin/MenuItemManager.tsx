@@ -11,9 +11,10 @@ import { CONSUMPTION_QTY_MIN, roundConsumptionQty } from '../../utils/consumptio
 import BomQtyInput from '../../components/admin/BomQtyInput';
 import RecommendedStar from '../../components/RecommendedStar';
 import SpiceLevelHint, { clampSpiceLevel, type SpiceLevel } from '../../components/SpiceLevelHint';
+import MenuPriceLabel from '../../components/MenuPriceLabel';
 
 interface Translation { locale: string; name: string; description?: string; }
-interface Category { _id: string; sortOrder?: number; translations: Translation[]; }
+interface Category { _id: string; sortOrder?: number; translations: Translation[]; discountZhe?: number; }
 interface AllergenData { _id: string; name: string; icon: string; translations: { locale: string; name: string }[]; }
 interface BoMEntryData { rawMaterialId: string; qty: number; }
 interface OptionChoiceData { _id?: string; extraPrice: number; originalPrice?: number; translations: { locale: string; name: string }[]; consumption?: BoMEntryData[]; }
@@ -28,7 +29,7 @@ interface InventorySubdoc {
   estimatedDailySales?: number;
 }
 interface MenuItem {
-  _id: string; categoryId: string; price: number; calories?: number;
+  _id: string; categoryId: string; price: number; discountPrice?: number; calories?: number;
   avgWaitMinutes?: number; photoUrl?: string; arFileUrl?: string;
   isSoldOut?: boolean; isRecommended?: boolean; spiceLevel?: number; isMarketPrice?: boolean; translations: Translation[]; allergenIds?: string[];
   optionGroups?: OptionGroupData[];
@@ -52,6 +53,7 @@ interface FormInventoryUnit { code: string; label: string; labelEn: string; fact
 const emptyForm = {
   categoryId: '',
   price: 0,
+  discountPrice: '',
   calories: 0,
   avgWaitMinutes: 0,
   nameZh: '',
@@ -268,6 +270,7 @@ export default function MenuItemManager() {
       setForm({
         categoryId: item.categoryId,
         price: item.price,
+        discountPrice: item.discountPrice != null && item.discountPrice > 0 ? String(item.discountPrice) : '',
         calories: item.calories || 0,
         avgWaitMinutes: item.avgWaitMinutes || 0,
         nameZh: item.translations.find(t2 => t2.locale === 'zh-CN')?.name || '',
@@ -393,8 +396,13 @@ export default function MenuItemManager() {
             consumption: saveForm.trackingMode === 'raw' ? cleanBom(saveForm.itemConsumption) : [],
           }
         : {};
+    const discountRaw = saveForm.discountPrice.trim();
+    const discountNum = Number(discountRaw);
     const body = {
       categoryId: saveForm.categoryId, price: saveForm.price,
+      discountPrice: saveForm.isMarketPrice || !discountRaw || !Number.isFinite(discountNum) || discountNum <= 0
+        ? null
+        : discountNum,
       calories: saveForm.calories, avgWaitMinutes: saveForm.avgWaitMinutes,
       allergenIds: saveForm.allergenIds,
       isRecommended: !!saveForm.isRecommended,
@@ -802,6 +810,20 @@ export default function MenuItemManager() {
               <label style={{ fontSize: 12, color: 'var(--text-light)', display: 'block', marginBottom: 4 }}>价格</label>
               <input className="input" type="number" value={form.price} onChange={e => setForm({ ...form, price: Number(e.target.value) })} />
             </div>
+            {!form.isMarketPrice ? (
+              <div>
+                <label style={{ fontSize: 12, color: 'var(--text-light)', display: 'block', marginBottom: 4 }}>{t('admin.discountPrice')}</label>
+                <input
+                  className="input"
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={form.discountPrice}
+                  onChange={e => setForm({ ...form, discountPrice: e.target.value })}
+                />
+                <div style={{ fontSize: 11, color: 'var(--text-light)', marginTop: 4, lineHeight: 1.4 }}>{t('admin.discountPriceHint')}</div>
+              </div>
+            ) : null}
             <div>
               <label style={{ fontSize: 12, color: 'var(--text-light)', display: 'block', marginBottom: 4 }}>热量 (卡)</label>
               <input className="input" type="number" value={form.calories} onChange={e => setForm({ ...form, calories: Number(e.target.value) })} />
@@ -1046,7 +1068,14 @@ export default function MenuItemManager() {
                   <div style={{ fontSize: 11, color: 'var(--text-light)' }}>{item.translations.find(t2 => t2.locale === 'en-US')?.name}</div>
                   {item.optionGroups && item.optionGroups.length > 0 && (<div style={{ fontSize: 10, color: 'var(--text-light)', marginTop: 2 }}>⚙ {item.optionGroups.length} {t('admin.optionGroups').toLowerCase()}</div>)}
                 </td>
-                <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 700, color: 'var(--red-primary)' }}>€{item.price}</td>
+                <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 700, color: 'var(--red-primary)' }}>
+                  <MenuPriceLabel
+                    price={item.price}
+                    discountPrice={item.discountPrice}
+                    categoryDiscountZhe={categories.find((c) => c._id === item.categoryId)?.discountZhe}
+                    isMarketPrice={item.isMarketPrice}
+                  />
+                </td>
                 <td style={{ padding: '8px 12px' }}>{(item.allergenIds || []).map(aid => { const a = allergens.find(al => al._id === aid); return a ? <span key={aid} title={a.translations.find(t2 => t2.locale === 'zh-CN')?.name || a.name} style={{ marginRight: 2 }}>{a.icon}</span> : null; })}</td>
                 <td style={{ padding: '8px 12px', textAlign: 'center' }}>
                   <label style={{ cursor: 'pointer' }}>{item.arFileUrl ? (<span style={{ color: 'var(--green)', fontSize: 13 }}>✓ <span style={{ textDecoration: 'underline', fontSize: 11 }}>替换</span></span>) : (<span className="btn btn-ghost" style={{ fontSize: 11, padding: '4px 8px', display: 'inline-block' }}>上传 AR</span>)}<input type="file" accept=".usdz,.glb" hidden onChange={e => { if (e.target.files?.[0]) { uploadAR(item._id, e.target.files[0]); e.target.value = ''; } }} /></label>
@@ -1069,6 +1098,20 @@ export default function MenuItemManager() {
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                     <div><label style={{ fontSize: 12, color: 'var(--text-light)', display: 'block', marginBottom: 4 }}>分类</label><select className="input" value={form.categoryId} onChange={e => setForm({ ...form, categoryId: e.target.value })}>{categories.map(c => <option key={c._id} value={c._id}>{c.translations.find(t2 => t2.locale === 'zh-CN')?.name}</option>)}</select></div>
                     <div><label style={{ fontSize: 12, color: 'var(--text-light)', display: 'block', marginBottom: 4 }}>价格</label><input className="input" type="number" value={form.price} onChange={e => setForm({ ...form, price: Number(e.target.value) })} /></div>
+                    {!form.isMarketPrice ? (
+                      <div>
+                        <label style={{ fontSize: 12, color: 'var(--text-light)', display: 'block', marginBottom: 4 }}>{t('admin.discountPrice')}</label>
+                        <input
+                          className="input"
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          value={form.discountPrice}
+                          onChange={e => setForm({ ...form, discountPrice: e.target.value })}
+                        />
+                        <div style={{ fontSize: 11, color: 'var(--text-light)', marginTop: 4, lineHeight: 1.4 }}>{t('admin.discountPriceHint')}</div>
+                      </div>
+                    ) : null}
                     <div><label style={{ fontSize: 12, color: 'var(--text-light)', display: 'block', marginBottom: 4 }}>中文名称</label><input className="input" value={form.nameZh} onChange={e => setForm({ ...form, nameZh: e.target.value })} /></div>
                     <div><label style={{ fontSize: 12, color: 'var(--text-light)', display: 'block', marginBottom: 4 }}>English Name</label><input className="input" value={form.nameEn} onChange={e => setForm({ ...form, nameEn: e.target.value })} /></div>
                     <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer', gridColumn: '1 / -1' }}>

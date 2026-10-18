@@ -7,6 +7,10 @@ import { useStoreSlug } from '../context/StoreContext';
 export interface RestaurantConfig {
   /** 堂食流程：pay_first（先付）| pay_after（跑账模式） */
   dine_in_workflow_mode?: 'pay_first' | 'pay_after';
+  /** 跑账堂食服务费百分比，'0' 或空为关闭 */
+  dine_in_service_charge_percent?: string;
+  /** '1' = 店铺统一减免服务费，收银与自助结账均自动免收 */
+  dine_in_service_charge_waived?: string;
   restaurant_name_zh?: string;
   restaurant_name_en?: string;
   restaurant_address?: string;

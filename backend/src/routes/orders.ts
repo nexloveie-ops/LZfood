@@ -42,6 +42,7 @@ import {
   parsePositiveKg,
   parsePricePerKg,
 } from '../utils/marketPrice';
+import { menuItemSellPriceEuro } from '../utils/menuItemSellPrice';
 import {
   adHocOptionsToSnapshots,
   parseAdHocOptionsFromItemPayload,
@@ -167,12 +168,15 @@ function orderModels() {
     CustomerProfile: mongoose.Model<any>;
     InventoryTxn: mongoose.Model<any>;
     MarketPriceDay: mongoose.Model<any>;
+    MenuCategory: mongoose.Model<any>;
   };
 }
 
 type MenuItemForOrder = MenuItemLike & {
   translations?: { locale: string; name: string }[];
   price: number;
+  discountPrice?: number;
+  categoryId?: unknown;
   isSoldOut?: boolean;
   isMarketPrice?: boolean;
 };
@@ -307,8 +311,17 @@ export function createOrdersRouter(io: SocketIOServer): Router {
       pricePerKg?: number;
     }[] = [];
 
-    const { MarketPriceDay } = orderModels();
+    const { MarketPriceDay, MenuCategory } = orderModels();
     const todayRates = await loadTodayPricePerKgMap(MarketPriceDay, storeId, dublinCalendarDate());
+    const catIds = [...new Set(
+      [...menuItemMap.values()]
+        .map((m) => (m.categoryId != null ? String(m.categoryId) : ''))
+        .filter((id) => id && mongoose.Types.ObjectId.isValid(id)),
+    )];
+    const catRows = catIds.length > 0
+      ? await MenuCategory.find({ storeId, _id: { $in: catIds } }).select('discountZhe').lean() as { _id: unknown; discountZhe?: number }[]
+      : [];
+    const zheByCat = new Map(catRows.map((c) => [String(c._id), c.discountZhe]));
 
     for (const item of items) {
       const menuItem = menuItemMap.get(item.menuItemId)!;
@@ -365,7 +378,10 @@ export function createOrdersRouter(io: SocketIOServer): Router {
         menuItemId: item.menuItemId,
         lineKind: 'menu',
         quantity: item.quantity,
-        unitPrice: menuItem.price,
+        unitPrice: menuItemSellPriceEuro(
+          menuItem,
+          zheByCat.get(menuItem.categoryId != null ? String(menuItem.categoryId) : ''),
+        ),
         itemName,
         itemNameEn,
         selectedOptions,
@@ -1037,52 +1053,65 @@ export function createOrdersRouter(io: SocketIOServer): Router {
       const hourMs = 3600 * 1000;
       const activeAllStart = new Date(dayStart.getTime() - hourMs);
       const activeAllEndExclusive = new Date(dayEndExclusive.getTime() + hourMs);
+      const dineInWf = await getDineInWorkflowModeForStore(req.storeId!);
       const dineInActive: Record<string, unknown> = {
         type: 'dine_in',
         status: { $in: [...ACTIVE_ORDER_STATUSES] },
-        ...(await dineInStaffVisibleFilter(req.storeId!)),
+        ...(dineInWf === 'pay_after' ? {} : { dineInExposedToStaff: { $ne: false } }),
       };
-      const orders = await Order.find({
-        storeId: req.storeId,
-        createdAt: { $gte: activeAllStart, $lt: activeAllEndExclusive },
-        $or: [
-          { type: 'takeout', status: { $in: [...ACTIVE_ORDER_STATUSES] } },
-          dineInActive,
-          // Phone orders should disappear after checkout.
-          {
-            type: 'phone',
-            $or: [
-              { status: 'pending' },
-              { status: 'paid_online', phoneCardPaidAtPlacement: true },
-              { status: 'paid_online', placementPrepaidMethod: { $in: ['card', 'member'] } },
-            ],
-          },
-          // 电话送餐：司机回店结账后应为 completed；队列中只保留待处理/待收款阶段（勿含 checked_out，否则旧数据会永远占位）
-          {
-            type: 'delivery',
-            deliverySource: 'phone',
-            status: { $in: ['pending', 'paid_online'] },
-          },
-          // Delivery orders from QR appear in cashier only after payment.
-          {
-            type: 'delivery',
-            deliverySource: 'qr',
-            status: { $in: ['paid_online', 'checked_out'] },
-          },
-          // Backward compatibility for old delivery rows without source.
-          {
-            type: 'delivery',
-            deliverySource: { $exists: false },
-            status: { $in: ['pending', 'paid_online'] },
-          },
-          // Dual-track: fulfilled but unpaid must stay active until payment.
-          {
-            dualTrackVersion: DUAL_TRACK_VERSION,
-            fulfillmentStatus: 'fulfilled',
-            paymentStatus: { $in: ['unpaid', 'partial'] },
-          },
-        ],
-      })
+      const sameDayBranches: Record<string, unknown>[] = [
+        { type: 'takeout', status: { $in: [...ACTIVE_ORDER_STATUSES] } },
+        ...(dineInWf === 'pay_after' ? [] : [dineInActive]),
+        // Phone orders should disappear after checkout.
+        {
+          type: 'phone',
+          $or: [
+            { status: 'pending' },
+            { status: 'paid_online', phoneCardPaidAtPlacement: true },
+            { status: 'paid_online', placementPrepaidMethod: { $in: ['card', 'member'] } },
+          ],
+        },
+        // 电话送餐：司机回店结账后应为 completed；队列中只保留待处理/待收款阶段（勿含 checked_out，否则旧数据会永远占位）
+        {
+          type: 'delivery',
+          deliverySource: 'phone',
+          status: { $in: ['pending', 'paid_online'] },
+        },
+        // Delivery orders from QR appear in cashier only after payment.
+        {
+          type: 'delivery',
+          deliverySource: 'qr',
+          status: { $in: ['paid_online', 'checked_out'] },
+        },
+        // Backward compatibility for old delivery rows without source.
+        {
+          type: 'delivery',
+          deliverySource: { $exists: false },
+          status: { $in: ['pending', 'paid_online'] },
+        },
+        // Dual-track: fulfilled but unpaid must stay active until payment.
+        {
+          dualTrackVersion: DUAL_TRACK_VERSION,
+          fulfillmentStatus: 'fulfilled',
+          paymentStatus: { $in: ['unpaid', 'partial'] },
+        },
+      ];
+      const createdAtWindow = { createdAt: { $gte: activeAllStart, $lt: activeAllEndExclusive } };
+      /** 跑账未结堂食可隔夜占台，不受当日 createdAt 窗口限制。 */
+      const filter: Record<string, unknown> = dineInWf === 'pay_after'
+        ? {
+          storeId: req.storeId,
+          $or: [
+            { ...createdAtWindow, $or: sameDayBranches },
+            dineInActive,
+          ],
+        }
+        : {
+          storeId: req.storeId,
+          ...createdAtWindow,
+          $or: sameDayBranches,
+        };
+      const orders = await Order.find(filter)
         .sort({
           type: 1,
           status: 1,

@@ -136,4 +136,19 @@ describe('buildFeieyunReceiptContent pay_after kitchen', () => {
     expect(html).toContain('Order #174501');
     expect(html).toContain('  · 加辣 +1.00 EUR');
   });
+
+  it('prints waived service as its own line, not a discount', () => {
+    const html = buildFeieyunReceiptContent(sampleReceipt({
+      ticketKind: 'checkout',
+      dineInWorkflowMode: 'pay_after',
+      paymentMethod: 'cash',
+      totalAmount: 13,
+      serviceChargePercent: 10,
+      serviceChargeAmount: 1.3,
+      serviceChargeWaived: true,
+    }));
+    expect(html).toContain('Service 10% (waived) / 服务费 10%（已减免）');
+    expect(html).not.toContain('Discount');
+    expect(html).toContain('Subtotal');
+  });
 });

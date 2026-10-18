@@ -1,3 +1,5 @@
+import { billedServiceChargeEuro, formatServiceChargeReceiptLabel } from '../dineInServiceCharge';
+
 const COLS = 48;
 
 export type CloudPrintOption = {
@@ -67,6 +69,9 @@ export type CloudPrintReceipt = {
   memberCreditUsed?: number;
   couponName?: string;
   couponAmount?: number;
+  serviceChargePercent?: number;
+  serviceChargeAmount?: number;
+  serviceChargeWaived?: boolean;
   checkedOutAt: string | Date;
   dineInPartialLineSettlements?: { orderLineItemId: string; quantity: number; amountEuro: number }[];
   restaurant: {
@@ -448,20 +453,28 @@ export function buildFeieyunReceiptContent(receipt: CloudPrintReceipt): string {
   const totalBundle = bundles.reduce((s, b) => s + (Number(b.discount) || 0), 0);
   const couponAmt = Number(receipt.couponAmount) || 0;
   const couponLabel = String(receipt.couponName || '').trim() || 'Discount / 折扣';
+  const scAmt = Number(receipt.serviceChargeAmount) || 0;
+  const scWaived = Boolean(receipt.serviceChargeWaived);
+  const scBilled = billedServiceChargeEuro(scAmt, scWaived);
+  const scLabel = formatServiceChargeReceiptLabel(Number(receipt.serviceChargePercent) || 0, scWaived);
   if (partial) {
     lines.push(padRow('Subtotal (lines)', euro(partial.subtotal)));
-    if (partial.adjust > 0.001) {
-      lines.push(padRow(couponAmt > 0.001 ? couponLabel : 'Bundle/coupon', euro(partial.adjust, true)));
+    if (scAmt > 0.001) lines.push(padRow(scLabel, euro(scBilled)));
+    if (couponAmt > 0.001) {
+      lines.push(padRow(couponLabel, euro(couponAmt, true)));
+    } else if (partial.adjust > 0.001 && scAmt <= 0.001) {
+      lines.push(padRow('Bundle/coupon', euro(partial.adjust, true)));
     }
     if (showLegacy) lines.push(padRow('Delivery', euro(deliveryAmt)));
     lines.push(`<BOLD>${padRow('Total', euro(receipt.totalAmount))}</BOLD>`);
-  } else if (totalBundle > 0.001 || couponAmt > 0.001) {
+  } else if (totalBundle > 0.001 || couponAmt > 0.001 || scAmt > 0.001) {
     const foodAfter = receipt.totalAmount - deliveryAmt;
-    const subtotal = foodAfter + totalBundle + couponAmt;
+    const subtotal = foodAfter + totalBundle + couponAmt - scBilled;
     lines.push(padRow('Subtotal', euro(subtotal)));
     for (const bd of bundles) {
       lines.push(padRow(`Disc ${bd.nameEn || bd.name || ''}`, euro(bd.discount, true)));
     }
+    if (scAmt > 0.001) lines.push(padRow(scLabel, euro(scBilled)));
     if (couponAmt > 0.001) lines.push(padRow(couponLabel, euro(couponAmt, true)));
     if (showLegacy) lines.push(padRow('Delivery', euro(deliveryAmt)));
     lines.push(`<BOLD>${padRow('Total', euro(receipt.totalAmount))}</BOLD>`);

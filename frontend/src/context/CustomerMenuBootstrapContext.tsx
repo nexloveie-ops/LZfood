@@ -7,12 +7,14 @@ export interface CustomerMenuCategory {
   _id: string;
   sortOrder: number;
   translations: { locale: string; name: string }[];
+  discountZhe?: number;
 }
 
 export interface CustomerMenuItem {
   _id: string;
   categoryId: string;
   price: number;
+  discountPrice?: number;
   calories?: number;
   avgWaitMinutes?: number;
   photoUrl?: string;

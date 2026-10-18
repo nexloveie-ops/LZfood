@@ -10,7 +10,8 @@ import {
 } from '../../utils/bomAvailability';
 import RecommendedStar from '../RecommendedStar';
 import SpiceLevelHint from '../SpiceLevelHint';
-import { formatMenuMarketPrice } from '../../utils/marketPriceDisplay';
+import { menuItemHasDiscount, menuItemSellPriceEuro } from '../../utils/menuItemSellPrice';
+import MenuPriceLabel from '../MenuPriceLabel';
 
 interface MenuItemCardProps {
   id: string;
@@ -18,6 +19,8 @@ interface MenuItemCardProps {
   names: Record<string, string>;
   description?: string;
   price: number;
+  discountPrice?: number | null;
+  categoryDiscountZhe?: unknown;
   calories?: number;
   avgWaitMinutes?: number;
   photoUrl?: string;
@@ -34,7 +37,7 @@ interface MenuItemCardProps {
   quantity?: number;
   /** 已点份数均来自不可减的订单行时禁用「−」 */
   decreaseDisabled?: boolean;
-  onAdd: (id: string, names: Record<string, string>, price: number, options?: CartItemOption[], meta?: { isMarketPrice?: boolean }) => void;
+  onAdd: (id: string, names: Record<string, string>, price: number, options?: CartItemOption[], meta?: { isMarketPrice?: boolean; listPrice?: number }) => void;
   onDecrease?: (menuItemId: string) => void;
   bomSnapshot?: BomAvailabilitySnapshot | null;
   /** 购物车/当前单已占用原材料 */
@@ -42,13 +45,15 @@ interface MenuItemCardProps {
 }
 
 export default function MenuItemCard({
-  id, name, names, description, price, calories, avgWaitMinutes,
+  id, name, names, description, price, discountPrice, categoryDiscountZhe, calories, avgWaitMinutes,
   photoUrl, photoFetchPriority = 'auto', arFileUrl, isSoldOut, isRecommended, spiceLevel, isMarketPrice, todayPricePerKg, allergenIcons, optionGroups, quantity, decreaseDisabled, onAdd, onDecrease,
   bomSnapshot, cartBomLines = [],
 }: MenuItemCardProps) {
   const { t, i18n } = useTranslation();
   const isEn = (i18n.language || '').toLowerCase().startsWith('en');
   const addMeta = isMarketPrice ? { isMarketPrice: true } : undefined;
+  const sellPrice = menuItemSellPriceEuro({ price, discountPrice, isMarketPrice }, categoryDiscountZhe);
+  const listPrice = menuItemHasDiscount({ price, discountPrice, isMarketPrice }, categoryDiscountZhe) ? price : undefined;
   const [expanded, setExpanded] = useState(false);
   const [isClamped, setIsClamped] = useState(false);
   const [showOptions, setShowOptions] = useState(false);
@@ -86,12 +91,12 @@ export default function MenuItemCard({
     if (hasOptions) {
       setShowOptions(true);
     } else {
-      onAdd(id, names, price, undefined, addMeta);
+      onAdd(id, names, sellPrice, undefined, addMeta ? { ...addMeta, listPrice } : { listPrice });
     }
   };
 
   const handleOptionConfirm = (options: CartItemOption[]) => {
-    onAdd(id, names, price, options, addMeta);
+    onAdd(id, names, sellPrice, options, addMeta ? { ...addMeta, listPrice } : { listPrice });
     setShowOptions(false);
   };
 
@@ -226,13 +231,14 @@ export default function MenuItemCard({
 
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 'auto' }}>
             <div className="menu-item-card__price">
-              {isMarketPrice ? (
-                <span style={{ fontSize: 14, fontWeight: 700 }}>{formatMenuMarketPrice(todayPricePerKg, isEn)}</span>
-              ) : (
-                <>
-                  <span style={{ fontSize: 13, fontWeight: 500, marginRight: 1 }}>€</span>{price}
-                </>
-              )}
+              <MenuPriceLabel
+                price={price}
+                discountPrice={discountPrice}
+                categoryDiscountZhe={categoryDiscountZhe}
+                isMarketPrice={isMarketPrice}
+                todayPricePerKg={todayPricePerKg}
+                isEn={isEn}
+              />
             </div>
             <button
               className="menu-item-card__add"
@@ -282,7 +288,8 @@ export default function MenuItemCard({
       {showOptions && hasOptions && (
         <OptionSelectModal
           itemName={name}
-          price={price}
+          price={sellPrice}
+          listPrice={listPrice}
           optionGroups={optionGroups!}
           menuItemId={id}
           bomSnapshot={bomSnapshot}
@@ -320,7 +327,7 @@ export default function MenuItemCard({
             textAlign: 'center', color: '#fff', fontSize: 16, fontWeight: 600,
             textShadow: '0 1px 4px rgba(0,0,0,0.6)',
           }}>
-            {name} · €{price}
+            {name} · {listPrice != null ? <><s>€{listPrice}</s> €{sellPrice}</> : <>€{sellPrice}</>}
           </div>
         </div>
       )}

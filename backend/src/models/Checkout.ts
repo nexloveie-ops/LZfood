@@ -14,6 +14,10 @@ const CheckoutSchema = new mongoose.Schema({
   changeAmount: { type: Number },
   couponName: { type: String },
   couponAmount: { type: Number },
+  /** 跑账堂食服务费：按结账菜品应付计；减免时金额并入 couponAmount */
+  serviceChargePercent: { type: Number },
+  serviceChargeAmount: { type: Number },
+  serviceChargeWaived: { type: Boolean },
   numberedVoucherId: { type: mongoose.Schema.Types.ObjectId, ref: 'NumberedVoucher' },
   numberedVoucherCode: { type: String, default: '' },
   voucherDiscountEuro: { type: Number },
