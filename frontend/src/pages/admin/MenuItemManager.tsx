@@ -10,6 +10,7 @@ import {
 import { CONSUMPTION_QTY_MIN, roundConsumptionQty } from '../../utils/consumptionQty';
 import BomQtyInput from '../../components/admin/BomQtyInput';
 import RecommendedStar from '../../components/RecommendedStar';
+import TodaysSpecialIcon from '../../components/TodaysSpecialIcon';
 import SpiceLevelHint, { clampSpiceLevel, type SpiceLevel } from '../../components/SpiceLevelHint';
 import MenuPriceLabel from '../../components/MenuPriceLabel';
 
@@ -31,7 +32,7 @@ interface InventorySubdoc {
 interface MenuItem {
   _id: string; categoryId: string; price: number; discountPrice?: number; calories?: number;
   avgWaitMinutes?: number; photoUrl?: string; arFileUrl?: string;
-  isSoldOut?: boolean; isRecommended?: boolean; spiceLevel?: number; isMarketPrice?: boolean; translations: Translation[]; allergenIds?: string[];
+  isSoldOut?: boolean; isRecommended?: boolean; isHidden?: boolean; isTodaysSpecial?: boolean; spiceLevel?: number; isMarketPrice?: boolean; translations: Translation[]; allergenIds?: string[];
   optionGroups?: OptionGroupData[];
   inventoryTracked?: boolean;
   inventory?: InventorySubdoc;
@@ -61,6 +62,8 @@ const emptyForm = {
   descZh: '',
   descEn: '',
   isRecommended: false,
+  isHidden: false,
+  isTodaysSpecial: false,
   isMarketPrice: false,
   spiceLevel: 0 as SpiceLevel,
   allergenIds: [] as string[],
@@ -150,7 +153,7 @@ export default function MenuItemManager() {
   const fetchData = useCallback(async () => {
     const requests: Promise<Response>[] = [
       apiFetch('/api/menu/categories', { headers: authHeaders }),
-      apiFetch('/api/menu/items?ownOptionGroups=1', { headers: authHeaders }),
+      apiFetch('/api/menu/items?ownOptionGroups=1&includeHidden=1', { headers: authHeaders }),
       apiFetch('/api/allergens', { headers: authHeaders }),
     ];
     if (canTrackInventory) {
@@ -278,6 +281,8 @@ export default function MenuItemManager() {
         descZh: item.translations.find(t2 => t2.locale === 'zh-CN')?.description || '',
         descEn: item.translations.find(t2 => t2.locale === 'en-US')?.description || '',
         isRecommended: !!item.isRecommended,
+        isHidden: !!item.isHidden,
+        isTodaysSpecial: !!item.isTodaysSpecial,
         isMarketPrice: !!item.isMarketPrice,
         spiceLevel: clampSpiceLevel(item.spiceLevel),
         allergenIds: item.allergenIds || [],
@@ -406,6 +411,8 @@ export default function MenuItemManager() {
       calories: saveForm.calories, avgWaitMinutes: saveForm.avgWaitMinutes,
       allergenIds: saveForm.allergenIds,
       isRecommended: !!saveForm.isRecommended,
+      isHidden: !!saveForm.isHidden,
+      isTodaysSpecial: !!saveForm.isTodaysSpecial,
       isMarketPrice: !!saveForm.isMarketPrice,
       spiceLevel: clampSpiceLevel(saveForm.spiceLevel),
       translations: [
@@ -852,6 +859,24 @@ export default function MenuItemManager() {
             <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer', gridColumn: '1 / -1' }}>
               <input
                 type="checkbox"
+                checked={form.isTodaysSpecial}
+                onChange={e => setForm({ ...form, isTodaysSpecial: e.target.checked })}
+              />
+              <TodaysSpecialIcon size={16} />
+              <span>{t('admin.todaysSpecialDish')}</span>
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer', gridColumn: '1 / -1' }}>
+              <input
+                type="checkbox"
+                checked={form.isHidden}
+                onChange={e => setForm({ ...form, isHidden: e.target.checked })}
+              />
+              <span>{t('admin.hiddenDish')}</span>
+              <span style={{ fontSize: 11, color: 'var(--text-light)' }}>{t('admin.hiddenDishHint')}</span>
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer', gridColumn: '1 / -1' }}>
+              <input
+                type="checkbox"
                 checked={form.isMarketPrice}
                 onChange={e => setForm({ ...form, isMarketPrice: e.target.checked })}
               />
@@ -1052,7 +1077,7 @@ export default function MenuItemManager() {
             </tr>
             {group.items.map(item => (
               <React.Fragment key={item._id}>
-              <tr style={{ borderBottom: showForm && editingId === item._id ? 'none' : '1px solid #f0f0f0', background: showForm && editingId === item._id ? '#FFF5F5' : undefined }}>
+              <tr style={{ borderBottom: showForm && editingId === item._id ? 'none' : '1px solid #f0f0f0', background: showForm && editingId === item._id ? '#FFF5F5' : undefined, opacity: item.isHidden ? 0.55 : 1 }}>
                 <td style={{ padding: '8px 12px' }}>
                   <label style={{ cursor: 'pointer', display: 'block' }}>
                     <div style={{ width: 48, height: 48, borderRadius: 6, background: item.photoUrl ? `url(${item.photoUrl}) center/cover` : 'var(--bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20 }}>{!item.photoUrl && '📷'}</div>
@@ -1061,6 +1086,7 @@ export default function MenuItemManager() {
                 </td>
                 <td style={{ padding: '8px 12px' }}>
                   <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: 2 }}>
+                    {item.isTodaysSpecial ? <TodaysSpecialIcon size={16} title={t('admin.todaysSpecialDish')} /> : null}
                     {item.isRecommended ? <RecommendedStar size={13} title={t('admin.recommendedDish')} /> : null}
                     {item.translations.find(t2 => t2.locale === 'zh-CN')?.name}
                     <SpiceLevelHint level={item.spiceLevel} />
@@ -1081,7 +1107,11 @@ export default function MenuItemManager() {
                   <label style={{ cursor: 'pointer' }}>{item.arFileUrl ? (<span style={{ color: 'var(--green)', fontSize: 13 }}>✓ <span style={{ textDecoration: 'underline', fontSize: 11 }}>替换</span></span>) : (<span className="btn btn-ghost" style={{ fontSize: 11, padding: '4px 8px', display: 'inline-block' }}>上传 AR</span>)}<input type="file" accept=".usdz,.glb" hidden onChange={e => { if (e.target.files?.[0]) { uploadAR(item._id, e.target.files[0]); e.target.value = ''; } }} /></label>
                 </td>
                 <td style={{ padding: '8px 12px', textAlign: 'center' }}>
-                  {item.isSoldOut ? <span className="badge" style={{ background: 'var(--red-light)', color: 'var(--red-primary)' }}>售罄</span> : <span className="badge" style={{ background: 'var(--green-light)', color: 'var(--green)' }}>在售</span>}
+                  {item.isHidden
+                    ? <span className="badge" style={{ background: '#eee', color: '#666' }}>{t('admin.hiddenDish')}</span>
+                    : item.isSoldOut
+                      ? <span className="badge" style={{ background: 'var(--red-light)', color: 'var(--red-primary)' }}>售罄</span>
+                      : <span className="badge" style={{ background: 'var(--green-light)', color: 'var(--green)' }}>在售</span>}
                   {canTrackInventory && item.inventoryTracked && (
                     <div style={{ marginTop: 4, fontSize: 10, color: 'var(--text-light)' }}>
                       📦 {Math.max(0, Number(item.inventory?.currentQty) || 0)}{item.inventory?.baseUnit ? ' ' + item.inventory.baseUnit : ''}
@@ -1118,6 +1148,15 @@ export default function MenuItemManager() {
                       <input type="checkbox" checked={form.isRecommended} onChange={e => setForm({ ...form, isRecommended: e.target.checked })} />
                       <RecommendedStar size={14} />
                       <span>{t('admin.recommendedDish')}</span>
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer', gridColumn: '1 / -1' }}>
+                      <input type="checkbox" checked={form.isTodaysSpecial} onChange={e => setForm({ ...form, isTodaysSpecial: e.target.checked })} />
+                      <TodaysSpecialIcon size={16} />
+                      <span>{t('admin.todaysSpecialDish')}</span>
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer', gridColumn: '1 / -1' }}>
+                      <input type="checkbox" checked={form.isHidden} onChange={e => setForm({ ...form, isHidden: e.target.checked })} />
+                      <span>{t('admin.hiddenDish')}</span>
                     </label>
                     <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer', gridColumn: '1 / -1' }}>
                       <input type="checkbox" checked={form.isMarketPrice} onChange={e => setForm({ ...form, isMarketPrice: e.target.checked })} />

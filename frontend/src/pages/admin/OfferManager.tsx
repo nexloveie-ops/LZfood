@@ -63,7 +63,7 @@ export default function OfferManager() {
       const [offersRes, catsRes, itemsRes] = await Promise.all([
         apiFetch('/api/offers/all', { headers: { Authorization: `Bearer ${token}` } }),
         apiFetch(`/api/menu/categories?lang=${lang}`),
-        apiFetch('/api/menu/items?ownOptionGroups=1'),
+        apiFetch('/api/menu/items?ownOptionGroups=1&includeHidden=1'),
       ]);
       if (offersRes.ok) setOffers(await offersRes.json());
       let catOrder = new Map<string, number>();

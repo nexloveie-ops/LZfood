@@ -21,6 +21,7 @@ export interface CustomerMenuItem {
   arFileUrl?: string;
   isSoldOut?: boolean;
   isRecommended?: boolean;
+  isTodaysSpecial?: boolean;
   spiceLevel?: number;
   isMarketPrice?: boolean;
   todayPricePerKg?: number | null;

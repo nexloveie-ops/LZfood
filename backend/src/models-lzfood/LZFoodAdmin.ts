@@ -7,7 +7,7 @@ export const LZFoodAdminSchema = new mongoose.Schema(
     passwordHash: { type: String, required: true },
     role: {
       type: String,
-      enum: ['owner', 'cashier', 'platform_owner'],
+      enum: ['owner', 'cashier', 'purchasing', 'platform_owner'],
       required: true,
     },
     storeId: {
@@ -23,7 +23,7 @@ export const LZFoodAdminSchema = new mongoose.Schema(
 
 LZFoodAdminSchema.index(
   { storeId: 1, username: 1 },
-  { unique: true, partialFilterExpression: { role: { $in: ['owner', 'cashier'] } } },
+  { unique: true, partialFilterExpression: { role: { $in: ['owner', 'cashier', 'purchasing'] } } },
 );
 
 LZFoodAdminSchema.index(

@@ -47,6 +47,7 @@ import {
 } from '../../utils/bomAvailability';
 import { syncWaiterModeFromSearch } from '../../utils/waiterMode';
 import RecommendedStar from '../../components/RecommendedStar';
+import TodaysSpecialIcon from '../../components/TodaysSpecialIcon';
 import SpiceLevelHint from '../../components/SpiceLevelHint';
 import { menuItemHasDiscount, menuItemSellPriceEuro } from '../../utils/menuItemSellPrice';
 import MenuPriceLabel from '../../components/MenuPriceLabel';
@@ -58,7 +59,9 @@ interface MenuItem {
   translations: Translation[];
   optionGroups?: OptionGroup[];
   isSoldOut?: boolean;
+  isHidden?: boolean;
   isRecommended?: boolean;
+  isTodaysSpecial?: boolean;
   spiceLevel?: number;
   isMarketPrice?: boolean;
   todayPricePerKg?: number | null;
@@ -530,7 +533,7 @@ export default function CashierOrder() {
         setMenuLoading(false);
         void (async () => {
           try {
-            const itemsRes = await apiFetch(`/api/menu/items?lang=${encodeURIComponent(lang)}`);
+            const itemsRes = await apiFetch(`/api/menu/items?lang=${encodeURIComponent(lang)}&includeHidden=1`);
             if (!itemsRes.ok) return;
             const items: MenuItem[] = await itemsRes.json();
             setMenuItems(items);
@@ -553,7 +556,7 @@ export default function CashierOrder() {
     try {
       const [catRes, itemsRes] = await Promise.all([
         apiFetch(`/api/menu/categories?lang=${encodeURIComponent(lang)}`),
-        apiFetch(`/api/menu/items?lang=${encodeURIComponent(lang)}`),
+        apiFetch(`/api/menu/items?lang=${encodeURIComponent(lang)}&includeHidden=1`),
       ]);
       let cats: Category[] = cached?.categories as Category[] ?? [];
       let items: MenuItem[] = cached?.menuItems as MenuItem[] ?? [];
@@ -1299,6 +1302,10 @@ export default function CashierOrder() {
   };
 
   const rejectItemAdd = (item: MenuItem): boolean => {
+    if (item.isHidden) {
+      alert(t('cashier.orderHiddenNotice'));
+      return true;
+    }
     if (item.isSoldOut) {
       alert(t('cashier.orderSoldOutNotice'));
       return true;
@@ -1321,7 +1328,7 @@ export default function CashierOrder() {
     const names = new Set<string>();
     for (const line of lines) {
       const mi = byId.get(line.menuItemId);
-      if (mi?.isSoldOut) names.add(line.name);
+      if (mi?.isHidden || mi?.isSoldOut) names.add(line.name);
     }
     return [...names];
   };
@@ -1518,23 +1525,27 @@ export default function CashierOrder() {
     const cardClass = [
       'cashier-menu-card',
       qty > 0 ? 'is-selected' : '',
-      item.isSoldOut || invBlocked ? 'is-disabled' : '',
+      item.isHidden || item.isSoldOut || invBlocked ? 'is-disabled' : '',
+      item.isHidden ? 'is-hidden' : '',
     ].filter(Boolean).join(' ');
 
     return (
       <div
         key={item._id}
         className={cardClass}
-        onClick={() => addToOrder(item)}
-        style={qty > 0 ? undefined : !item.isSoldOut && invBlocked && av.color === 'red' ? { border: '2px solid #C62828' }
+        onClick={() => { if (!item.isHidden) addToOrder(item); }}
+        style={qty > 0 ? undefined : item.isHidden ? undefined : !item.isSoldOut && invBlocked && av.color === 'red' ? { border: '2px solid #C62828' }
           : !item.isSoldOut && invBlocked && av.color === 'orange' ? { border: '2px solid #E65100' }
           : undefined}
       >
-        {qty > 0 && <span className="cashier-menu-card-qty">{qty}</span>}
-        {item.isSoldOut && (
+        {qty > 0 && !item.isHidden && <span className="cashier-menu-card-qty">{qty}</span>}
+        {item.isHidden ? (
+          <span className="cashier-menu-card-soldout cashier-menu-card-hidden">{t('cashier.orderHiddenBadge')}</span>
+        ) : item.isSoldOut ? (
           <span className="cashier-menu-card-soldout">{t('cashier.orderSoldOutBadge')}</span>
-        )}
+        ) : null}
         <div className="cashier-menu-card-name">
+          {item.isTodaysSpecial ? <TodaysSpecialIcon size={16} title={t('customer.todaysSpecial')} /> : null}
           {item.isRecommended ? <RecommendedStar size={16} title={t('customer.recommended')} /> : null}
           <span className="cashier-menu-card-name-text">{getName(item.translations)}</span>
           <SpiceLevelHint level={item.spiceLevel} />

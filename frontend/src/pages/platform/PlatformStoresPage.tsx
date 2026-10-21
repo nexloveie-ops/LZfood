@@ -74,6 +74,7 @@ const FEATURE_GROUPS: {
       { key: 'admin.reportSegments.page', label: '管理员-品类结构报表（按餐品目录分组统计营业额）' },
       { key: 'admin.widget.api', label: '管理员-Owner Widget API（iOS 小组件只读数据）' },
       { key: 'print.cloud', label: '云打印（飞鹅云小票：结账/补打推送，店长配置份数）' },
+      { key: 'purchasing.page', label: '货物采购：供货商报价、货物管理员、本周订货（打印/导出）' },
     ],
   },
   {
@@ -176,7 +177,7 @@ export default function PlatformStoresPage() {
 
   const [newAdminUser, setNewAdminUser] = useState('');
   const [newAdminPass, setNewAdminPass] = useState('');
-  const [newAdminRole, setNewAdminRole] = useState<'owner' | 'cashier'>('owner');
+  const [newAdminRole, setNewAdminRole] = useState<'owner' | 'cashier' | 'purchasing'>('owner');
   const [addingAdmin, setAddingAdmin] = useState(false);
 
   const [purgeOpenFor, setPurgeOpenFor] = useState<string | null>(null);
@@ -812,10 +813,11 @@ export default function PlatformStoresPage() {
                               onChange={e => setNewAdminUser(e.target.value)} />
                             <input className="input" style={{ width: 140 }} type="password" placeholder="初始密码" value={newAdminPass}
                               onChange={e => setNewAdminPass(e.target.value)} />
-                            <select className="input" style={{ width: 120 }} value={newAdminRole}
-                              onChange={e => setNewAdminRole(e.target.value as 'owner' | 'cashier')}>
+                            <select className="input" style={{ width: 140 }} value={newAdminRole}
+                              onChange={e => setNewAdminRole(e.target.value as 'owner' | 'cashier' | 'purchasing')}>
                               <option value="owner">店主</option>
                               <option value="cashier">收银员</option>
+                              <option value="purchasing">货物管理员</option>
                             </select>
                             <button type="submit" className="btn btn-primary" disabled={addingAdmin} style={{ background: '#3949ab' }}>
                               添加账号

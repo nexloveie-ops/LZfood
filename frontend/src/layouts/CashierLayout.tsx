@@ -43,6 +43,12 @@ export default function CashierLayout() {
   }, [waiterMode]);
 
   useEffect(() => {
+    if (user?.role === 'purchasing') {
+      navigate(`/${storeSlug}/purchasing`, { replace: true });
+    }
+  }, [user, navigate, storeSlug]);
+
+  useEffect(() => {
     if (!waiterMode || !user) return;
     if (user.role !== 'cashier') {
       logout();

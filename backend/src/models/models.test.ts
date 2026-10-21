@@ -16,11 +16,16 @@ describe('Mongoose Data Models', () => {
       expect(err!.errors['role']).toBeDefined();
     });
 
-    it('should only accept owner or cashier as role', () => {
+    it('should only accept owner, cashier, or purchasing as role', () => {
       const doc = new Admin({ username: 'test', passwordHash: 'hash', role: 'invalid' });
       const err = doc.validateSync();
       expect(err).toBeDefined();
       expect(err!.errors['role']).toBeDefined();
+    });
+
+    it('should accept purchasing role', () => {
+      const doc = new Admin({ username: 'buyer', passwordHash: 'hash123', role: 'purchasing' });
+      expect(doc.validateSync()).toBeUndefined();
     });
 
     it('should accept valid admin data', () => {

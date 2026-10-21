@@ -12,7 +12,7 @@ import { Role, hasPermission } from './permissions';
  */
 
 // Owner wildcard permission prefixes — owner has full access via these wildcards
-const ownerWildcardPrefixes = ['menu:', 'order:', 'checkout:', 'report:', 'admin:', 'config:'];
+const ownerWildcardPrefixes = ['menu:', 'order:', 'checkout:', 'report:', 'admin:', 'config:', 'purchasing:'];
 
 // Cashier allowed permissions (exact or wildcard)
 const cashierAllowedExact = ['order:read', 'receipt:print', 'takeout:complete'];
@@ -26,7 +26,7 @@ const actionArb = fc.string({ minLength: 1, maxLength: 10 })
   .filter((s) => /^[a-z]+$/.test(s));
 
 // Generate a permission string in the form "domain:action"
-const domainArb = fc.constantFrom('menu', 'order', 'checkout', 'report', 'admin', 'config', 'receipt', 'takeout');
+const domainArb = fc.constantFrom('menu', 'order', 'checkout', 'report', 'admin', 'config', 'receipt', 'takeout', 'purchasing');
 const permissionArb = fc.tuple(domainArb, actionArb).map(([domain, action]) => `${domain}:${action}`);
 
 // Role arbitrary
@@ -81,6 +81,13 @@ describe('Feature: restaurant-ordering-system, Property 22: 权限控制正确�
       }),
       { numRuns: 100 },
     );
+  });
+
+  it('purchasing role only has purchasing:*; cashier cannot order goods; owner can', () => {
+    expect(hasPermission(Role.PURCHASING, 'purchasing:write')).toBe(true);
+    expect(hasPermission(Role.PURCHASING, 'admin:users')).toBe(false);
+    expect(hasPermission(Role.CASHIER, 'purchasing:write')).toBe(false);
+    expect(hasPermission(Role.OWNER, 'purchasing:write')).toBe(true);
   });
 
   it('for any role and permission, access is granted if and only if the role has matching permission', () => {

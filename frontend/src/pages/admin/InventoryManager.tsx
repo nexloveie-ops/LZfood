@@ -7,6 +7,7 @@ interface MenuItem {
   _id: string;
   categoryId: string;
   isSoldOut?: boolean;
+  isHidden?: boolean;
   soldOutUntil?: string;
   translations: { locale: string; name: string }[];
 }
@@ -30,7 +31,7 @@ export default function InventoryManager() {
 
   const fetchItems = useCallback(async () => {
     const [itemsRes, catsRes] = await Promise.all([
-      apiFetch('/api/menu/items?ownOptionGroups=1', { headers: { Authorization: `Bearer ${token}` } }),
+      apiFetch('/api/menu/items?ownOptionGroups=1&includeHidden=1', { headers: { Authorization: `Bearer ${token}` } }),
       apiFetch('/api/menu/categories', { headers: { Authorization: `Bearer ${token}` } }),
     ]);
     if (itemsRes.ok) setItems(await itemsRes.json());
@@ -95,6 +96,15 @@ export default function InventoryManager() {
     fetchItems();
   };
 
+  const setHidden = async (id: string, isHidden: boolean) => {
+    await apiFetch(`/api/menu/items/${id}/hidden`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ isHidden }),
+    });
+    fetchItems();
+  };
+
   const openSoldOutModal = (id: string) => {
     if (!canSetRestoreTime) {
       void markSoldOut(id, null);
@@ -136,36 +146,53 @@ export default function InventoryManager() {
     const nameEn = item.translations.find(t2 => t2.locale === 'en-US')?.name || '';
     return (
       <div key={item._id} className="card" style={{
-        padding: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-        opacity: item.isSoldOut ? 0.6 : 1,
+        padding: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12,
+        opacity: item.isHidden || item.isSoldOut ? 0.6 : 1,
       }}>
         <div>
           <div style={{ fontWeight: 600, fontSize: 14 }}>{name}</div>
           {nameEn && <div style={{ fontSize: 11, color: 'var(--text-light)' }}>{nameEn}</div>}
-          <span className="badge" style={{
-            marginTop: 4,
-            background: item.isSoldOut ? 'var(--red-light)' : 'var(--green-light)',
-            color: item.isSoldOut ? 'var(--red-primary)' : 'var(--green)',
-          }}>
-            {item.isSoldOut ? t('customer.soldOut') : '在售'}
-          </span>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
+            {item.isHidden ? (
+              <span className="badge" style={{ background: '#eee', color: '#555' }}>{t('admin.hiddenDish')}</span>
+            ) : null}
+            <span className="badge" style={{
+              background: item.isSoldOut ? 'var(--red-light)' : 'var(--green-light)',
+              color: item.isSoldOut ? 'var(--red-primary)' : 'var(--green)',
+            }}>
+              {item.isSoldOut ? t('customer.soldOut') : '在售'}
+            </span>
+          </div>
           {item.isSoldOut && item.soldOutUntil && (
             <div style={{ fontSize: 11, color: 'var(--text-light)', marginTop: 2 }}>
               ⏰ {formatUntil(item.soldOutUntil)}
             </div>
           )}
         </div>
-        {item.isSoldOut ? (
-          <button className="btn btn-primary" style={{ fontSize: 12, padding: '8px 14px' }}
-            onClick={() => restoreSupply(item._id)}>
-            恢复供应
-          </button>
-        ) : (
-          <button className="btn btn-outline" style={{ fontSize: 12, padding: '8px 14px' }}
-            onClick={() => openSoldOutModal(item._id)}>
-            标记售罄
-          </button>
-        )}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0 }}>
+          {item.isHidden ? (
+            <button className="btn btn-primary" style={{ fontSize: 12, padding: '8px 14px' }}
+              onClick={() => void setHidden(item._id, false)}>
+              {t('cashier.showItem')}
+            </button>
+          ) : (
+            <button className="btn btn-outline" style={{ fontSize: 12, padding: '8px 14px' }}
+              onClick={() => void setHidden(item._id, true)}>
+              {t('cashier.hideItem')}
+            </button>
+          )}
+          {item.isSoldOut ? (
+            <button className="btn btn-primary" style={{ fontSize: 12, padding: '8px 14px' }}
+              onClick={() => restoreSupply(item._id)}>
+              恢复供应
+            </button>
+          ) : (
+            <button className="btn btn-outline" style={{ fontSize: 12, padding: '8px 14px' }}
+              onClick={() => openSoldOutModal(item._id)}>
+              标记售罄
+            </button>
+          )}
+        </div>
       </div>
     );
   };

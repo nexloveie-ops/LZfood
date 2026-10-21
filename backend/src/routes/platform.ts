@@ -213,6 +213,12 @@ const DEFAULT_ADDON_PRESETS: Array<{ name: string; code: string; description: st
     description: '店主 iOS Widget 只读 API：当天净营业额、支付方式、品类结构',
     features: [FeatureKeys.AdminWidgetApi],
   },
+  {
+    name: '货物采购',
+    code: 'purchasing',
+    description: '货物管理员：供货商报价与本周订货（系统内存单、按供货商汇总打印/导出）',
+    features: [FeatureKeys.PurchasingPage],
+  },
 ];
 
 async function ensureDefaultFeatureProducts(): Promise<void> {
@@ -279,6 +285,17 @@ async function ensureDefaultFeatureProducts(): Promise<void> {
         name: 'Owner Widget API',
         description: '店主 iOS Widget 只读 API：当天净营业额、支付方式、品类结构',
         features: [FeatureKeys.AdminWidgetApi],
+        isActive: true,
+      },
+    },
+  );
+  await FeatureAddon.updateOne(
+    { code: 'purchasing' },
+    {
+      $set: {
+        name: '货物采购',
+        description: '货物管理员：供货商报价与本周订货（系统内存单、按供货商汇总打印/导出）',
+        features: [FeatureKeys.PurchasingPage],
         isActive: true,
       },
     },
@@ -731,8 +748,8 @@ router.post('/stores/:storeId/admins', ...platformAuth, async (req: Request, res
     if (!username || !password || !role) {
       throw createAppError('VALIDATION_ERROR', 'username, password, role 必填');
     }
-    if (!['owner', 'cashier'].includes(role)) {
-      throw createAppError('VALIDATION_ERROR', 'role 须为 owner 或 cashier');
+    if (!['owner', 'cashier', 'purchasing'].includes(role)) {
+      throw createAppError('VALIDATION_ERROR', 'role 须为 owner、cashier 或 purchasing');
     }
     const existing = await Admin.findOne({ storeId: st._id, username: String(username).trim() });
     if (existing) {

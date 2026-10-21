@@ -15,3 +15,8 @@ export { OptionGroupTemplateSchema } from './OptionGroupTemplate';
 export { OptionGroupTemplateRuleSchema } from './OptionGroupTemplateRule';
 export { InventoryTxnSchema } from './InventoryTxn';
 export { RawMaterialSchema } from './RawMaterial';
+export { PurchaseCategorySchema } from './PurchaseCategory';
+export { PurchaseItemSchema } from './PurchaseItem';
+export { PurchaseSupplierSchema } from './PurchaseSupplier';
+export { PurchaseQuoteSchema } from './PurchaseQuote';
+export { PurchaseWeekOrderSchema } from './PurchaseWeekOrder';

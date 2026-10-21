@@ -4,7 +4,7 @@ import { apiFetch } from '../api/client';
 interface User {
   _id: string;
   username: string;
-  role: 'owner' | 'cashier' | 'platform_owner';
+  role: 'owner' | 'cashier' | 'purchasing' | 'platform_owner';
   storeId?: string | null;
 }
 

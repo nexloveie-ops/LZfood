@@ -5,9 +5,11 @@ import path from 'path';
 import fs from 'fs';
 import os from 'os';
 import { getModels } from '../getModels';
-import { requirePermission } from '../middleware/auth';
+import { optionalAuthMiddleware, requirePermission } from '../middleware/auth';
 import { requireAuthSameStore } from '../middleware/authForStore';
+import { hasPermission } from '../middleware/permissions';
 import { createAppError } from '../middleware/errorHandler';
+import { shouldExcludeHiddenMenuItems } from '../utils/menuItemVisibility';
 import { uploadFile } from '../storage';
 import { mergeTemplateOptionGroupsForItems } from '../utils/optionGroupTemplateApply';
 import { normalizeNestedOptionGroups, validateOptionGroups } from '../utils/optionGroups';
@@ -36,6 +38,13 @@ function menuModels() {
  * - 每条要求合法 ObjectId 与 ≥0.01 的 qty（最多 2 位小数）；不合法直接抛 VALIDATION_ERROR
  * - 同一 rawMaterialId 重复 → 抛错（前端应合并）
  */
+function parseBooleanFlag(raw: unknown, field: string): boolean {
+  if (typeof raw !== 'boolean') {
+    throw createAppError('VALIDATION_ERROR', `${field} must be a boolean`);
+  }
+  return raw;
+}
+
 function parseSpiceLevel(raw: unknown, fallback?: number): number | undefined {
   if (raw === undefined || raw === null || raw === '') return fallback;
   const n = typeof raw === 'number' ? raw : Number(raw);
@@ -85,6 +94,18 @@ function sanitizeConsumption(raw: unknown): { rawMaterialId: mongoose.Types.Obje
   return out;
 }
 
+function allowMenuSoldOutOrWrite(req: Request, _res: Response, next: NextFunction): void {
+  if (!req.user) {
+    next(createAppError('UNAUTHORIZED', 'Authentication required'));
+    return;
+  }
+  if (hasPermission(req.user.role, 'menu:write') || hasPermission(req.user.role, 'menu:sold-out')) {
+    next();
+    return;
+  }
+  next(createAppError('FORBIDDEN', 'Insufficient permissions'));
+}
+
 const router = Router();
 
 // --- Multer: upload to temp directory first, then move to GCS or local ---
@@ -107,10 +128,11 @@ const tempUpload = multer({
 
 /**
  * GET /api/menu/items
- * Public endpoint — returns all menu items.
+ * Public endpoint — hidden dishes omitted unless ?includeHidden=1 and the caller is
+ * store staff (menu:write 后台 / order:read 收银). Customer menus never pass that flag.
  * Supports optional ?lang to filter translations and ?category to filter by categoryId.
  */
-router.get('/', async (req: Request, res: Response, next: NextFunction) => {
+router.get('/', optionalAuthMiddleware, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { MenuItem } = menuModels();
     // Auto-restore sold-out：与 find 并行，缩短首包等待（极少数同请求内读仍可能略早于写）
@@ -127,6 +149,12 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
       req.query.mergeTemplates === 'false';
 
     const filter: Record<string, unknown> = { storeId: req.storeId };
+    const canSeeHidden = !!req.user && (
+      hasPermission(req.user.role, 'menu:write') || hasPermission(req.user.role, 'order:read')
+    );
+    if (shouldExcludeHiddenMenuItems({ includeHiddenQuery: req.query.includeHidden, canSeeHidden })) {
+      filter.isHidden = { $ne: true };
+    }
     if (category) {
       if (!mongoose.Types.ObjectId.isValid(category)) {
         throw createAppError('VALIDATION_ERROR', 'Invalid category ID');
@@ -200,7 +228,7 @@ router.post(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { MenuItem, MenuCategory } = menuModels();
-      const { categoryId, price, calories, avgWaitMinutes, photoUrl, arFileUrl, isSoldOut, isRecommended, spiceLevel, isMarketPrice, discountPrice, translations, allergenIds, optionGroups, consumption } = req.body;
+      const { categoryId, price, calories, avgWaitMinutes, photoUrl, arFileUrl, isSoldOut, isRecommended, isHidden, isTodaysSpecial, spiceLevel, isMarketPrice, discountPrice, translations, allergenIds, optionGroups, consumption } = req.body;
 
       if (!categoryId || price == null || !Array.isArray(translations) || translations.length === 0) {
         throw createAppError(
@@ -251,6 +279,8 @@ router.post(
         arFileUrl,
         isSoldOut: isSoldOut ?? false,
         isRecommended: typeof isRecommended === 'boolean' ? isRecommended : false,
+        isHidden: typeof isHidden === 'boolean' ? isHidden : false,
+        isTodaysSpecial: typeof isTodaysSpecial === 'boolean' ? isTodaysSpecial : false,
         spiceLevel: parseSpiceLevel(spiceLevel, 0),
         isMarketPrice: typeof isMarketPrice === 'boolean' ? isMarketPrice : false,
         translations,
@@ -297,6 +327,8 @@ router.put(
         arFileUrl,
         isSoldOut,
         isRecommended,
+        isHidden,
+        isTodaysSpecial,
         spiceLevel,
         isMarketPrice,
         discountPrice,
@@ -368,10 +400,13 @@ router.put(
       if (arFileUrl !== undefined) updateData.arFileUrl = arFileUrl;
       if (isSoldOut !== undefined) updateData.isSoldOut = isSoldOut;
       if (isRecommended !== undefined) {
-        if (typeof isRecommended !== 'boolean') {
-          throw createAppError('VALIDATION_ERROR', 'isRecommended must be a boolean');
-        }
-        updateData.isRecommended = isRecommended;
+        updateData.isRecommended = parseBooleanFlag(isRecommended, 'isRecommended');
+      }
+      if (isHidden !== undefined) {
+        updateData.isHidden = parseBooleanFlag(isHidden, 'isHidden');
+      }
+      if (isTodaysSpecial !== undefined) {
+        updateData.isTodaysSpecial = parseBooleanFlag(isTodaysSpecial, 'isTodaysSpecial');
       }
       if (spiceLevel !== undefined) {
         updateData.spiceLevel = parseSpiceLevel(spiceLevel);
@@ -567,13 +602,7 @@ router.delete(
 router.put(
   '/:id/sold-out',
   ...requireAuthSameStore,
-  (req: Request, _res: Response, next: NextFunction) => {
-    // Allow either menu:write (owner) or menu:sold-out (cashier)
-    if (!req.user) { next(createAppError('UNAUTHORIZED', 'Authentication required')); return; }
-    const { hasPermission: hasPerm } = require('../middleware/permissions');
-    if (hasPerm(req.user.role, 'menu:write') || hasPerm(req.user.role, 'menu:sold-out')) { next(); return; }
-    next(createAppError('FORBIDDEN', 'Insufficient permissions'));
-  },
+  allowMenuSoldOutOrWrite,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { MenuItem } = menuModels();
@@ -617,6 +646,40 @@ router.put(
       next(err);
     }
   }
+);
+
+/**
+ * PUT /api/menu/items/:id/hidden
+ * 隐藏/显示菜品。收银库存页与后台均可调用（menu:write 或 menu:sold-out）。
+ */
+router.put(
+  '/:id/hidden',
+  ...requireAuthSameStore,
+  allowMenuSoldOutOrWrite,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { MenuItem } = menuModels();
+      const id = req.params.id as string;
+      if (!mongoose.Types.ObjectId.isValid(id)) {
+        throw createAppError('NOT_FOUND', 'Menu item not found');
+      }
+      const { isHidden } = req.body;
+      if (typeof isHidden !== 'boolean') {
+        throw createAppError('VALIDATION_ERROR', 'isHidden must be a boolean');
+      }
+      const updated = await MenuItem.findOneAndUpdate(
+        { _id: id, storeId: req.storeId },
+        { isHidden },
+        { new: true, runValidators: true },
+      );
+      if (!updated) {
+        throw createAppError('NOT_FOUND', 'Menu item not found');
+      }
+      res.json(updated);
+    } catch (err) {
+      next(err);
+    }
+  },
 );
 
 /**

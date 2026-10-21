@@ -7,13 +7,14 @@ interface AdminUser { _id: string; username: string; role: string; }
 
 export default function UserManager() {
   const { t } = useTranslation();
-  const { token } = useAuth();
+  const { token, hasFeature } = useAuth();
+  const canPurchasing = hasFeature('purchasing.page');
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [role, setRole] = useState<'owner' | 'cashier'>('cashier');
+  const [role, setRole] = useState<'owner' | 'cashier' | 'purchasing'>('cashier');
 
   const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
 
@@ -28,7 +29,7 @@ export default function UserManager() {
     if (user) {
       setEditingId(user._id);
       setUsername(user.username);
-      setRole(user.role as 'owner' | 'cashier');
+      setRole(user.role as 'owner' | 'cashier' | 'purchasing');
       setPassword('');
     } else {
       setEditingId(null);
@@ -77,9 +78,10 @@ export default function UserManager() {
             </div>
             <div>
               <label style={{ fontSize: 12, color: 'var(--text-light)', display: 'block', marginBottom: 4 }}>角色</label>
-              <select className="input" value={role} onChange={e => setRole(e.target.value as 'owner' | 'cashier')}>
-                <option value="owner">老板 (Owner)</option>
-                <option value="cashier">收银员 (Cashier)</option>
+              <select className="input" value={role} onChange={e => setRole(e.target.value as 'owner' | 'cashier' | 'purchasing')}>
+                <option value="owner">{t('purchasing.roleOwner')}</option>
+                <option value="cashier">{t('purchasing.roleCashier')}</option>
+                {canPurchasing ? <option value="purchasing">{t('purchasing.roleBadge')}</option> : null}
               </select>
             </div>
           </div>
@@ -105,9 +107,9 @@ export default function UserManager() {
                 <td style={{ padding: '10px 16px', fontWeight: 600 }}>{u.username}</td>
                 <td style={{ padding: '10px 16px' }}>
                   <span className="badge" style={{
-                    background: u.role === 'owner' ? 'var(--gold-light)' : 'var(--blue-light)',
-                    color: u.role === 'owner' ? 'var(--gold-dark)' : 'var(--blue)',
-                  }}>{u.role === 'owner' ? '老板' : '收银员'}</span>
+                    background: u.role === 'owner' ? 'var(--gold-light)' : u.role === 'purchasing' ? '#ecfdf5' : 'var(--blue-light)',
+                    color: u.role === 'owner' ? 'var(--gold-dark)' : u.role === 'purchasing' ? '#047857' : 'var(--blue)',
+                  }}>{u.role === 'owner' ? t('purchasing.roleOwner') : u.role === 'purchasing' ? t('purchasing.roleBadge') : t('purchasing.roleCashier')}</span>
                 </td>
                 <td style={{ padding: '10px 16px', textAlign: 'right' }}>
                   <button className="btn btn-ghost" style={{ fontSize: 12 }} onClick={() => startEdit(u)}>{t('common.edit')}</button>

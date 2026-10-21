@@ -28,7 +28,7 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
       RawMaterial: mongoose.Model<any>;
     };
 
-    const items = await MenuItem.find({ storeId: req.storeId })
+    const items = await MenuItem.find({ storeId: req.storeId, isHidden: { $ne: true } })
       .select('consumption optionGroups categoryId')
       .lean();
     const merged = await mergeTemplateOptionGroupsForItems(req.storeId, items);

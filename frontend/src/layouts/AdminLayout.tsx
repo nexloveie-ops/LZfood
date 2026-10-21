@@ -29,6 +29,7 @@ const sidebarItems = [
   { path: 'sales-forecast', icon: '📈', key: 'admin.salesForecast.nav', featureKey: 'admin.salesForecast.page' },
   { path: 'business-hours', icon: '🕒', key: 'admin.businessHours' },
   { path: 'customer-notifications', icon: '🔔', key: 'admin.customerNotify.nav', featureKey: 'admin.customerNotifications.page' },
+  { path: 'purchasing', icon: '🛒', key: 'purchasing.nav', featureKey: 'purchasing.page', absolute: true },
   { path: 'users', icon: '👥', key: 'admin.users' },
   { path: 'config', icon: '⚙️', key: 'admin.systemConfig' },
   { path: 'stripe', icon: '💳', key: 'admin.stripeSettings' },
@@ -79,7 +80,7 @@ export default function AdminLayout() {
             .map((item) => (
               <NavLink
                 key={item.path}
-                to={item.path}
+                to={'absolute' in item && item.absolute ? `/${storeSlug}/purchasing` : item.path}
                 title={collapsed ? t(item.key) : undefined}
                 className={({ isActive }) =>
                   `admin-saas-nav-link${isActive ? ' is-active' : ''}`

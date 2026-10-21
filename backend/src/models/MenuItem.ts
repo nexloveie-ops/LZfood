@@ -102,6 +102,10 @@ const MenuItemSchema = new mongoose.Schema({
   soldOutUntil: { type: Date },
   /** 店家推荐：点单/顾客菜单在菜名前显示金色星星 */
   isRecommended: { type: Boolean, default: false },
+  /** 隐藏：顾客、收银、手持与公开今日特色接口都不返回 */
+  isHidden: { type: Boolean, default: false, index: true },
+  /** 今日特色：商家网站 / 点单菜单展示特色图标 */
+  isTodaysSpecial: { type: Boolean, default: false, index: true },
   /** 辣度提示：0 不辣 / 1 微辣 / 2 中辣 / 3 重辣；菜单上显示对应数量辣椒 */
   spiceLevel: { type: Number, default: 0, min: 0, max: 3 },
   /** 时价海鲜等：按当天 €/kg × 收银台称重计价；目录 price 不用作结账单价 */

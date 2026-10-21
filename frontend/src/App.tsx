@@ -18,6 +18,11 @@ import LoginPage from './pages/LoginPage';
 import CustomerLayout from './layouts/CustomerLayout';
 import CashierLayout from './layouts/CashierLayout';
 import AdminLayout from './layouts/AdminLayout';
+import PurchasingLayout from './layouts/PurchasingLayout';
+import PurchaseWeekSheet from './pages/purchasing/PurchaseWeekSheet';
+import PurchaseCatalogPage from './pages/purchasing/PurchaseCatalogPage';
+import PurchaseSuppliersPage from './pages/purchasing/PurchaseSuppliersPage';
+import PurchaseOrdersPage from './pages/purchasing/PurchaseOrdersPage';
 import ScanLanding from './pages/customer/ScanLanding';
 import StoreFrontPage from './pages/customer/StoreFrontPage';
 import MenuView from './pages/customer/MenuView';
@@ -117,7 +122,24 @@ function RequireOwner({ children }: { children: React.ReactNode }) {
   const { storeSlug = '' } = useParams<{ storeSlug: string }>();
   if (!isAuthenticated) return <Navigate to={`/${storeSlug}/login`} replace />;
   if (user?.role !== 'platform_owner' && !isStoreStaffSessionReady) return null;
+  if (user?.role === 'purchasing') {
+    return <Navigate to={`/${storeSlug}/purchasing`} replace />;
+  }
   if (user?.role !== 'owner' && user?.role !== 'platform_owner') {
+    return <LogoutThenStoreLogin storeSlug={storeSlug} />;
+  }
+  return <>{children}</>;
+}
+
+function RequirePurchasing({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated, user, isStoreStaffSessionReady } = useAuth();
+  const { storeSlug = '' } = useParams<{ storeSlug: string }>();
+  if (!isAuthenticated) return <Navigate to={`/${storeSlug}/login`} replace />;
+  if (user?.role !== 'platform_owner' && !isStoreStaffSessionReady) return null;
+  if (user?.role === 'cashier') {
+    return <Navigate to={`/${storeSlug}/cashier`} replace />;
+  }
+  if (user?.role !== 'owner' && user?.role !== 'platform_owner' && user?.role !== 'purchasing') {
     return <LogoutThenStoreLogin storeSlug={storeSlug} />;
   }
   return <>{children}</>;
@@ -183,6 +205,13 @@ export default function App() {
                 <Route path="order/:orderId" element={<OrderStatusPage />} />
                 <Route path="member" element={<MemberPortalPage />} />
               </Route>
+            </Route>
+
+            <Route path="purchasing" element={<RequirePurchasing><PurchasingLayout /></RequirePurchasing>}>
+              <Route index element={<PurchaseWeekSheet />} />
+              <Route path="catalog" element={<PurchaseCatalogPage />} />
+              <Route path="suppliers" element={<PurchaseSuppliersPage />} />
+              <Route path="orders" element={<PurchaseOrdersPage />} />
             </Route>
 
             <Route path="cashier" element={<RequireAuth><CashierLayout /></RequireAuth>}>

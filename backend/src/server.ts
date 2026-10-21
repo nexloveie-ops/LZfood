@@ -25,6 +25,7 @@ import rawMaterialsRouter from './routes/rawMaterials';
 import reportsRouter from './routes/reports';
 import taxCategoriesRouter from './routes/taxCategories';
 import salesForecastRouter from './routes/salesForecast';
+import purchasingRouter from './routes/purchasing';
 import offersRouter from './routes/offers';
 import { createPaymentsRouter } from './routes/payments';
 import terminalRouter from './routes/terminal';
@@ -36,6 +37,7 @@ import publicAdsRouter from './routes/publicAds';
 import publicPortalRouter from './routes/publicPortal';
 import publicWidgetRouter from './routes/publicWidget';
 import publicTranslateRouter from './routes/publicTranslate';
+import publicTodaysSpecialsRouter from './routes/publicTodaysSpecials';
 import geoRouter, { guestEircodeMiddleware } from './routes/geo';
 import membersRouter, { membersScanOrderLookup } from './routes/members';
 import customerNotificationsRouter from './routes/customerNotifications';
@@ -112,6 +114,7 @@ app.use('/api/wallet', appleWalletWebServiceRouter);
 app.use('/api/public', publicAdsRouter);
 app.use('/api/public', publicWidgetRouter);
 app.use('/api/public', publicTranslateRouter);
+app.use('/api/public', publicTodaysSpecialsRouter);
 app.use('/api/public/portal', publicPortalRouter);
 
 // Menu categories routes
@@ -154,6 +157,9 @@ app.use('/api/admin/tax-categories', taxCategoriesRouter);
 
 // Sales forecast addon
 app.use('/api/sales-forecast', salesForecastRouter);
+
+// 货物采购（独立付费 Add-on）
+app.use('/api/purchasing', purchasingRouter);
 
 // Offers routes
 app.use('/api/offers', offersRouter);

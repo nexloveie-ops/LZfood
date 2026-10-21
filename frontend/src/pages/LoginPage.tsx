@@ -71,6 +71,10 @@ export default function LoginPage() {
       navigate('../cashier/order?waiter=1', { replace: true, relative: 'path' });
       return;
     }
+    if (user.role === 'purchasing') {
+      navigate('../purchasing', { replace: true, relative: 'path' });
+      return;
+    }
     const isAdmin = user.role === 'owner' || user.role === 'platform_owner';
     navigate(isAdmin ? '../admin' : '../cashier', { replace: true, relative: 'path' });
   }, [isAuthenticated, user, isStoreStaffSessionReady, navigate, logout, t]);

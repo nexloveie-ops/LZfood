@@ -13,6 +13,11 @@ import { OptionGroupTemplateSchema } from '../models/OptionGroupTemplate';
 import { OptionGroupTemplateRuleSchema } from '../models/OptionGroupTemplateRule';
 import { InventoryTxnSchema } from '../models/InventoryTxn';
 import { RawMaterialSchema } from '../models/RawMaterial';
+import { PurchaseCategorySchema } from '../models/PurchaseCategory';
+import { PurchaseItemSchema } from '../models/PurchaseItem';
+import { PurchaseSupplierSchema } from '../models/PurchaseSupplier';
+import { PurchaseQuoteSchema } from '../models/PurchaseQuote';
+import { PurchaseWeekOrderSchema } from '../models/PurchaseWeekOrder';
 import mongoose from 'mongoose';
 import { StoreSchema } from './Store';
 import { StoreReportSegmentConfigSchema } from './StoreReportSegmentConfig';
@@ -112,6 +117,11 @@ export type LZFoodModels = {
   PortalPasswordResetOtp: Model<unknown>;
   InventoryTxn: Model<unknown>;
   RawMaterial: Model<unknown>;
+  PurchaseCategory: Model<unknown>;
+  PurchaseItem: Model<unknown>;
+  PurchaseSupplier: Model<unknown>;
+  PurchaseQuote: Model<unknown>;
+  PurchaseWeekOrder: Model<unknown>;
   StoreNotificationPolicy: Model<unknown>;
   NotificationTemplate: Model<unknown>;
   NotificationLog: Model<unknown>;
@@ -193,6 +203,25 @@ export function registerLZFoodModels(conn: Connection): LZFoodModels {
   );
   const InventoryTxn = m('InventoryTxn', withStoreId(InventoryTxnSchema), 'inventory_txns');
   const RawMaterial = m('RawMaterial', withStoreId(RawMaterialSchema), 'raw_materials');
+  const PurchaseCategory = m(
+    'PurchaseCategory',
+    withStoreId(PurchaseCategorySchema),
+    'purchase_categories',
+  );
+  const PurchaseItem = m('PurchaseItem', withStoreId(PurchaseItemSchema), 'purchase_items');
+  const PurchaseSupplier = m(
+    'PurchaseSupplier',
+    withStoreId(PurchaseSupplierSchema),
+    'purchase_suppliers',
+  );
+  const PurchaseQuote = m('PurchaseQuote', withStoreId(PurchaseQuoteSchema), 'purchase_quotes');
+  PurchaseQuote.schema.index({ storeId: 1, supplierId: 1, itemId: 1 }, { unique: true });
+  const PurchaseWeekOrder = m(
+    'PurchaseWeekOrder',
+    withStoreId(PurchaseWeekOrderSchema),
+    'purchase_week_orders',
+  );
+  PurchaseWeekOrder.schema.index({ storeId: 1, weekStart: 1 }, { unique: true });
   const StoreNotificationPolicy = m(
     'StoreNotificationPolicy',
     StoreNotificationPolicySchema,
@@ -286,6 +315,11 @@ export function registerLZFoodModels(conn: Connection): LZFoodModels {
     PortalPasswordResetOtp,
     InventoryTxn,
     RawMaterial,
+    PurchaseCategory,
+    PurchaseItem,
+    PurchaseSupplier,
+    PurchaseQuote,
+    PurchaseWeekOrder,
     StoreNotificationPolicy,
     NotificationTemplate,
     NotificationLog,

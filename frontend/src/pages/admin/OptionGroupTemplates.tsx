@@ -302,7 +302,7 @@ export default function OptionGroupTemplates() {
   const fetchAll = useCallback(async () => {
     const [catRes, itemRes, tplRes, ruleRes] = await Promise.all([
       apiFetch('/api/menu/categories', { headers: { Authorization: `Bearer ${token}` } }),
-      apiFetch('/api/menu/items?ownOptionGroups=1', { headers: { Authorization: `Bearer ${token}` } }),
+      apiFetch('/api/menu/items?ownOptionGroups=1&includeHidden=1', { headers: { Authorization: `Bearer ${token}` } }),
       apiFetch('/api/admin/option-group-templates', { headers: { Authorization: `Bearer ${token}` } }),
       apiFetch('/api/admin/option-group-templates/rules', { headers: { Authorization: `Bearer ${token}` } }),
     ]);

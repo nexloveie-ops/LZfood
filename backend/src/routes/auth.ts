@@ -39,7 +39,7 @@ router.post('/login', async (req: Request, res: Response, next: NextFunction) =>
       admin = await Admin.findOne({
         username,
         storeId: store._id,
-        role: { $in: ['owner', 'cashier'] },
+        role: { $in: ['owner', 'cashier', 'purchasing'] },
       });
     }
 

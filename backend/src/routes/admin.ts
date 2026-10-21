@@ -448,8 +448,14 @@ router.post('/users', ...requireAuthSameStore, requirePermission('admin:users'),
       throw createAppError('VALIDATION_ERROR', 'username, password, and role are required');
     }
 
-    if (!['owner', 'cashier'].includes(role)) {
-      throw createAppError('VALIDATION_ERROR', 'role must be owner or cashier');
+    if (!['owner', 'cashier', 'purchasing'].includes(role)) {
+      throw createAppError('VALIDATION_ERROR', 'role must be owner, cashier, or purchasing');
+    }
+    if (role === 'purchasing') {
+      const features = await resolveStoreEffectiveFeatures(req.storeId!);
+      if (!features.has(FeatureKeys.PurchasingPage)) {
+        throw createAppError('VALIDATION_ERROR', '本店未开通货物采购，无法创建货物管理员');
+      }
     }
 
     const existing = await Admin.findOne({ storeId: req.storeId, username });
@@ -487,8 +493,14 @@ router.put('/users/:id', ...requireAuthSameStore, requirePermission('admin:users
 
     if (username !== undefined) admin.username = username;
     if (role !== undefined) {
-      if (!['owner', 'cashier'].includes(role)) {
-        throw createAppError('VALIDATION_ERROR', 'role must be owner or cashier');
+      if (!['owner', 'cashier', 'purchasing'].includes(role)) {
+        throw createAppError('VALIDATION_ERROR', 'role must be owner, cashier, or purchasing');
+      }
+      if (role === 'purchasing') {
+        const features = await resolveStoreEffectiveFeatures(req.storeId!);
+        if (!features.has(FeatureKeys.PurchasingPage)) {
+          throw createAppError('VALIDATION_ERROR', '本店未开通货物采购，无法设为货物管理员');
+        }
       }
       admin.role = role;
     }

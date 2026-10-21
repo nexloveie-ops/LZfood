@@ -178,8 +178,30 @@ type MenuItemForOrder = MenuItemLike & {
   discountPrice?: number;
   categoryId?: unknown;
   isSoldOut?: boolean;
+  isHidden?: boolean;
   isMarketPrice?: boolean;
 };
+
+function assertMenuItemsVisibleForOrder(
+  menuItems: Array<{ _id: { toString(): string }; isSoldOut?: boolean; isHidden?: boolean }>,
+  menuItemIds: string[],
+): void {
+  const hiddenIds = menuItems.filter((m) => m.isHidden).map((m) => m._id.toString());
+  if (hiddenIds.length > 0) {
+    throw createAppError('VALIDATION_ERROR', `Menu items not found: ${hiddenIds.join(', ')}`);
+  }
+  const foundIds = new Set(menuItems.map((m) => m._id.toString()));
+  const missingIds = menuItemIds.filter((id) => !foundIds.has(id));
+  if (missingIds.length > 0) {
+    throw createAppError('VALIDATION_ERROR', `Menu items not found: ${missingIds.join(', ')}`);
+  }
+  const soldOutItems = menuItems.filter((m) => m.isSoldOut);
+  if (soldOutItems.length > 0) {
+    throw createAppError('ITEM_SOLD_OUT', 'Some items are sold out', {
+      soldOutItemIds: soldOutItems.map((m) => m._id.toString()),
+    });
+  }
+}
 
 export function createOrdersRouter(io: SocketIOServer): Router {
   const router = Router();
@@ -502,20 +524,7 @@ export function createOrdersRouter(io: SocketIOServer): Router {
       const menuItemIds = items.map((i: { menuItemId: string }) => i.menuItemId);
       const menuItems = await MenuItem.find({ storeId: req.storeId, _id: { $in: menuItemIds } });
 
-      // Check all items exist
-      const foundIds = new Set(menuItems.map((m) => m._id.toString()));
-      const missingIds = menuItemIds.filter((id: string) => !foundIds.has(id));
-      if (missingIds.length > 0) {
-        throw createAppError('VALIDATION_ERROR', `Menu items not found: ${missingIds.join(', ')}`);
-      }
-
-      // Check for sold out items
-      const soldOutItems = menuItems.filter((m) => m.isSoldOut);
-      if (soldOutItems.length > 0) {
-        throw createAppError('ITEM_SOLD_OUT', 'Some items are sold out', {
-          soldOutItemIds: soldOutItems.map((m) => m._id.toString()),
-        });
-      }
+      assertMenuItemsVisibleForOrder(menuItems, menuItemIds);
 
       // Build a lookup map for menu items
       const menuItemMap = new Map(menuItems.map((m) => [m._id.toString(), m as MenuItemForOrder]));
@@ -1951,17 +1960,7 @@ export function createOrdersRouter(io: SocketIOServer): Router {
 
         const menuItemIds = items.map((i: { menuItemId: string }) => i.menuItemId);
         const menuItems = await MenuItem.find({ storeId: req.storeId, _id: { $in: menuItemIds } });
-        const foundIds = new Set(menuItems.map((m) => m._id.toString()));
-        const missingIds = menuItemIds.filter((mid: string) => !foundIds.has(mid));
-        if (missingIds.length > 0) {
-          throw createAppError('VALIDATION_ERROR', `Menu items not found: ${missingIds.join(', ')}`);
-        }
-        const soldOutItems = menuItems.filter((m) => m.isSoldOut);
-        if (soldOutItems.length > 0) {
-          throw createAppError('ITEM_SOLD_OUT', 'Some items are sold out', {
-            soldOutItemIds: soldOutItems.map((m) => m._id.toString()),
-          });
-        }
+        assertMenuItemsVisibleForOrder(menuItems, menuItemIds);
 
         const menuItemMap = new Map(menuItems.map((m) => [m._id.toString(), m as MenuItemForOrder]));
         const staffAllowed = isStaffCashierOrOwner(req);
@@ -2175,20 +2174,7 @@ export function createOrdersRouter(io: SocketIOServer): Router {
       const menuItemIds = items.map((i: { menuItemId: string }) => i.menuItemId);
       const menuItems = await MenuItem.find({ storeId: req.storeId, _id: { $in: menuItemIds } });
 
-      // Check all items exist
-      const foundIds = new Set(menuItems.map((m) => m._id.toString()));
-      const missingIds = menuItemIds.filter((id: string) => !foundIds.has(id));
-      if (missingIds.length > 0) {
-        throw createAppError('VALIDATION_ERROR', `Menu items not found: ${missingIds.join(', ')}`);
-      }
-
-      // Check for sold out items
-      const soldOutItems = menuItems.filter((m) => m.isSoldOut);
-      if (soldOutItems.length > 0) {
-        throw createAppError('ITEM_SOLD_OUT', 'Some items are sold out', {
-          soldOutItemIds: soldOutItems.map((m) => m._id.toString()),
-        });
-      }
+      assertMenuItemsVisibleForOrder(menuItems, menuItemIds);
 
       // Build a lookup map for menu items
       const menuItemMap = new Map(menuItems.map((m) => [m._id.toString(), m as MenuItemForOrder]));

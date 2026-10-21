@@ -9,6 +9,7 @@ import {
   isItemServingBlocked,
 } from '../../utils/bomAvailability';
 import RecommendedStar from '../RecommendedStar';
+import TodaysSpecialIcon from '../TodaysSpecialIcon';
 import SpiceLevelHint from '../SpiceLevelHint';
 import { menuItemHasDiscount, menuItemSellPriceEuro } from '../../utils/menuItemSellPrice';
 import MenuPriceLabel from '../MenuPriceLabel';
@@ -29,6 +30,7 @@ interface MenuItemCardProps {
   arFileUrl?: string;
   isSoldOut?: boolean;
   isRecommended?: boolean;
+  isTodaysSpecial?: boolean;
   spiceLevel?: number;
   isMarketPrice?: boolean;
   todayPricePerKg?: number | null;
@@ -46,7 +48,7 @@ interface MenuItemCardProps {
 
 export default function MenuItemCard({
   id, name, names, description, price, discountPrice, categoryDiscountZhe, calories, avgWaitMinutes,
-  photoUrl, photoFetchPriority = 'auto', arFileUrl, isSoldOut, isRecommended, spiceLevel, isMarketPrice, todayPricePerKg, allergenIcons, optionGroups, quantity, decreaseDisabled, onAdd, onDecrease,
+  photoUrl, photoFetchPriority = 'auto', arFileUrl, isSoldOut, isRecommended, isTodaysSpecial, spiceLevel, isMarketPrice, todayPricePerKg, allergenIcons, optionGroups, quantity, decreaseDisabled, onAdd, onDecrease,
   bomSnapshot, cartBomLines = [],
 }: MenuItemCardProps) {
   const { t, i18n } = useTranslation();
@@ -190,6 +192,7 @@ export default function MenuItemCard({
             marginBottom: 2,
             display: 'flex', alignItems: 'center', gap: 6, minWidth: 0,
           }}>
+            {isTodaysSpecial ? <TodaysSpecialIcon size={16} title={t('customer.todaysSpecial')} /> : null}
             {isRecommended ? <RecommendedStar size={16} title={t('customer.recommended')} /> : null}
             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, flex: 1 }}>
               {name}

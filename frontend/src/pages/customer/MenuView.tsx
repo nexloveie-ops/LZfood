@@ -32,7 +32,7 @@ interface Category { _id: string; sortOrder: number; translations: { locale: str
 interface AllergenData { _id: string; icon: string; }
 interface MenuItemData {
   _id: string; categoryId: string; price: number; discountPrice?: number; calories?: number;
-  avgWaitMinutes?: number; photoUrl?: string; arFileUrl?: string; isSoldOut?: boolean; isRecommended?: boolean; spiceLevel?: number;
+  avgWaitMinutes?: number; photoUrl?: string; arFileUrl?: string; isSoldOut?: boolean; isRecommended?: boolean; isTodaysSpecial?: boolean; spiceLevel?: number;
   isMarketPrice?: boolean; todayPricePerKg?: number | null;
   inventoryTracked?: boolean;
   inventory?: { currentQty?: number; perServing?: number };
@@ -516,6 +516,7 @@ export default function MenuView({ storeFrontEmbed = false }: { storeFrontEmbed?
                     arFileUrl={item.arFileUrl}
                     isSoldOut={isCustomerMenuItemSoldOut(item)}
                     isRecommended={!!item.isRecommended}
+                    isTodaysSpecial={!!item.isTodaysSpecial}
                     spiceLevel={item.spiceLevel}
                     isMarketPrice={!!item.isMarketPrice}
                     todayPricePerKg={item.todayPricePerKg}
