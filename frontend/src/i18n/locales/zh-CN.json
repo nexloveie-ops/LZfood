@@ -1160,6 +1160,7 @@
     "restaurantLatLngHint": "用于外卖距离与 Apple Wallet 附近提醒。优先使用此处保存的坐标；可点按钮用 Google 根据地址解析。",
     "restaurantPhone": "电话",
     "restaurantWebsite": "网址",
+    "restaurantWebsiteHelp": "填写后，店铺门户地址仍是本站，页面显示该网址内容。桌码点单、外卖/自取链接不受影响。",
     "restaurantEmail": "邮箱",
     "receiptTerms": "小票条款",
     "receiptTermsHelp": "使用 [QR:网址] 在小票中插入二维码",

@@ -6,6 +6,7 @@ import { useBusinessStatus } from '../../hooks/useBusinessStatus';
 import { useStoreSlug } from '../../context/StoreContext';
 import type { OfferData } from '../../utils/bundleMatcher';
 import { useCustomerMenuBootstrap } from '../../context/CustomerMenuBootstrapContext';
+import { storePortalEmbedUrl } from '../../utils/storePortalWebsite';
 import MenuView from './MenuView';
 import CustomerMenuToolbar from '../../components/customer/CustomerMenuToolbar';
 import '../../styles/customer-order-saas.css';
@@ -28,13 +29,22 @@ export default function StoreFrontPage() {
   const lang = i18n.language;
   const storeSlug = useStoreSlug();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { config, displayName, displayNameOther } = useRestaurantConfig();
+  const { config, configLoading, displayName, displayNameOther } = useRestaurantConfig();
   const { isOpen, loading: hoursLoading, deliveryEnabled, memberWalletEnabled } = useBusinessStatus();
   const canDelivery = deliveryEnabled !== false;
   const canMemberPortal = memberWalletEnabled !== false;
 
   const orderType = searchParams.get('type');
   const showMenu = orderType === 'takeout' || (orderType === 'delivery' && canDelivery);
+  const websiteEmbed = useMemo(
+    () => storePortalEmbedUrl({
+      website: config.restaurant_website,
+      orderType,
+      storeSlug,
+      pageUrl: typeof window === 'undefined' ? '' : window.location.href,
+    }),
+    [config.restaurant_website, orderType, storeSlug],
+  );
 
   useEffect(() => {
     if (hoursLoading) return;
@@ -88,6 +98,22 @@ export default function StoreFrontPage() {
     next.set('type', type);
     setSearchParams(next, { replace: false });
   };
+
+  if (!showMenu && configLoading) {
+    return null;
+  }
+
+  if (!showMenu && websiteEmbed) {
+    return (
+      <iframe
+        className="store-portal-embed"
+        title={storeTitle}
+        src={websiteEmbed}
+        referrerPolicy="no-referrer-when-downgrade"
+        allow="geolocation; payment; fullscreen"
+      />
+    );
+  }
 
   return (
     <div

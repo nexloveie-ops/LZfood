@@ -1161,6 +1161,7 @@
     "restaurantLatLngHint": "Used for delivery distance and Apple Wallet nearby alerts. Saved coordinates are preferred; use the button to geocode from the address via Google.",
     "restaurantPhone": "Phone",
     "restaurantWebsite": "Website",
+    "restaurantWebsiteHelp": "If set, the store portal URL stays on LZFOOD and the page shows this site. Table QR, takeout and delivery stay on LZFOOD.",
     "restaurantEmail": "Email",
     "receiptTerms": "Receipt Terms & Conditions",
     "receiptTermsHelp": "Use [QR:URL] to insert a QR code on the receipt",

@@ -483,12 +483,19 @@ export default function RestaurantInfo() {
                     </div>
                   </div>
                 ) : (
-                  <input
-                    className="input"
-                    value={values[key]}
-                    onChange={e => handleChange(key, e.target.value)}
-                    style={{ maxWidth: 400, flex: 1 }}
-                  />
+                  <div style={{ flex: 1, maxWidth: 400 }}>
+                    <input
+                      className="input"
+                      value={values[key]}
+                      onChange={e => handleChange(key, e.target.value)}
+                      style={{ width: '100%' }}
+                    />
+                    {key === 'restaurant_website' ? (
+                      <div style={{ fontSize: 12, color: 'var(--text-light)', marginTop: 4 }}>
+                        {t('admin.restaurantWebsiteHelp')}
+                      </div>
+                    ) : null}
+                  </div>
                 )}
               </div>
               {key === 'restaurant_address_en' && (
