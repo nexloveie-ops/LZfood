@@ -13,6 +13,8 @@ export type CashierMemberPreview = {
   stampRedeemAt?: number;
 };
 
+export type MemberRemainderTender = 'cash' | 'card';
+
 type Props = {
   payAmount: number;
   phone: string;
@@ -21,6 +23,8 @@ type Props = {
   setPreview: (p: CashierMemberPreview | null) => void;
   /** 窄布局下用于压缩 padding */
   compact?: boolean;
+  remainderTender?: MemberRemainderTender | null;
+  onRemainderTender?: (v: MemberRemainderTender) => void;
 };
 
 /** 收银弹窗内：手机号载入会员信息，人工核对后可全额储值结账（店员 JWT 免 PIN） */
@@ -31,6 +35,8 @@ export default function CashierMemberCheckoutBlock({
   preview,
   setPreview,
   compact,
+  remainderTender,
+  onRemainderTender,
 }: Props) {
   const { t } = useTranslation();
   const [loading, setLoading] = useState(false);
@@ -138,12 +144,37 @@ export default function CashierMemberCheckoutBlock({
             </div>
           ) : null}
           {shortfall > 0.001 ? (
-            <div style={{ color: 'var(--red-primary)', marginTop: 6 }}>{t('cashier.memberInsufficient', { short: shortfall.toFixed(2) })}</div>
+            <div style={{ color: 'var(--red-primary)', marginTop: 6 }}>
+              {t('cashier.memberInsufficient', { short: shortfall.toFixed(2) })}
+            </div>
           ) : (
             <div style={{ color: 'var(--green, #2e7d32)', marginTop: 6, fontWeight: 600 }}>
               {payWithStaff ? t('cashier.memberPayingWithStaff') : t('cashier.memberCanPayFull')}
             </div>
           )}
+        </div>
+      ) : null}
+      {canMemberPartialWalletPay(preview, payAmount) && onRemainderTender ? (
+        <div style={{ marginTop: 8 }}>
+          <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 6 }}>
+            {t('cashier.memberPartialHint', {
+              used: guestWalletEuro(preview).toFixed(2),
+              rest: memberRemainderEuro(preview, payAmount).toFixed(2),
+            })}
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {(['cash', 'card'] as const).map((m) => (
+              <button
+                key={m}
+                type="button"
+                className={`btn ${remainderTender === m ? 'btn-primary' : 'btn-outline'}`}
+                style={{ flex: 1, fontSize: 12, padding: '8px 10px' }}
+                onClick={() => onRemainderTender(m)}
+              >
+                {m === 'cash' ? t('cashier.memberRemainderCash') : t('cashier.memberRemainderCard')}
+              </button>
+            ))}
+          </div>
         </div>
       ) : null}
       {canFullPay ? <div style={{ fontSize: 11, color: 'var(--green, #2e7d32)', marginTop: 6 }}>{t('cashier.memberReadyToSubmit')}</div> : null}
@@ -159,8 +190,56 @@ export function buildMemberFullWalletCheckoutBody(payAmount: number, phone: stri
   };
 }
 
+export function guestWalletEuro(preview: CashierMemberPreview | null): number {
+  if (!preview) return 0;
+  return Math.max(0, Math.round((Number(preview.creditBalance) || 0) * 100) / 100);
+}
+
 export function canMemberFullWalletPay(preview: CashierMemberPreview | null, payAmount: number): boolean {
   if (!preview) return false;
   if (preview.isStaffHere && (preview.staffBalance ?? 0) + 1e-9 >= payAmount) return true;
-  return preview.creditBalance + 1e-9 >= payAmount;
+  return guestWalletEuro(preview) + 1e-9 >= payAmount;
+}
+
+/** Guest wallet can cover part of the bill; staff credit stays full-only. */
+export function canMemberPartialWalletPay(preview: CashierMemberPreview | null, payAmount: number): boolean {
+  if (!preview) return false;
+  if (preview.isStaffHere && (preview.staffBalance ?? 0) + 1e-9 >= payAmount) return false;
+  const bal = guestWalletEuro(preview);
+  return bal > 0.001 && payAmount - bal > 0.001;
+}
+
+export function memberRemainderEuro(preview: CashierMemberPreview | null, payAmount: number): number {
+  if (!preview || canMemberFullWalletPay(preview, payAmount)) return 0;
+  return Math.max(0, Math.round((payAmount - guestWalletEuro(preview)) * 100) / 100);
+}
+
+export function buildMemberWalletCheckoutBody(opts: {
+  payAmount: number;
+  phone: string;
+  preview: CashierMemberPreview;
+  remainderTender?: MemberRemainderTender | null;
+  cashReceived?: number;
+}): Record<string, unknown> | null {
+  if (canMemberFullWalletPay(opts.preview, opts.payAmount)) {
+    return buildMemberFullWalletCheckoutBody(opts.payAmount, opts.phone);
+  }
+  if (!canMemberPartialWalletPay(opts.preview, opts.payAmount) || !opts.remainderTender) return null;
+  const remainder = memberRemainderEuro(opts.preview, opts.payAmount);
+  const body: Record<string, unknown> = {
+    paymentMethod: opts.remainderTender,
+    memberPhone: opts.phone.trim(),
+    memberCreditAmount: guestWalletEuro(opts.preview),
+  };
+  if (opts.remainderTender === 'cash') {
+    body.cashAmount = remainder;
+    if (opts.cashReceived != null) {
+      const received = Number(opts.cashReceived) || 0;
+      body.cashReceived = received;
+      body.changeAmount = Math.max(0, Math.round((received - remainder) * 100) / 100);
+    }
+  } else {
+    body.cardAmount = remainder;
+  }
+  return body;
 }

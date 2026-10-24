@@ -11,7 +11,11 @@ import { computeDineInUnsettledPayableEuro, computePartialDineInSettlementPrevie
 import CashierMemberCheckoutBlock, {
   buildMemberFullWalletCheckoutBody,
   canMemberFullWalletPay,
+  canMemberPartialWalletPay,
+  guestWalletEuro,
+  memberRemainderEuro,
   type CashierMemberPreview,
+  type MemberRemainderTender,
 } from '../../components/cashier/CashierMemberCheckoutBlock';
 import CashierCheckoutDiscountPanel from '../../components/cashier/CashierCheckoutDiscountPanel';
 import type { NumberedVoucherPreview } from '../../components/cashier/CashierNumberedVoucherBlock';
@@ -448,6 +452,38 @@ function isCustomerMemberWalletPrepaid(o: OrderRow): boolean {
   return (Number(o.memberCreditUsed) || 0) > 0.001;
 }
 
+type MemberPayArg = { phone: string; remainderEuro?: number; creditAmount?: number };
+
+function fillCheckoutPaymentBody(
+  body: Record<string, unknown>,
+  paymentMethod: 'cash' | 'card' | 'mixed' | 'member',
+  total: number,
+  mixed?: { cashAmount: number; cardAmount: number },
+  cashMeta?: { cashReceived: number; changeAmount: number },
+  memberPay?: MemberPayArg,
+) {
+  if (paymentMethod === 'member' && memberPay) {
+    Object.assign(body, buildMemberFullWalletCheckoutBody(total, memberPay.phone));
+    return;
+  }
+  body.paymentMethod = paymentMethod;
+  if (memberPay) {
+    body.memberPhone = memberPay.phone;
+    if (memberPay.creditAmount != null) body.memberCreditAmount = memberPay.creditAmount;
+  }
+  const due = memberPay?.remainderEuro != null ? memberPay.remainderEuro : total;
+  if (paymentMethod === 'cash') body.cashAmount = due;
+  if (paymentMethod === 'card') body.cardAmount = due;
+  if (paymentMethod === 'mixed' && mixed) {
+    body.cashAmount = mixed.cashAmount;
+    body.cardAmount = mixed.cardAmount;
+  }
+  if (cashMeta && (paymentMethod === 'cash' || paymentMethod === 'mixed')) {
+    body.cashReceived = cashMeta.cashReceived;
+    body.changeAmount = cashMeta.changeAmount;
+  }
+}
+
 export default function UnifiedOrderCenter() {
   const { t, i18n } = useTranslation();
   const isEn = i18n.language?.startsWith('en');
@@ -493,6 +529,7 @@ export default function UnifiedOrderCenter() {
   const [mixedCard, setMixedCard] = useState('');
   const [memberPhone, setMemberPhone] = useState('');
   const [memberPreview, setMemberPreview] = useState<CashierMemberPreview | null>(null);
+  const [memberRemainderTender, setMemberRemainderTender] = useState<MemberRemainderTender | null>(null);
   const [voucherCode, setVoucherCode] = useState('');
   const [voucherPreview, setVoucherPreview] = useState<NumberedVoucherPreview | null>(null);
   const [availableCoupons, setAvailableCoupons] = useState<{ _id: string; name: string; nameEn: string; amount: number }[]>([]);
@@ -608,7 +645,7 @@ export default function UnifiedOrderCenter() {
     paymentMethod: 'cash' | 'card' | 'mixed' | 'member',
     mixed?: { cashAmount: number; cardAmount: number },
     cashMeta?: { cashReceived: number; changeAmount: number },
-    memberPay?: { phone: string },
+    memberPay?: MemberPayArg,
     voucher?: { code: string; payableEuro: number },
     coupon?: { name: string; amount: number },
   ) => {
@@ -617,22 +654,8 @@ export default function UnifiedOrderCenter() {
       let total = counterPayable(order, dineInPayAfter);
       if (voucher?.payableEuro != null) total = voucher.payableEuro;
       else if (coupon) total = Math.max(0, total - coupon.amount);
-      const body: Record<string, unknown> =
-        paymentMethod === 'member' && memberPay
-          ? buildMemberFullWalletCheckoutBody(total, memberPay.phone)
-          : { paymentMethod };
-      if (paymentMethod !== 'member') {
-        if (paymentMethod === 'cash') body.cashAmount = total;
-        if (paymentMethod === 'card') body.cardAmount = total;
-        if (paymentMethod === 'mixed' && mixed) {
-          body.cashAmount = mixed.cashAmount;
-          body.cardAmount = mixed.cardAmount;
-        }
-        if (cashMeta && (paymentMethod === 'cash' || paymentMethod === 'mixed')) {
-          body.cashReceived = cashMeta.cashReceived;
-          body.changeAmount = cashMeta.changeAmount;
-        }
-      }
+      const body: Record<string, unknown> = {};
+      fillCheckoutPaymentBody(body, paymentMethod, total, mixed, cashMeta, memberPay);
       if (voucher?.code) body.numberedVoucherCode = voucher.code;
       if (coupon && !voucher?.code) {
         body.couponName = coupon.name;
@@ -667,7 +690,7 @@ export default function UnifiedOrderCenter() {
     paymentMethod: 'cash' | 'card' | 'mixed' | 'member',
     mixed?: { cashAmount: number; cardAmount: number },
     cashMeta?: { cashReceived: number; changeAmount: number },
-    memberPay?: { phone: string },
+    memberPay?: MemberPayArg,
     coupon?: { name: string; amount: number },
   ) => {
     const busyKey = `table-${tableNumber}`;
@@ -678,22 +701,8 @@ export default function UnifiedOrderCenter() {
       if (coupon && coupon.amount > 0) {
         total = Math.max(0, Math.round((total - coupon.amount) * 100) / 100);
       }
-      const body: Record<string, unknown> =
-        paymentMethod === 'member' && memberPay
-          ? buildMemberFullWalletCheckoutBody(total, memberPay.phone)
-          : { paymentMethod };
-      if (paymentMethod !== 'member') {
-        if (paymentMethod === 'cash') body.cashAmount = total;
-        if (paymentMethod === 'card') body.cardAmount = total;
-        if (paymentMethod === 'mixed' && mixed) {
-          body.cashAmount = mixed.cashAmount;
-          body.cardAmount = mixed.cardAmount;
-        }
-        if (cashMeta && (paymentMethod === 'cash' || paymentMethod === 'mixed')) {
-          body.cashReceived = cashMeta.cashReceived;
-          body.changeAmount = cashMeta.changeAmount;
-        }
-      }
+      const body: Record<string, unknown> = {};
+      fillCheckoutPaymentBody(body, paymentMethod, total, mixed, cashMeta, memberPay);
       if (coupon && coupon.amount > 0) {
         body.couponName = coupon.name;
         body.couponAmount = coupon.amount;
@@ -722,28 +731,14 @@ export default function UnifiedOrderCenter() {
       paymentMethod: 'cash' | 'card' | 'mixed' | 'member',
       mixed?: { cashAmount: number; cardAmount: number },
       cashMeta?: { cashReceived: number; changeAmount: number },
-      memberPay?: { phone: string },
+      memberPay?: MemberPayArg,
       coupon?: { name: string; amount: number },
     ) => {
       const busyKey = `table-${tableNumber}`;
       setBusyId(busyKey);
       try {
         const body: Record<string, unknown> = { lineSettlements };
-        if (paymentMethod === 'member' && memberPay) {
-          Object.assign(body, buildMemberFullWalletCheckoutBody(payableTotal, memberPay.phone));
-        } else {
-          body.paymentMethod = paymentMethod;
-          if (paymentMethod === 'cash') body.cashAmount = payableTotal;
-          if (paymentMethod === 'card') body.cardAmount = payableTotal;
-          if (paymentMethod === 'mixed' && mixed) {
-            body.cashAmount = mixed.cashAmount;
-            body.cardAmount = mixed.cardAmount;
-          }
-          if (cashMeta && (paymentMethod === 'cash' || paymentMethod === 'mixed')) {
-            body.cashReceived = cashMeta.cashReceived;
-            body.changeAmount = cashMeta.changeAmount;
-          }
-        }
+        fillCheckoutPaymentBody(body, paymentMethod, payableTotal, mixed, cashMeta, memberPay);
         if (coupon && coupon.amount > 0) {
           body.couponName = coupon.name;
           body.couponAmount = coupon.amount;
@@ -790,6 +785,7 @@ export default function UnifiedOrderCenter() {
     setMixedCard('');
     setMemberPhone('');
     setMemberPreview(null);
+    setMemberRemainderTender(null);
     setVoucherCode('');
     setVoucherPreview(null);
     setSelectedCoupon(null);
@@ -814,6 +810,7 @@ export default function UnifiedOrderCenter() {
     setMixedCard('');
     setMemberPhone('');
     setMemberPreview(null);
+    setMemberRemainderTender(null);
     setVoucherCode('');
     setVoucherPreview(null);
     setSelectedCoupon(null);
@@ -935,6 +932,7 @@ export default function UnifiedOrderCenter() {
     setMixedCard('');
     setMemberPhone('');
     setMemberPreview(null);
+    setMemberRemainderTender(null);
     setCheckoutMethod('cash');
   };
 
@@ -975,13 +973,40 @@ export default function UnifiedOrderCenter() {
       }
     }
     if (checkoutMethod === 'member') {
-      if (!canMemberFullWalletPay(memberPreview, total)) {
-        alert(isEn ? 'Load member and ensure balance covers the total.' : '请载入会员并确认余额不少于应付金额。');
+      if (!memberPreview) {
+        alert(isEn ? 'Load member first.' : '请先载入会员。');
         return;
       }
-      const mp = { phone: memberPreview!.phone };
+      const full = canMemberFullWalletPay(memberPreview, total);
+      const partial = canMemberPartialWalletPay(memberPreview, total);
+      if (!full && !partial) {
+        alert(isEn ? 'Wallet cannot cover this order. Use cash or card, or top up.' : '储值不足且无法部分抵扣，请改用现金或刷卡。');
+        return;
+      }
+      if (!full && !memberRemainderTender) {
+        alert(isEn ? 'Choose cash or card for the remaining amount.' : '请选择剩余金额用现金还是刷卡。');
+        return;
+      }
+      const remainder = memberRemainderEuro(memberPreview, total);
+      let cashMeta: { cashReceived: number; changeAmount: number } | undefined;
+      if (!full && memberRemainderTender === 'cash') {
+        const paid = Number(cashReceived) || 0;
+        if (paid + 0.001 < remainder) {
+          alert(isEn ? `Cash received must cover the remainder (€${remainder.toFixed(2)}).` : `实收须至少覆盖剩余 €${remainder.toFixed(2)}`);
+          return;
+        }
+        cashMeta = { cashReceived: paid, changeAmount: Math.max(0, paid - remainder) };
+      }
+      const method = full ? 'member' as const : memberRemainderTender!;
+      const mp: MemberPayArg = full
+        ? { phone: memberPreview.phone }
+        : {
+            phone: memberPreview.phone,
+            remainderEuro: remainder,
+            creditAmount: guestWalletEuro(memberPreview),
+          };
       if (targetOrder) {
-        await checkoutSeat(targetOrder, 'member', undefined, undefined, mp, seatVoucher, seatCoupon);
+        await checkoutSeat(targetOrder, method, undefined, cashMeta, mp, seatVoucher, seatCoupon);
       } else if (targetTable) {
         if (dineInPayAfter) {
           const prev = tablePartialPickPreview;
@@ -989,10 +1014,10 @@ export default function UnifiedOrderCenter() {
             alert(isEn ? 'Select items to checkout.' : '请勾选本次要结账的菜品。');
             return;
           }
-          const ok = await checkoutPartialTable(targetTable.tableNumber, prev.settlements, total, 'member', undefined, undefined, mp, seatCoupon);
+          const ok = await checkoutPartialTable(targetTable.tableNumber, prev.settlements, total, method, undefined, cashMeta, mp, seatCoupon);
           if (!ok) return;
         } else {
-          await checkoutTable(targetTable.tableNumber, 'member', undefined, undefined, mp, seatCoupon);
+          await checkoutTable(targetTable.tableNumber, method, undefined, cashMeta, mp, seatCoupon);
         }
       }
       setCheckoutModalOrder(null);
@@ -3031,6 +3056,7 @@ export default function UnifiedOrderCenter() {
                         onClick={() => {
                           setCheckoutMethod(m);
                           setCashReceived('');
+                          setMemberRemainderTender(null);
                           if (m !== 'member') setMemberPreview(null);
                         }}
                         style={{
@@ -3049,10 +3075,18 @@ export default function UnifiedOrderCenter() {
                   <CashierMemberCheckoutBlock
                     payAmount={checkoutModalPayableEuro}
                     phone={memberPhone}
-                    setPhone={setMemberPhone}
+                    setPhone={(v) => {
+                      setMemberPhone(v);
+                      setMemberRemainderTender(null);
+                    }}
                     preview={memberPreview}
-                    setPreview={setMemberPreview}
+                    setPreview={(p) => {
+                      setMemberPreview(p);
+                      setMemberRemainderTender(null);
+                    }}
                     compact
+                    remainderTender={memberRemainderTender}
+                    onRemainderTender={setMemberRemainderTender}
                   />
                 ) : null}
                 {checkoutMethod === 'mixed' ? (
@@ -3061,9 +3095,12 @@ export default function UnifiedOrderCenter() {
                     <input className="input" type="number" placeholder={L.cardAmount} value={mixedCard} onChange={(e) => setMixedCard(e.target.value)} />
                   </div>
                 ) : null}
-                {checkoutMethod === 'cash' ? (
+                {checkoutMethod === 'cash' || (checkoutMethod === 'member' && memberRemainderTender === 'cash') ? (
                   <div style={{ padding: 10, background: 'var(--bg)', borderRadius: 8, marginBottom: 12 }}>
-                    <label style={{ fontSize: 12, color: 'var(--text-light)', display: 'block', marginBottom: 4 }}>{L.paidAmount}</label>
+                    <label style={{ fontSize: 12, color: 'var(--text-light)', display: 'block', marginBottom: 4 }}>
+                      {L.paidAmount}
+                      {checkoutMethod === 'member' ? ` (€${memberRemainderEuro(memberPreview, checkoutModalPayableEuro).toFixed(2)})` : ''}
+                    </label>
                     <input
                       className="input"
                       type="number"
@@ -3081,7 +3118,11 @@ export default function UnifiedOrderCenter() {
                           justifyContent: 'space-between',
                           padding: '6px 10px',
                           borderRadius: 6,
-                          background: (Number(cashReceived) || 0) >= checkoutModalPayableEuro - 0.001 ? '#E8F5E9' : '#FFEBEE',
+                          background: (Number(cashReceived) || 0) >= (
+                            checkoutMethod === 'member'
+                              ? memberRemainderEuro(memberPreview, checkoutModalPayableEuro)
+                              : checkoutModalPayableEuro
+                          ) - 0.001 ? '#E8F5E9' : '#FFEBEE',
                         }}
                       >
                         <span style={{ fontSize: 13, fontWeight: 600 }}>{L.change}</span>
@@ -3089,10 +3130,18 @@ export default function UnifiedOrderCenter() {
                           style={{
                             fontSize: 18,
                             fontWeight: 700,
-                            color: (Number(cashReceived) || 0) >= checkoutModalPayableEuro - 0.001 ? 'var(--green)' : 'var(--red-primary)',
+                            color: (Number(cashReceived) || 0) >= (
+                              checkoutMethod === 'member'
+                                ? memberRemainderEuro(memberPreview, checkoutModalPayableEuro)
+                                : checkoutModalPayableEuro
+                            ) - 0.001 ? 'var(--green)' : 'var(--red-primary)',
                           }}
                         >
-                          €{Math.max(0, (Number(cashReceived) || 0) - checkoutModalPayableEuro).toFixed(2)}
+                          €{Math.max(0, (Number(cashReceived) || 0) - (
+                            checkoutMethod === 'member'
+                              ? memberRemainderEuro(memberPreview, checkoutModalPayableEuro)
+                              : checkoutModalPayableEuro
+                          )).toFixed(2)}
                         </span>
                       </div>
                     ) : null}
@@ -3110,7 +3159,11 @@ export default function UnifiedOrderCenter() {
                       busyId === (checkoutModalOrder?._id || `table-${checkoutModalTable?.tableNumber ?? '-'}`) ||
                       checkoutZhe.status === 'invalid' ||
                       (checkoutVoucherAwaitingValidate && checkoutZhe.status !== 'ok') ||
-                      (checkoutMethod === 'member' && !canMemberFullWalletPay(memberPreview, checkoutModalPayableEuro)) ||
+                      (checkoutMethod === 'member' && !canMemberFullWalletPay(memberPreview, checkoutModalPayableEuro) && (
+                        !canMemberPartialWalletPay(memberPreview, checkoutModalPayableEuro) ||
+                        !memberRemainderTender ||
+                        (memberRemainderTender === 'cash' && (Number(cashReceived) || 0) + 0.001 < memberRemainderEuro(memberPreview, checkoutModalPayableEuro))
+                      )) ||
                       !!(checkoutModalOrder?.items.some(isUnweighedMarketLine) || checkoutModalTable?.orders.some((o) => o.items.some(isUnweighedMarketLine)))
                     }
                     onClick={() => void submitCheckoutModal()}

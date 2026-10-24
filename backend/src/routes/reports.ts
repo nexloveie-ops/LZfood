@@ -11,7 +11,12 @@ import { checkoutCheckedOutFilterUtc, orderCreatedAtFilterUtc } from '../utils/r
 import { omitOrderFromStoreSales } from '../utils/reportOrderExclusions';
 import { deliveryFeePortionEuro } from '../utils/orderPayableTotal';
 import {
+  checkoutHasPaymentChannel,
+  checkoutPaymentChannels,
+} from '../utils/checkoutPaymentChannels';
+import {
   aggregateDeliveryFeeExclusions,
+  allocateAmountByPaymentMethod,
   computeOrderRefundAmount,
   deliveryFeeExcludedFromOrderNet,
   type ReportCheckoutLike,
@@ -79,6 +84,7 @@ function toReportCheckout(co: unknown): ReportCheckoutLike | undefined {
     paymentMethod?: string;
     cashAmount?: number;
     cardAmount?: number;
+    memberCreditUsed?: number;
   };
   if (c.totalAmount == null) return undefined;
   return {
@@ -86,6 +92,7 @@ function toReportCheckout(co: unknown): ReportCheckoutLike | undefined {
     paymentMethod: c.paymentMethod,
     cashAmount: c.cashAmount,
     cardAmount: c.cardAmount,
+    memberCreditUsed: c.memberCreditUsed,
   };
 }
 
@@ -155,6 +162,7 @@ router.get('/orders', authMiddleware, requirePermission('report:view'), async (r
           paymentMethod: checkout.paymentMethod,
           cashAmount: checkout.cashAmount,
           cardAmount: checkout.cardAmount,
+          memberCreditUsed: (checkout as { memberCreditUsed?: number }).memberCreditUsed,
           checkedOutAt: checkout.checkedOutAt,
           couponName: (checkout as unknown as { couponName?: string }).couponName,
           couponAmount: (checkout as unknown as { couponAmount?: number }).couponAmount,
@@ -166,25 +174,11 @@ router.get('/orders', authMiddleware, requirePermission('report:view'), async (r
     // Align with GET /api/reports/detailed: "现金/刷卡"汇总含混合支付中的现金、刷卡部分，明细也应列出对应订单。
     if (paymentMethod && ['cash', 'card', 'mixed', 'online', 'member', 'tap_pay'].includes(paymentMethod as string)) {
       const pm = paymentMethod as string;
-      if (pm === 'cash') {
-        result = result.filter((r: any) => {
-          const c = r.checkout;
-          if (!c) return false;
-          if (c.paymentMethod === 'cash') return true;
-          if (c.paymentMethod === 'mixed' && (Number(c.cashAmount) || 0) > 0) return true;
-          return false;
-        });
-      } else if (pm === 'card') {
-        result = result.filter((r: any) => {
-          const c = r.checkout;
-          if (!c) return false;
-          if (c.paymentMethod === 'card') return true;
-          if (c.paymentMethod === 'mixed' && (Number(c.cardAmount) || 0) > 0) return true;
-          return false;
-        });
-      } else {
-        result = result.filter((r: any) => r.checkout?.paymentMethod === pm);
-      }
+      result = result.filter((r: any) => {
+        const c = r.checkout;
+        if (!c) return false;
+        return checkoutHasPaymentChannel(c, pm as 'cash' | 'card' | 'member' | 'online' | 'tap_pay' | 'mixed');
+      });
     }
 
     // Filter by coupon usage
@@ -234,12 +228,12 @@ router.get('/summary', authMiddleware, requirePermission('report:view'), async (
     for (const c of checkouts) {
       if (skipCheckoutIds.has(String(c._id))) continue;
       totalRevenue += c.totalAmount;
-      if (c.paymentMethod === 'cash') {
-        cashTotal += c.totalAmount;
-      } else if (c.paymentMethod === 'card') {
-        cardTotal += c.totalAmount;
-      } else if (c.paymentMethod === 'mixed') {
+      const ch = checkoutPaymentChannels(c);
+      if (c.paymentMethod === 'mixed') {
         mixedTotal += c.totalAmount;
+      } else {
+        cashTotal += ch.cash;
+        cardTotal += ch.card;
       }
     }
 
@@ -323,32 +317,23 @@ router.get('/detailed', authMiddleware, requirePermission('report:view'), async 
         if (!countedCheckoutIds.has(cid)) {
           countedCheckoutIds.add(cid);
           grossRevenue += checkout.totalAmount;
-          if (checkout.paymentMethod === 'cash') {
-            cashTotal += checkout.totalAmount;
-            cashCount++;
-            grossCashAmount += checkout.totalAmount;
-          } else if (checkout.paymentMethod === 'card') {
-            cardTotal += checkout.totalAmount;
-            cardCount++;
-            grossCardAmount += checkout.totalAmount;
-          } else if (checkout.paymentMethod === 'mixed') {
+          const ch = checkoutPaymentChannels(checkout);
+          cashTotal += ch.cash;
+          cardTotal += ch.card;
+          memberTotal += ch.member;
+          onlineTotal += ch.online;
+          tapPayTotal += ch.tap_pay;
+          grossCashAmount += ch.cash;
+          grossCardAmount += ch.card;
+          const pm = String(checkout.paymentMethod || '');
+          if (pm === 'cash') cashCount++;
+          else if (pm === 'card') cardCount++;
+          else if (pm === 'mixed') {
             mixedTotal += checkout.totalAmount;
             mixedCount++;
-            // Also add mixed cash/card parts into cashTotal/cardTotal
-            cashTotal += checkout.cashAmount || 0;
-            cardTotal += checkout.cardAmount || 0;
-            grossCashAmount += checkout.cashAmount || 0;
-            grossCardAmount += checkout.cardAmount || 0;
-          } else if (checkout.paymentMethod === 'member') {
-            memberTotal += checkout.totalAmount;
-            memberCount++;
-          } else if (checkout.paymentMethod === 'online') {
-            onlineTotal += checkout.totalAmount;
-            onlineCount++;
-          } else if (checkout.paymentMethod === 'tap_pay') {
-            tapPayTotal += checkout.totalAmount;
-            tapPayCount++;
-          }
+          } else if (pm === 'online') onlineCount++;
+          else if (pm === 'tap_pay') tapPayCount++;
+          if (ch.member > 0.001) memberCount++;
           // Count coupons
           if ((checkout as unknown as { couponAmount?: number }).couponAmount && (checkout as unknown as { couponAmount: number }).couponAmount > 0) {
             couponCount++;
@@ -393,20 +378,16 @@ router.get('/detailed', authMiddleware, requirePermission('report:view'), async 
       const amt = computeOrderRefundAmount(order, toReportCheckout(checkout));
 
       refundedAmount += amt;
-      if (pm === 'cash') cashRefund += amt;
-      else if (pm === 'card') cardRefund += amt;
-      else if (pm === 'mixed') {
-        // Split mixed refund proportionally between cash and card
-        const mixedTotal2 = checkout ? (checkout.totalAmount || 1) : 1;
-        const cashRatio = checkout ? (checkout.cashAmount || 0) / mixedTotal2 : 0;
-        const cardRatio = checkout ? (checkout.cardAmount || 0) / mixedTotal2 : 0;
-        cashRefund += amt * cashRatio;
-        cardRefund += amt * cardRatio;
-        mixedRefund += amt;
-      }
-      else if (pm === 'online') onlineRefund += amt;
-      else if (pm === 'member') memberRefund += amt;
-      else if (pm === 'tap_pay') tapPayRefund += amt;
+      const split = allocateAmountByPaymentMethod(amt, pm, toReportCheckout(checkout) || {
+        totalAmount: Number(checkout?.totalAmount) || 0,
+        paymentMethod: pm,
+      });
+      cashRefund += split.cash;
+      cardRefund += split.card;
+      memberRefund += split.member;
+      onlineRefund += split.online;
+      tapPayRefund += split.tap_pay;
+      if (pm === 'mixed') mixedRefund += amt;
     }
 
     const deliveryFeeCheckoutMap = new Map<string, ReportCheckoutLike>();
@@ -416,6 +397,7 @@ router.get('/detailed', authMiddleware, requirePermission('report:view'), async 
         paymentMethod: co.paymentMethod,
         cashAmount: co.cashAmount,
         cardAmount: co.cardAmount,
+        memberCreditUsed: (co as { memberCreditUsed?: number }).memberCreditUsed,
       });
     }
     const { total: deliveryFeeExcludedFromNet, byPayment: deliveryFeeByPayment } =

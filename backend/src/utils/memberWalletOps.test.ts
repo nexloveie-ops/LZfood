@@ -2,7 +2,11 @@ import {
   IRISH_MEMBER_MOBILE_RE,
   customerPhoneMatchCandidates,
   expandOrderPhoneQueryVariants,
+  expectedWalletVersion,
   normalizeMemberPhone,
+  walletDebitMinBalance,
+  walletShouldDrain,
+  walletVersionMatch,
 } from './memberWalletOps';
 import { memberPhoneToSmsE164 } from './twilioSms';
 
@@ -66,5 +70,23 @@ describe('expandOrderPhoneQueryVariants', () => {
     expect(v).toContain('087 137 1111');
     expect(v).toContain('+353871371111');
     expect(v).toContain('353871371111');
+  });
+});
+
+describe('wallet optimistic debit helpers', () => {
+  it('treats missing version as 0', () => {
+    expect(expectedWalletVersion(undefined)).toBe(0);
+    expect(expectedWalletVersion(null)).toBe(0);
+    expect(expectedWalletVersion(3)).toBe(3);
+    expect(walletVersionMatch(undefined).$expr).toEqual({
+      $eq: [{ $ifNull: ['$walletVersion', 0] }, 0],
+    });
+  });
+
+  it('drains remaining wallet when debit is the rounded balance', () => {
+    expect(walletShouldDrain(10.1, 10.1)).toBe(true);
+    expect(walletShouldDrain(10.099999999999994, 10.1)).toBe(true);
+    expect(walletShouldDrain(20, 10)).toBe(false);
+    expect(walletDebitMinBalance(10.099999999999994, 10.1)).toBeLessThan(10.1);
   });
 });

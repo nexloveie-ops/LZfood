@@ -97,6 +97,31 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+/** Half-cent slack: draining remaining wallet must not fail on IEEE float vs round2. */
+export const WALLET_CENT_EPS = 0.005;
+
+export function expectedWalletVersion(version: unknown): number {
+  const n = Number(version);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/** Optimistic lock: missing/null walletVersion counts as 0 (legacy members). */
+export function walletVersionMatch(version: unknown): { $expr: Record<string, unknown> } {
+  return {
+    $expr: { $eq: [{ $ifNull: ['$walletVersion', 0] }, expectedWalletVersion(version)] },
+  };
+}
+
+export function walletShouldDrain(availableEuro: number, debitEuro: number): boolean {
+  return round2(availableEuro) - round2(debitEuro) <= WALLET_CENT_EPS;
+}
+
+export function walletDebitMinBalance(availableEuro: number, debitEuro: number): number {
+  const amt = round2(debitEuro);
+  if (walletShouldDrain(availableEuro, amt)) return Math.max(0, round2(amt - 0.02));
+  return Math.max(0, round2(amt - WALLET_CENT_EPS));
+}
+
 /** 当前余额与目标余额差额（正=需充值，负=需扣减，0=已一致） */
 export function computeTargetBalanceDelta(
   currentBalanceEuro: number,
@@ -199,19 +224,23 @@ export async function debitMemberWallet(params: {
     status: 'active',
   }).lean()) as MemberDoc | null;
   if (!doc) throw createAppError('NOT_FOUND', '会员不存在');
-  if (doc.creditBalance < amt - 1e-9) {
+  const avail = Number(doc.creditBalance) || 0;
+  if (round2(avail) < amt - WALLET_CENT_EPS) {
     throw createAppError('VALIDATION_ERROR', '储值余额不足');
   }
+  const drain = walletShouldDrain(avail, amt);
 
   const updated = (await params.Member.findOneAndUpdate(
     {
       _id: params.memberId,
       storeId: params.storeId,
       status: 'active',
-      walletVersion: doc.walletVersion,
-      creditBalance: { $gte: amt },
+      creditBalance: { $gte: walletDebitMinBalance(avail, amt) },
+      ...walletVersionMatch(doc.walletVersion),
     },
-    { $inc: { creditBalance: -amt, walletVersion: 1 }, $set: { lastPurchaseAt: new Date() } },
+    drain
+      ? { $set: { creditBalance: 0, lastPurchaseAt: new Date() }, $inc: { walletVersion: 1 } }
+      : { $inc: { creditBalance: -amt, walletVersion: 1 }, $set: { lastPurchaseAt: new Date() } },
     { new: true },
   ).lean()) as MemberDoc | null;
 
@@ -265,19 +294,23 @@ export async function debitMemberWalletAdjustment(params: {
     status: 'active',
   }).lean()) as MemberDoc | null;
   if (!doc) throw createAppError('NOT_FOUND', '会员不存在');
-  if (doc.creditBalance < amt - 1e-9) {
+  const avail = Number(doc.creditBalance) || 0;
+  if (round2(avail) < amt - WALLET_CENT_EPS) {
     throw createAppError('VALIDATION_ERROR', '储值余额不足');
   }
+  const drain = walletShouldDrain(avail, amt);
 
   const updated = (await params.Member.findOneAndUpdate(
     {
       _id: params.memberId,
       storeId: params.storeId,
       status: 'active',
-      walletVersion: doc.walletVersion,
-      creditBalance: { $gte: amt },
+      creditBalance: { $gte: walletDebitMinBalance(avail, amt) },
+      ...walletVersionMatch(doc.walletVersion),
     },
-    { $inc: { creditBalance: -amt, walletVersion: 1 } },
+    drain
+      ? { $set: { creditBalance: 0 }, $inc: { walletVersion: 1 } }
+      : { $inc: { creditBalance: -amt, walletVersion: 1 } },
     { new: true },
   ).lean()) as MemberDoc | null;
 
@@ -427,7 +460,7 @@ export async function creditMemberWallet(params: {
       _id: params.memberId,
       storeId: params.storeId,
       status: 'active',
-      walletVersion: doc.walletVersion,
+      ...walletVersionMatch(doc.walletVersion),
     },
     { $inc: { creditBalance: amt, walletVersion: 1 } },
     { new: true },

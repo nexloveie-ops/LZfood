@@ -96,13 +96,20 @@ export function receiptPaymentMethodLabel(pm: ReceiptPaymentMethod): string {
 }
 
 /** Display label for admin / history lists. */
-export function checkoutPaymentMethodDisplay(pm: string | undefined | null): string {
+export function checkoutPaymentMethodDisplay(
+  pm: string | undefined | null,
+  memberCreditUsed?: number,
+): string {
   const v = String(pm || '').trim();
-  if (v === 'cash') return '现金';
-  if (v === 'card') return '刷卡';
-  if (v === 'mixed') return '混合';
-  if (v === 'online') return 'Online';
-  if (v === 'member') return '会员';
-  if (v === 'tap_pay') return 'Tap Pay';
-  return v || '-';
+  let base = v || '-';
+  if (v === 'cash') base = '现金';
+  else if (v === 'card') base = '刷卡';
+  else if (v === 'mixed') base = '混合';
+  else if (v === 'online') base = 'Online';
+  else if (v === 'member') base = '会员';
+  else if (v === 'tap_pay') base = 'Tap Pay';
+  if (v !== 'member' && (Number(memberCreditUsed) || 0) > 0.001) {
+    return `会员+${base}`;
+  }
+  return base;
 }

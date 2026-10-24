@@ -7,7 +7,7 @@ interface HistoryOrder {
   _id: string; type: string; tableNumber?: number; seatNumber?: number;
   dailyOrderNumber?: number; dineInOrderNumber?: string; status: string;
   items: OrderItem[]; createdAt: string;
-  checkout?: { totalAmount: number; paymentMethod: string } | null;
+  checkout?: { totalAmount: number; paymentMethod: string; memberCreditUsed?: number } | null;
 }
 export default function OrderHistory() {
   const { t } = useTranslation();
@@ -175,7 +175,7 @@ export default function OrderHistory() {
                       {o.items.map(i => `${i.itemName}×${i.quantity}`).join(', ')}
                     </td>
                     <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 700, color: 'var(--red-primary)' }}>€{orderTotal(o).toFixed(2)}</td>
-                    <td style={{ padding: '8px 12px', fontSize: 12 }}>{checkoutPaymentMethodDisplay(o.checkout?.paymentMethod)}</td>
+                    <td style={{ padding: '8px 12px', fontSize: 12 }}>{checkoutPaymentMethodDisplay(o.checkout?.paymentMethod, o.checkout?.memberCreditUsed)}</td>
                     <td style={{ padding: '8px 12px', fontSize: 12, color: 'var(--text-light)' }}>{new Date(o.createdAt).toLocaleString()}</td>
                   </tr>
                 );

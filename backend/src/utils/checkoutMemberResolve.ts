@@ -154,9 +154,9 @@ export async function resolveMemberPaymentForCheckout(params: {
     if (!skipMemberPin) {
       await assertMemberPinOk(PlatformMember, platform as never, String(pin));
     }
-    const guestBal = Number(platform.creditBalance) || 0;
+    const guestBal = round2(Number(platform.creditBalance) || 0);
     const staffHere = isStaffAtStore(platform, storeId);
-    const staffBal = staffHere ? staffBalanceAtStore(platform, storeId) : 0;
+    const staffBal = staffHere ? round2(staffBalanceAtStore(platform, storeId)) : 0;
     const capRaw = body.memberCreditAmount;
     const wantCap =
       capRaw != null && capRaw !== '' && Number.isFinite(Number(capRaw))
@@ -186,7 +186,7 @@ export async function resolveMemberPaymentForCheckout(params: {
     await assertMemberPinOk(Member, member as never, String(pin));
   }
 
-  const balance = Number(member.creditBalance) || 0;
+  const balance = round2(Number(member.creditBalance) || 0);
   const capRaw = body.memberCreditAmount;
   const wantCap =
     capRaw != null && capRaw !== '' && Number.isFinite(Number(capRaw))

@@ -73,6 +73,7 @@ interface DetailOrder {
     paymentMethod: string;
     cashAmount?: number;
     cardAmount?: number;
+    memberCreditUsed?: number;
     checkedOutAt: string;
   } | null;
 }
@@ -326,19 +327,41 @@ export default function ReportDashboard() {
       return group > 0 ? laneAmt * (mine / group) : laneAmt / same.length;
     };
     if (lane === 'cash') {
-      if (c.paymentMethod === 'cash') return orderTotal(o);
       if (c.paymentMethod === 'mixed') return splitMixed(Number(c.cashAmount) || 0);
+      if (c.paymentMethod === 'cash') {
+        const mem = Number(c.memberCreditUsed) || 0;
+        if (mem > 0.001) return splitMixed(Number(c.cashAmount) || 0);
+        return orderTotal(o);
+      }
+      return 0;
+    }
+    if (c.paymentMethod === 'mixed') return splitMixed(Number(c.cardAmount) || 0);
+    if (c.paymentMethod === 'card') {
+      const mem = Number(c.memberCreditUsed) || 0;
+      if (mem > 0.001) return splitMixed(Number(c.cardAmount) || 0);
       return orderTotal(o);
     }
-    if (c.paymentMethod === 'card') return orderTotal(o);
-    if (c.paymentMethod === 'mixed') return splitMixed(Number(c.cardAmount) || 0);
-    return orderTotal(o);
+    return 0;
   };
 
   const modalAmountDisplay = (o: DetailOrder) => {
     const pm = modalConfig?.filters.paymentMethod;
     if (modalConfig && pm === 'cash') return laneDisplayAmount(o, 'cash');
     if (modalConfig && pm === 'card') return laneDisplayAmount(o, 'card');
+    if (modalConfig && pm === 'member') {
+      const c = o.checkout;
+      if (!c) return orderTotal(o);
+      const mem = Number(c.memberCreditUsed) || 0;
+      if (c.paymentMethod === 'member') return orderTotal(o);
+      if (mem > 0.001) {
+        const same = modalOrders.filter(r => r.checkout?.checkoutId === c.checkoutId);
+        if (same.length <= 1) return mem;
+        const group = same.reduce((s, x) => s + orderNetLineSum(x), 0);
+        const mine = orderNetLineSum(o);
+        return group > 0 ? mem * (mine / group) : mem / same.length;
+      }
+      return 0;
+    }
     return orderTotal(o);
   };
 
@@ -689,7 +712,7 @@ export default function ReportDashboard() {
                             ))}
                           </td>
                           <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 700, color: 'var(--red-primary)' }}>{euro(modalAmountDisplay(o))}</td>
-                          <td style={{ padding: '8px 12px', fontSize: 12 }}>{checkoutPaymentMethodDisplay(o.checkout?.paymentMethod)}</td>
+                          <td style={{ padding: '8px 12px', fontSize: 12 }}>{checkoutPaymentMethodDisplay(o.checkout?.paymentMethod, o.checkout?.memberCreditUsed)}</td>
                           <td style={{ padding: '8px 12px', fontSize: 12, color: 'var(--text-light)' }}>{new Date(o.createdAt).toLocaleString()}</td>
                         </tr>
                       );

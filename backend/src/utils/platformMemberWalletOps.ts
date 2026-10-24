@@ -1,7 +1,14 @@
 import mongoose from 'mongoose';
 import { createAppError } from '../middleware/errorHandler';
 import { getModels } from '../getModels';
-import { creditMemberWallet, debitMemberWallet } from './memberWalletOps';
+import {
+  creditMemberWallet,
+  debitMemberWallet,
+  WALLET_CENT_EPS,
+  walletDebitMinBalance,
+  walletShouldDrain,
+  walletVersionMatch,
+} from './memberWalletOps';
 import { sendMemberWalletSpendSms } from './twilioSms';
 import {
   ensureStaffBalanceRow,
@@ -71,26 +78,32 @@ export async function debitPlatformMemberWallet(params: {
       throw createAppError('FORBIDDEN', '非本店员工，无法使用员工额度');
     }
     const staffBal = staffBalanceAtStore(doc, params.storeId);
-    if (staffBal < amt - 1e-9) throw createAppError('VALIDATION_ERROR', '储值余额不足');
+    if (round2(staffBal) < amt - WALLET_CENT_EPS) throw createAppError('VALIDATION_ERROR', '储值余额不足');
+    const drainStaff = walletShouldDrain(staffBal, amt);
 
     const updated = asPlatformDoc(
       await PlatformMember.findOneAndUpdate(
         {
           _id: params.memberId,
           status: 'active',
-          walletVersion: doc.walletVersion ?? 0,
           staffStoreIds: params.storeId,
-          staffBalances: { $elemMatch: { storeId: params.storeId, creditBalance: { $gte: amt } } },
+          staffBalances: {
+            $elemMatch: {
+              storeId: params.storeId,
+              creditBalance: { $gte: walletDebitMinBalance(staffBal, amt) },
+            },
+          },
+          ...walletVersionMatch(doc.walletVersion),
         },
-        {
-          $inc: { walletVersion: 1, 'staffBalances.$[s].creditBalance': -amt },
-        },
+        drainStaff
+          ? { $inc: { walletVersion: 1 }, $set: { 'staffBalances.$[s].creditBalance': 0 } }
+          : { $inc: { walletVersion: 1, 'staffBalances.$[s].creditBalance': -amt } },
         { arrayFilters: [{ 's.storeId': params.storeId }], new: true },
       ).lean(),
     );
     if (!updated) throw createAppError('CONFLICT', '余额或版本冲突，请重试');
     const balanceBefore = round2(staffBal);
-    const balanceAfter = round2(staffBalanceAtStore(updated, params.storeId));
+    const balanceAfter = drainStaff ? 0 : round2(staffBalanceAtStore(updated, params.storeId));
     await PlatformMemberWalletTxn.create({
       memberId: params.memberId,
       wallet: 'staff',
@@ -107,22 +120,25 @@ export async function debitPlatformMemberWallet(params: {
   }
 
   const guestBal = Number(doc.creditBalance) || 0;
-  if (guestBal < amt - 1e-9) throw createAppError('VALIDATION_ERROR', '储值余额不足');
+  if (round2(guestBal) < amt - WALLET_CENT_EPS) throw createAppError('VALIDATION_ERROR', '储值余额不足');
+  const drainGuest = walletShouldDrain(guestBal, amt);
   const updated = asPlatformDoc(
     await PlatformMember.findOneAndUpdate(
       {
         _id: params.memberId,
         status: 'active',
-        walletVersion: doc.walletVersion ?? 0,
-        creditBalance: { $gte: amt },
+        creditBalance: { $gte: walletDebitMinBalance(guestBal, amt) },
+        ...walletVersionMatch(doc.walletVersion),
       },
-      { $inc: { creditBalance: -amt, walletVersion: 1 } },
+      drainGuest
+        ? { $set: { creditBalance: 0 }, $inc: { walletVersion: 1 } }
+        : { $inc: { creditBalance: -amt, walletVersion: 1 } },
       { new: true },
     ).lean(),
   );
   if (!updated) throw createAppError('CONFLICT', '余额或版本冲突，请重试');
   const balanceBefore = round2(guestBal);
-  const balanceAfter = round2(Number(updated.creditBalance) || 0);
+  const balanceAfter = drainGuest ? 0 : round2(Number(updated.creditBalance) || 0);
   await PlatformMemberWalletTxn.create({
     memberId: params.memberId,
     wallet: 'guest',
@@ -163,22 +179,25 @@ export async function debitPlatformGuestWalletByAdmin(params: {
   if (!doc) throw createAppError('NOT_FOUND', '会员不存在');
 
   const guestBal = Number(doc.creditBalance) || 0;
-  if (guestBal < amt - 1e-9) throw createAppError('VALIDATION_ERROR', '储值余额不足');
+  if (round2(guestBal) < amt - WALLET_CENT_EPS) throw createAppError('VALIDATION_ERROR', '储值余额不足');
+  const drainGuest = walletShouldDrain(guestBal, amt);
   const updated = asPlatformDoc(
     await PlatformMember.findOneAndUpdate(
       {
         _id: params.memberId,
         status: 'active',
-        walletVersion: doc.walletVersion ?? 0,
-        creditBalance: { $gte: amt },
+        creditBalance: { $gte: walletDebitMinBalance(guestBal, amt) },
+        ...walletVersionMatch(doc.walletVersion),
       },
-      { $inc: { creditBalance: -amt, walletVersion: 1 } },
+      drainGuest
+        ? { $set: { creditBalance: 0 }, $inc: { walletVersion: 1 } }
+        : { $inc: { creditBalance: -amt, walletVersion: 1 } },
       { new: true },
     ).lean(),
   );
   if (!updated) throw createAppError('CONFLICT', '余额或版本冲突，请重试');
   const balanceBefore = round2(guestBal);
-  const balanceAfter = round2(Number(updated.creditBalance) || 0);
+  const balanceAfter = drainGuest ? 0 : round2(Number(updated.creditBalance) || 0);
   await PlatformMemberWalletTxn.create({
     memberId: params.memberId,
     wallet: 'guest',
@@ -257,9 +276,9 @@ export async function creditPlatformMemberWallet(params: {
         {
           _id: params.memberId,
           status: 'active',
-          walletVersion: doc.walletVersion ?? 0,
           staffStoreIds: params.storeId,
           'staffBalances.storeId': params.storeId,
+          ...walletVersionMatch(doc.walletVersion),
         },
         { $inc: { walletVersion: 1, 'staffBalances.$[s].creditBalance': amt } },
         { arrayFilters: [{ 's.storeId': params.storeId }], new: true },
@@ -291,7 +310,7 @@ export async function creditPlatformMemberWallet(params: {
       {
         _id: params.memberId,
         status: 'active',
-        walletVersion: doc.walletVersion ?? 0,
+        ...walletVersionMatch(doc.walletVersion),
       },
       { $inc: { creditBalance: amt, walletVersion: 1 } },
       { new: true },

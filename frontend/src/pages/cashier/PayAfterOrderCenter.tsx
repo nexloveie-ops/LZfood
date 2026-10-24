@@ -8,9 +8,12 @@ import { printBuiltReceipt, type BundleDiscountInfo } from '../../components/cas
 import { type ReceiptOptionSnapshot } from '../../utils/receiptOptionPrice';
 import { resolveReceiptPaymentMethodFromOrder } from '../../utils/receiptPaymentMethod';
 import CashierMemberCheckoutBlock, {
-  buildMemberFullWalletCheckoutBody,
+  buildMemberWalletCheckoutBody,
   canMemberFullWalletPay,
+  canMemberPartialWalletPay,
+  memberRemainderEuro,
   type CashierMemberPreview,
+  type MemberRemainderTender,
 } from '../../components/cashier/CashierMemberCheckoutBlock';
 import { useRestaurantConfig } from '../../hooks/useRestaurantConfig';
 import {
@@ -227,6 +230,7 @@ export default function PayAfterOrderCenter() {
   const [cashReceived, setCashReceived] = useState('');
   const [memberPhone, setMemberPhone] = useState('');
   const [memberPreview, setMemberPreview] = useState<CashierMemberPreview | null>(null);
+  const [memberRemainderTender, setMemberRemainderTender] = useState<MemberRemainderTender | null>(null);
   const [discountZhe, setDiscountZhe] = useState('');
   const [weighTarget, setWeighTarget] = useState<{ orderId: string; item: PayAfterOrderItem } | null>(null);
   const fetchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -553,28 +557,49 @@ export default function PayAfterOrderCenter() {
 
   useEffect(() => {
     setDiscountZhe('');
+    setMemberRemainderTender(null);
+    setCashReceived('');
   }, [checkoutTarget]);
 
+  const memberRemainder = memberRemainderEuro(memberPreview, checkoutPayable);
+  const cashDue =
+    payMethod === 'cash'
+      ? checkoutPayable
+      : payMethod === 'member' && memberRemainderTender === 'cash'
+        ? memberRemainder
+        : 0;
   const cashNum = parseFloat(cashReceived) || 0;
-  const changeAmt = payMethod === 'cash' ? Math.max(0, cashNum - checkoutPayable) : 0;
+  const changeAmt = cashDue > 0.001 ? Math.max(0, cashNum - cashDue) : 0;
 
   const submitCheckout = useCallback(async () => {
     if (!checkoutTarget) return;
     if (checkoutZhe.status === 'invalid') return;
     if (payMethod === 'cash' && cashNum + 0.001 < checkoutPayable) return;
-    if (payMethod === 'member' && !canMemberFullWalletPay(memberPreview, checkoutPayable)) return;
-    const busyKey = checkoutTarget.orderId || `table-${checkoutTarget.tableNumber}`;
-    setBusyId(busyKey);
-    try {
-      const body: Record<string, unknown> = payMethod === 'member' && memberPreview
-        ? buildMemberFullWalletCheckoutBody(checkoutPayable, memberPhone)
-        : { paymentMethod: payMethod };
+    let body: Record<string, unknown>;
+    if (payMethod === 'member') {
+      if (!memberPreview) return;
+      const built = buildMemberWalletCheckoutBody({
+        payAmount: checkoutPayable,
+        phone: memberPhone,
+        preview: memberPreview,
+        remainderTender: memberRemainderTender,
+        cashReceived: memberRemainderTender === 'cash' ? cashNum : undefined,
+      });
+      if (!built) return;
+      if (memberRemainderTender === 'cash' && cashNum + 0.001 < memberRemainder) return;
+      body = built;
+    } else {
+      body = { paymentMethod: payMethod };
       if (payMethod === 'cash') {
         body.cashAmount = checkoutPayable;
         body.cashReceived = cashNum;
         body.changeAmount = changeAmt;
       }
       if (payMethod === 'card') body.cardAmount = checkoutPayable;
+    }
+    const busyKey = checkoutTarget.orderId || `table-${checkoutTarget.tableNumber}`;
+    setBusyId(busyKey);
+    try {
       if (checkoutZhe.status === 'ok') {
         const coupon = staffZheCouponPayload(checkoutZhe);
         body.couponName = coupon.name;
@@ -600,8 +625,8 @@ export default function PayAfterOrderCenter() {
         if (receiptRes.ok) {
           const receipt = await receiptRes.json();
           await printBuiltReceipt(receipt, config, {
-            cashReceived: payMethod === 'cash' ? cashNum : undefined,
-            changeAmount: payMethod === 'cash' ? changeAmt : undefined,
+            cashReceived: cashDue > 0.001 ? cashNum : undefined,
+            changeAmount: cashDue > 0.001 ? changeAmt : undefined,
           });
         }
       }
@@ -610,7 +635,7 @@ export default function PayAfterOrderCenter() {
     } finally {
       setBusyId(null);
     }
-  }, [cashNum, changeAmt, checkoutPayable, checkoutTarget, checkoutZhe, config, fetchAll, isEn, memberPhone, memberPreview, payMethod, token]);
+  }, [cashDue, cashNum, changeAmt, checkoutPayable, checkoutTarget, checkoutZhe, config, fetchAll, isEn, memberPhone, memberPreview, memberRemainder, memberRemainderTender, payMethod, token]);
 
   const finishTakeout = useCallback(async (order: PayAfterOrder) => {
     setBusyId(order._id);
@@ -912,19 +937,24 @@ export default function PayAfterOrderCenter() {
             />
             <div className="pay-after-pay-methods">
               {(['cash', 'card'] as const).map((m) => (
-                <button key={m} type="button" className={`btn ${payMethod === m ? 'btn-primary' : 'btn-outline'}`} onClick={() => setPayMethod(m)}>
+                <button key={m} type="button" className={`btn ${payMethod === m ? 'btn-primary' : 'btn-outline'}`} onClick={() => { setPayMethod(m); setMemberRemainderTender(null); }}>
                   {m === 'cash' ? (isEn ? 'Cash' : '现金') : (isEn ? 'Card' : '刷卡')}
                 </button>
               ))}
               {canMemberWallet ? (
-                <button type="button" className={`btn ${payMethod === 'member' ? 'btn-primary' : 'btn-outline'}`} onClick={() => setPayMethod('member')}>
+                <button type="button" className={`btn ${payMethod === 'member' ? 'btn-primary' : 'btn-outline'}`} onClick={() => { setPayMethod('member'); setMemberRemainderTender(null); setCashReceived(''); }}>
                   {isEn ? 'Member' : '会员'}
                 </button>
               ) : null}
             </div>
-            {payMethod === 'cash' ? (
+            {payMethod === 'cash' || (payMethod === 'member' && memberRemainderTender === 'cash') ? (
               <label style={{ display: 'block', marginBottom: 12, fontSize: 13, fontWeight: 600, color: '#475569' }}>
                 {isEn ? 'Cash received' : '实收'}
+                {payMethod === 'member' ? (
+                  <span style={{ fontWeight: 500, color: '#64748b' }}>
+                    {' '}({isEn ? 'due' : '应付'} €{memberRemainder.toFixed(2)})
+                  </span>
+                ) : null}
                 <input className="input" type="number" min={0} step="0.01" value={cashReceived} onChange={(e) => setCashReceived(e.target.value)} style={{ display: 'block', marginTop: 6 }} />
                 {changeAmt > 0 ? <span style={{ fontWeight: 600, color: '#0369a1' }}>{isEn ? 'Change' : '找零'} €{changeAmt.toFixed(2)}</span> : null}
               </label>
@@ -933,15 +963,36 @@ export default function PayAfterOrderCenter() {
               <CashierMemberCheckoutBlock
                 payAmount={checkoutPayable}
                 phone={memberPhone}
-                setPhone={setMemberPhone}
+                setPhone={(v) => {
+                  setMemberPhone(v);
+                  setMemberRemainderTender(null);
+                }}
                 preview={memberPreview}
-                setPreview={setMemberPreview}
+                setPreview={(p) => {
+                  setMemberPreview(p);
+                  setMemberRemainderTender(null);
+                }}
                 compact
+                remainderTender={memberRemainderTender}
+                onRemainderTender={setMemberRemainderTender}
               />
             ) : null}
             <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
               <button type="button" className="btn btn-outline" onClick={() => setCheckoutTarget(null)}>{isEn ? 'Back' : '返回'}</button>
-              <button type="button" className="btn btn-primary" disabled={busyId != null || checkoutZhe.status === 'invalid'} onClick={() => void submitCheckout()}>
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={
+                  busyId != null ||
+                  checkoutZhe.status === 'invalid' ||
+                  (payMethod === 'member' && !canMemberFullWalletPay(memberPreview, checkoutPayable) && (
+                    !canMemberPartialWalletPay(memberPreview, checkoutPayable) ||
+                    !memberRemainderTender ||
+                    (memberRemainderTender === 'cash' && cashNum + 0.001 < memberRemainder)
+                  ))
+                }
+                onClick={() => void submitCheckout()}
+              >
                 {isEn ? 'Confirm' : '确认结账'}
               </button>
             </div>

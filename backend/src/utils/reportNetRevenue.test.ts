@@ -58,4 +58,25 @@ describe('reportNetRevenue', () => {
     expect(byPayment.cash).toBeCloseTo(4);
     expect(byPayment.card).toBeCloseTo(6);
   });
+
+  it('allocates delivery fee across wallet remainder cash', () => {
+    const orderId = 'd2';
+    const order = {
+      _id: orderId,
+      type: 'delivery',
+      deliveryFeeEuro: 10,
+      items: [{ unitPrice: 40, quantity: 1 }],
+    };
+    const map = new Map([
+      [orderId, {
+        totalAmount: 50,
+        paymentMethod: 'cash',
+        cashAmount: 30,
+        memberCreditUsed: 20,
+      }],
+    ]);
+    const { byPayment } = aggregateDeliveryFeeExclusions([order], map);
+    expect(byPayment.member).toBeCloseTo(4);
+    expect(byPayment.cash).toBeCloseTo(6);
+  });
 });

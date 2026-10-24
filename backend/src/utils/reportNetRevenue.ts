@@ -1,3 +1,4 @@
+import { checkoutPaymentChannels } from './checkoutPaymentChannels';
 import { deliveryFeePortionEuro } from './orderPayableTotal';
 
 export type ReportOrderLike = {
@@ -17,6 +18,7 @@ export type ReportCheckoutLike = {
   paymentMethod?: string;
   cashAmount?: number;
   cardAmount?: number;
+  memberCreditUsed?: number;
 };
 
 export type PaymentMethodBuckets = {
@@ -75,7 +77,7 @@ export function deliveryFeeExcludedFromOrderNet(
   return Math.min(fee, orderNet);
 }
 
-/** Split an amount across payment-method buckets (mixed → cash/card ratio). */
+/** Split an amount across payment-method buckets using stored channel amounts. */
 export function allocateAmountByPaymentMethod(
   amount: number,
   paymentMethod: string | undefined,
@@ -83,23 +85,20 @@ export function allocateAmountByPaymentMethod(
 ): PaymentMethodBuckets {
   const out: PaymentMethodBuckets = { cash: 0, card: 0, online: 0, member: 0, tap_pay: 0 };
   if (amount <= 0) return out;
-  const pm = String(paymentMethod || '');
-  if (pm === 'cash') {
-    out.cash = amount;
-  } else if (pm === 'card') {
-    out.card = amount;
-  } else if (pm === 'online') {
-    out.online = amount;
-  } else if (pm === 'member') {
-    out.member = amount;
-  } else if (pm === 'tap_pay') {
-    out.tap_pay = amount;
-  } else if (pm === 'mixed') {
-    const total = Number(checkout.totalAmount) || 1;
-    const cashRatio = (Number(checkout.cashAmount) || 0) / total;
-    out.cash = amount * cashRatio;
-    out.card = amount * (1 - cashRatio);
-  }
+  const ch = checkoutPaymentChannels({
+    totalAmount: checkout.totalAmount,
+    paymentMethod: paymentMethod ?? checkout.paymentMethod,
+    cashAmount: checkout.cashAmount,
+    cardAmount: checkout.cardAmount,
+    memberCreditUsed: checkout.memberCreditUsed,
+  });
+  const denom = ch.cash + ch.card + ch.member + ch.online + ch.tap_pay;
+  if (denom <= 0.001) return out;
+  out.cash = amount * (ch.cash / denom);
+  out.card = amount * (ch.card / denom);
+  out.member = amount * (ch.member / denom);
+  out.online = amount * (ch.online / denom);
+  out.tap_pay = amount * (ch.tap_pay / denom);
   return out;
 }
 

@@ -1,7 +1,9 @@
 import mongoose from 'mongoose';
 import { getModels } from '../getModels';
+import { checkoutPaymentChannels } from './checkoutPaymentChannels';
 import {
   aggregateDeliveryFeeExclusions,
+  allocateAmountByPaymentMethod,
   computeOrderRefundAmount,
   type ReportCheckoutLike,
 } from './reportNetRevenue';
@@ -42,6 +44,7 @@ function toReportCheckout(co: unknown): ReportCheckoutLike | undefined {
     paymentMethod?: string;
     cashAmount?: number;
     cardAmount?: number;
+    memberCreditUsed?: number;
   };
   if (c.totalAmount == null) return undefined;
   return {
@@ -49,6 +52,7 @@ function toReportCheckout(co: unknown): ReportCheckoutLike | undefined {
     paymentMethod: c.paymentMethod,
     cashAmount: c.cashAmount,
     cardAmount: c.cardAmount,
+    memberCreditUsed: c.memberCreditUsed,
   };
 }
 
@@ -127,23 +131,17 @@ export async function computeStoreDayReportMetrics(
       if (!countedCheckoutIds.has(cid)) {
         countedCheckoutIds.add(cid);
         grossRevenue += checkout.totalAmount;
-        if (checkout.paymentMethod === 'cash') {
-          cashTotal += checkout.totalAmount;
-          cashCount++;
-        } else if (checkout.paymentMethod === 'card') {
-          cardTotal += checkout.totalAmount;
-          cardCount++;
-        } else if (checkout.paymentMethod === 'mixed') {
-          mixedCount++;
-          cashTotal += checkout.cashAmount || 0;
-          cardTotal += checkout.cardAmount || 0;
-        } else if (checkout.paymentMethod === 'online') {
-          onlineTotal += checkout.totalAmount;
-          onlineCount++;
-        } else if (checkout.paymentMethod === 'tap_pay') {
-          tapPayTotal += checkout.totalAmount;
-          tapPayCount++;
-        }
+        const ch = checkoutPaymentChannels(checkout);
+        cashTotal += ch.cash;
+        cardTotal += ch.card;
+        onlineTotal += ch.online;
+        tapPayTotal += ch.tap_pay;
+        const pm = String(checkout.paymentMethod || '');
+        if (pm === 'cash') cashCount++;
+        else if (pm === 'card') cardCount++;
+        else if (pm === 'mixed') mixedCount++;
+        else if (pm === 'online') onlineCount++;
+        else if (pm === 'tap_pay') tapPayCount++;
       }
     }
   }
@@ -161,16 +159,14 @@ export async function computeStoreDayReportMetrics(
 
     const amt = computeOrderRefundAmount(order, toReportCheckout(checkout));
     refundedAmount += amt;
-    if (pm === 'cash') cashRefund += amt;
-    else if (pm === 'card') cardRefund += amt;
-    else if (pm === 'mixed') {
-      const mixedTotal2 = checkout ? (checkout.totalAmount || 1) : 1;
-      const cashRatio = checkout ? (checkout.cashAmount || 0) / mixedTotal2 : 0;
-      const cardRatio = checkout ? (checkout.cardAmount || 0) / mixedTotal2 : 0;
-      cashRefund += amt * cashRatio;
-      cardRefund += amt * cardRatio;
-    } else if (pm === 'online') onlineRefund += amt;
-    else if (pm === 'tap_pay') tapPayRefund += amt;
+    const split = allocateAmountByPaymentMethod(amt, pm, toReportCheckout(checkout) || {
+      totalAmount: Number(checkout?.totalAmount) || 0,
+      paymentMethod: pm,
+    });
+    cashRefund += split.cash;
+    cardRefund += split.card;
+    onlineRefund += split.online;
+    tapPayRefund += split.tap_pay;
   }
 
   const deliveryFeeCheckoutMap = new Map<string, ReportCheckoutLike>();
@@ -180,6 +176,7 @@ export async function computeStoreDayReportMetrics(
       paymentMethod: co.paymentMethod,
       cashAmount: co.cashAmount,
       cardAmount: co.cardAmount,
+      memberCreditUsed: (co as { memberCreditUsed?: number }).memberCreditUsed,
     });
   }
   const { total: deliveryFeeExcludedFromNet, byPayment: deliveryFeeByPayment } =
