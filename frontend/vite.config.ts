@@ -19,6 +19,8 @@ export default defineConfig({
     host: true,
     port: 5173,
     strictPort: true,
+    // 云端 Agent 临时 Cloudflare 隧道（*.trycloudflare.com）手机预览需要
+    allowedHosts: true,
     proxy: { ...backendProxy },
   },
   preview: {
