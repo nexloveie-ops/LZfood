@@ -20,6 +20,8 @@ const OrderItemSubdocSchema = new mongoose.Schema({
   refunded: { type: Boolean, default: false },
   /** 已送至厨房打印的份数（≤ quantity）；用于后结堂食「只打新增」 */
   kitchenPrintedQty: { type: Number, default: 0, min: 0 },
+  /** 下单时类目「不打印到厨房」快照；厨房票跳过，结账小票仍打。 */
+  skipKitchenCloudPrint: { type: Boolean, default: false },
   /** 后结堂食：已通过收银/Stripe 结清的份数（≤ quantity），用于部分结账与剩余应付 */
   settledQty: { type: Number, default: 0, min: 0 },
   /** 跑单桌账内第几轮点菜（厨房只打本轮新增；结账小票按轮分段） */

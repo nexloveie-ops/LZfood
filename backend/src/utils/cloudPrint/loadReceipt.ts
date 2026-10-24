@@ -57,10 +57,11 @@ async function enrichLinesWithCategories(
     : [];
   const categoryIds = [...new Set(menuItems.map((m) => String(m.categoryId)))];
   const categories = categoryIds.length
-    ? await MenuCategory.find({ storeId, _id: { $in: categoryIds } }).select('_id sortOrder translations').lean() as unknown as Array<{
+    ? await MenuCategory.find({ storeId, _id: { $in: categoryIds } }).select('_id sortOrder translations skipKitchenCloudPrint').lean() as unknown as Array<{
       _id: mongoose.Types.ObjectId;
       sortOrder: number;
       translations?: { locale: string; name: string }[];
+      skipKitchenCloudPrint?: boolean;
     }>
     : [];
   const catById = new Map(
@@ -72,6 +73,7 @@ async function enrichLinesWithCategories(
         categoryName: zh || en || 'Category',
         categoryNameEn: en || zh || '',
         categorySortOrder: Number.isFinite(c.sortOrder) ? c.sortOrder : 9999,
+        skipKitchenCloudPrint: Boolean(c.skipKitchenCloudPrint),
       }] as const;
     }),
   );
@@ -220,9 +222,17 @@ export async function loadCloudPrintTableTicket(
   if (filtered.length === 0) return null;
 
   const enriched = await enrichLinesWithCategories(storeId, filtered);
+  const kitchenEnriched = enriched.map((lines) =>
+    lines.filter((it) => it.lineKind !== 'delivery_fee' && !it.skipKitchenCloudPrint),
+  );
+  const kitchenOrders = filtered
+    .map((o, i) => ({ order: o, items: kitchenEnriched[i] || [] }))
+    .filter((row) => row.items.length > 0);
+  if (kitchenOrders.length === 0) return null;
+
   const restaurant = await loadRestaurantHeader(storeId);
   const dineInWorkflowMode = await getDineInWorkflowModeForStore(storeId);
-  const cloudOrders = filtered.map((o, i) => toCloudPrintOrder(o, enriched[i] || []));
+  const cloudOrders = kitchenOrders.map((row) => toCloudPrintOrder(row.order, row.items));
   const foodTotal = cloudOrders
     .flatMap((o) => o.items)
     .reduce((s, it) => s + lineUnitTotal(it), 0);
@@ -275,7 +285,8 @@ export async function loadCloudPrintOrderTicket(
   if ((filtered.items || []).length === 0) return null;
 
   const enriched = await enrichLinesWithCategories(storeId, [filtered]);
-  const items = enriched[0] || [];
+  const items = (enriched[0] || []).filter((it) => it.lineKind !== 'delivery_fee' && !it.skipKitchenCloudPrint);
+  if (items.length === 0) return null;
   const foodTotal = items.reduce((s, it) => s + lineUnitTotal(it), 0);
   const bundles = filtered.appliedBundles || [];
   const disc = opts?.ticketKind === 'append' ? 0 : bundles.reduce((s, b) => s + (Number(b.discount) || 0), 0);

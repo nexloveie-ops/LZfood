@@ -340,6 +340,7 @@ export function createOrdersRouter(io: SocketIOServer): Router {
       pricePerKg?: number;
       noteZh?: string;
       noteEn?: string;
+      skipKitchenCloudPrint?: boolean;
     }[] = [];
 
     const { MarketPriceDay, MenuCategory } = orderModels();
@@ -350,9 +351,14 @@ export function createOrdersRouter(io: SocketIOServer): Router {
         .filter((id) => id && mongoose.Types.ObjectId.isValid(id)),
     )];
     const catRows = catIds.length > 0
-      ? await MenuCategory.find({ storeId, _id: { $in: catIds } }).select('discountZhe').lean() as { _id: unknown; discountZhe?: number }[]
+      ? await MenuCategory.find({ storeId, _id: { $in: catIds } }).select('discountZhe skipKitchenCloudPrint').lean() as {
+        _id: unknown;
+        discountZhe?: number;
+        skipKitchenCloudPrint?: boolean;
+      }[]
       : [];
     const zheByCat = new Map(catRows.map((c) => [String(c._id), c.discountZhe]));
+    const skipKitchenByCat = new Map(catRows.map((c) => [String(c._id), Boolean(c.skipKitchenCloudPrint)]));
 
     for (const item of items) {
       const menuItem = menuItemMap.get(item.menuItemId)!;
@@ -360,6 +366,9 @@ export function createOrdersRouter(io: SocketIOServer): Router {
       const enTrans = menuItem.translations?.find((t: { locale: string }) => t.locale === 'en-US');
       const itemName = zhTrans?.name || enTrans?.name || (menuItem.translations?.[0] as { name: string })?.name || 'Unknown';
       const itemNameEn = enTrans?.name || zhTrans?.name || itemName;
+      const skipKitchenCloudPrint = skipKitchenByCat.get(
+        menuItem.categoryId != null ? String(menuItem.categoryId) : '',
+      ) === true;
       const noteZh = lineNote(item.noteZh);
       const noteEn = lineNote(item.noteEn);
       const menuSnapshots = await snapshotSelectedOptionsFromMenuItem(storeId, menuItem, item.selectedOptions);
@@ -401,6 +410,7 @@ export function createOrdersRouter(io: SocketIOServer): Router {
             itemNameEn,
             selectedOptions,
             isMarketPrice: true,
+            ...(skipKitchenCloudPrint ? { skipKitchenCloudPrint: true } : {}),
             ...(weightKg > 0 ? { weightKg, pricePerKg } : {}),
             ...(noteZh || noteEn ? { noteZh, noteEn } : {}),
           });
@@ -419,6 +429,7 @@ export function createOrdersRouter(io: SocketIOServer): Router {
         itemName,
         itemNameEn,
         selectedOptions,
+        ...(skipKitchenCloudPrint ? { skipKitchenCloudPrint: true } : {}),
         ...(noteZh || noteEn ? { noteZh, noteEn } : {}),
       });
     }
@@ -898,7 +909,7 @@ export function createOrdersRouter(io: SocketIOServer): Router {
 
       io.to(storeIoRoom(req.storeId!)).emit('order:new', order);
 
-      let kitchenPrint: 'cloud' | 'pending' | undefined;
+      let kitchenPrint: 'cloud' | 'pending' | 'skipped' | undefined;
       if (req.storeId && shouldKitchenCloudPrintOnCreate({
         type,
         dineInWorkflowMode: dineInWf,
@@ -914,7 +925,7 @@ export function createOrdersRouter(io: SocketIOServer): Router {
           orderId: order._id as mongoose.Types.ObjectId,
           trigger: 'placement',
         });
-        if (kitchenPrint === 'cloud') {
+        if (kitchenPrint === 'cloud' || kitchenPrint === 'skipped') {
           const fresh = await Order.findOne({ _id: order._id, storeId: req.storeId });
           if (fresh) order = fresh;
         }
@@ -1897,7 +1908,7 @@ export function createOrdersRouter(io: SocketIOServer): Router {
           trigger: wantAppend ? 'append' : 'placement',
           onlyLineIds,
         });
-        const fresh = kitchenPrint === 'cloud'
+        const fresh = kitchenPrint === 'cloud' || kitchenPrint === 'skipped'
           ? await Order.findOne({ _id: id, storeId: req.storeId })
           : order;
         res.json({
@@ -2069,7 +2080,7 @@ export function createOrdersRouter(io: SocketIOServer): Router {
           trigger: 'append',
           onlyLineIds: appendedIds,
         });
-        if (kitchenPrint === 'cloud') {
+        if (kitchenPrint === 'cloud' || kitchenPrint === 'skipped') {
           const fresh = await Order.findOne({ _id: order._id, storeId: req.storeId });
           if (fresh) {
             order = fresh;
@@ -2303,7 +2314,7 @@ export function createOrdersRouter(io: SocketIOServer): Router {
 
       io.to(storeIoRoom(req.storeId!)).emit('order:updated', updated);
 
-      let kitchenPrint: 'cloud' | 'pending' | undefined;
+      let kitchenPrint: 'cloud' | 'pending' | 'skipped' | undefined;
       if (order.type === 'dine_in' && req.storeId && updated) {
         const wfPut = await getDineInWorkflowModeForStore(req.storeId);
         if (wfPut === 'pay_after') {
@@ -2321,7 +2332,7 @@ export function createOrdersRouter(io: SocketIOServer): Router {
               trigger: 'append',
               onlyLineIds: unprintedIds,
             });
-            if (kitchenPrint === 'cloud') {
+            if (kitchenPrint === 'cloud' || kitchenPrint === 'skipped') {
               const fresh = await Order.findOne({ _id: order._id, storeId: req.storeId });
               if (fresh) updated = fresh;
             }

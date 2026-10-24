@@ -30,6 +30,7 @@ export type CloudPrintLine = {
   weightKg?: number;
   pricePerKg?: number;
   kitchenPrintedQty?: number;
+  skipKitchenCloudPrint?: boolean;
   noteZh?: string;
   noteEn?: string;
 };

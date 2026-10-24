@@ -62,6 +62,7 @@ describe('Mongoose Data Models', () => {
       });
       const err = doc.validateSync();
       expect(err).toBeUndefined();
+      expect(doc.skipKitchenCloudPrint).toBe(false);
     });
 
     it('should have timestamps enabled', () => {

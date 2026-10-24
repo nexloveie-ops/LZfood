@@ -66,6 +66,7 @@ describe('unprintedFoodLineIds', () => {
         { _id: { toString: () => 'b' }, quantity: 1, kitchenPrintedQty: 1 },
         { _id: { toString: () => 'c' }, lineKind: 'delivery_fee', quantity: 1, kitchenPrintedQty: 0 },
         { _id: { toString: () => 'd' }, refunded: true, quantity: 1, kitchenPrintedQty: 0 },
+        { _id: { toString: () => 'e' }, quantity: 1, kitchenPrintedQty: 0, skipKitchenCloudPrint: true },
       ],
     })).toEqual(['a']);
   });

@@ -12,6 +12,7 @@ export type PayAfterOrderItem = {
   lineKind?: string;
   refunded?: boolean;
   kitchenPrintedQty?: number;
+  skipKitchenCloudPrint?: boolean;
   settledQty?: number;
   roundIndex?: number;
   placedBy?: 'staff' | 'customer_qr';
@@ -57,10 +58,18 @@ export type PayAfterOrder = {
   appliedBundles?: { discount: number; name?: string; nameEn?: string }[];
 };
 
+export function itemNeedsKitchenPrint(it: {
+  lineKind?: string;
+  refunded?: boolean;
+  skipKitchenCloudPrint?: boolean;
+}): boolean {
+  return it.lineKind !== 'delivery_fee' && !it.refunded && !it.skipKitchenCloudPrint;
+}
+
 export function unprintedFoodLineIds(items: PayAfterOrderItem[]): string[] {
   return (items || [])
     .filter((it) => {
-      if (it.lineKind === 'delivery_fee' || it.refunded) return false;
+      if (!itemNeedsKitchenPrint(it)) return false;
       const q = Number(it.quantity) || 0;
       const printed = Math.max(0, Math.min(Number(it.kitchenPrintedQty) || 0, q));
       return q > 0 && printed < q;
@@ -71,7 +80,7 @@ export function unprintedFoodLineIds(items: PayAfterOrderItem[]): string[] {
 export function kitchenUnprintedQty(o: PayAfterOrder): number {
   let s = 0;
   for (const it of o.items || []) {
-    if (it.lineKind === 'delivery_fee' || it.refunded) continue;
+    if (!itemNeedsKitchenPrint(it)) continue;
     const p = Math.max(0, Math.min(Number(it.kitchenPrintedQty) || 0, it.quantity));
     s += it.quantity - p;
   }

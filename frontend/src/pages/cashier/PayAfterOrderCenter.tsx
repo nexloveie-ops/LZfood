@@ -23,6 +23,7 @@ import {
   hasGuestIdentity,
   hasGuestQrAdd,
   isOpenDineIn,
+  itemNeedsKitchenPrint,
   kitchenUnprintedQty,
   unprintedFoodLineIds,
   type PayAfterOrder,
@@ -81,7 +82,7 @@ function lineTotal(item: PayAfterOrderItem, qty = item.quantity): number {
 function foodLineIds(items: PayAfterOrderItem[], round?: number): string[] {
   return (items || [])
     .filter((it) => {
-      if (it.lineKind === 'delivery_fee' || it.refunded) return false;
+      if (!itemNeedsKitchenPrint(it)) return false;
       if (round == null) return true;
       return Math.max(1, Math.floor(Number(it.roundIndex) || 1)) === round;
     })
@@ -173,7 +174,7 @@ function PayAfterDishCard({
           {it.isMarketPrice ? formatMarketLineTitle(it.itemName, it.weightKg, it.pricePerKg) : `${it.quantity}× ${it.itemName}`}
           {it.isMarketPrice && isUnweighedMarketLine(it) ? <em className="is-warn"> · {isEn ? 'await weigh' : '待称重'}</em> : null}
           {it.placedBy === 'customer_qr' ? <em> · {isEn ? 'guest' : '客人'}</em> : null}
-          {(Number(it.kitchenPrintedQty) || 0) > 0 ? <em> · {isEn ? 'in kitchen' : '厨房中'}</em> : null}
+          {(Number(it.kitchenPrintedQty) || 0) > 0 && !it.skipKitchenCloudPrint ? <em> · {isEn ? 'in kitchen' : '厨房中'}</em> : null}
           {opts ? <span className="pay-after-dish-opts">{opts}</span> : null}
           {note ? <span className="pay-after-dish-opts">{isEn ? `Note ${note}` : `备注 ${note}`}</span> : null}
         </span>
@@ -304,7 +305,7 @@ export default function PayAfterOrderCenter() {
     const receiptItems: ReturnType<typeof mapItem>[] = [];
     const increments: { lineId: string; qty: number }[] = [];
     for (const item of order.items) {
-      if (!idSet.has(item._id) || item.lineKind === 'delivery_fee' || item.refunded) continue;
+      if (!idSet.has(item._id) || !itemNeedsKitchenPrint(item)) continue;
       const printed = Math.max(0, Math.min(Number(item.kitchenPrintedQty) || 0, item.quantity));
       const unprinted = item.quantity - printed;
       if (unprinted <= 0) continue;
@@ -356,7 +357,7 @@ export default function PayAfterOrderCenter() {
     const receiptOrders = orders
       .map((order) => {
         const items = (order.items || [])
-          .filter((it) => it.lineKind !== 'delivery_fee' && !it.refunded)
+          .filter((it) => itemNeedsKitchenPrint(it))
           .map((it) => mapItem(it, it.quantity));
         return {
           _id: order._id,
@@ -432,7 +433,7 @@ export default function PayAfterOrderCenter() {
       }),
     });
     const d = await res.json().catch(() => null) as { kitchenPrint?: string; error?: { message?: string } } | null;
-    if (res.ok && d?.kitchenPrint === 'cloud') return;
+    if (res.ok && (d?.kitchenPrint === 'cloud' || d?.kitchenPrint === 'skipped')) return;
     if (!res.ok && d?.error?.message) {
       /* still try local so the kitchen can cook */
     }

@@ -8,6 +8,13 @@ import { parseMenuCategoryDiscountZheInput } from '../utils/menuItemSellPrice';
 
 const router = Router();
 
+function parseSkipKitchenCloudPrint(raw: unknown): boolean | undefined {
+  if (raw === undefined) return undefined;
+  if (raw === true || raw === 'true' || raw === 1 || raw === '1') return true;
+  if (raw === false || raw === 'false' || raw === 0 || raw === '0' || raw === null) return false;
+  return undefined;
+}
+
 /**
  * GET /api/menu/categories
  * Public — requires store context (X-Store-Slug / DEFAULT_STORE_SLUG).
@@ -44,7 +51,7 @@ router.post(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { MenuCategory } = getModels();
-      const { sortOrder, translations, discountZhe } = req.body;
+      const { sortOrder, translations, discountZhe, skipKitchenCloudPrint } = req.body;
 
       if (sortOrder == null || !Array.isArray(translations) || translations.length === 0) {
         throw createAppError(
@@ -66,11 +73,16 @@ router.post(
       if (zhe === undefined) {
         throw createAppError('VALIDATION_ERROR', '目录折扣须为 1–9.99 或 11–99（如 9 或 85）');
       }
+      if (skipKitchenCloudPrint !== undefined && parseSkipKitchenCloudPrint(skipKitchenCloudPrint) === undefined) {
+        throw createAppError('VALIDATION_ERROR', 'skipKitchenCloudPrint must be boolean');
+      }
+      const skipKitchen = parseSkipKitchenCloudPrint(skipKitchenCloudPrint) === true;
       const category = await MenuCategory.create({
         storeId: req.storeId,
         sortOrder,
         translations,
         ...(zhe != null ? { discountZhe: zhe } : {}),
+        skipKitchenCloudPrint: skipKitchen,
       });
       res.status(201).json(category);
     } catch (err) {
@@ -118,9 +130,14 @@ router.put(
         throw createAppError('NOT_FOUND', 'Category not found');
       }
 
-      const { sortOrder, translations, discountZhe } = req.body;
+      const { sortOrder, translations, discountZhe, skipKitchenCloudPrint } = req.body;
 
-      if (sortOrder == null && !translations && discountZhe === undefined) {
+      if (
+        sortOrder == null
+        && !translations
+        && discountZhe === undefined
+        && skipKitchenCloudPrint === undefined
+      ) {
         throw createAppError('VALIDATION_ERROR', 'At least sortOrder or translations must be provided');
       }
 
@@ -146,6 +163,13 @@ router.put(
         }
         if (zhe == null) unsetZhe = true;
         else updateData.discountZhe = zhe;
+      }
+      if (skipKitchenCloudPrint !== undefined) {
+        const skipKitchen = parseSkipKitchenCloudPrint(skipKitchenCloudPrint);
+        if (skipKitchen === undefined) {
+          throw createAppError('VALIDATION_ERROR', 'skipKitchenCloudPrint must be boolean');
+        }
+        updateData.skipKitchenCloudPrint = skipKitchen;
       }
 
       const mongoUpdate: Record<string, unknown> = {};

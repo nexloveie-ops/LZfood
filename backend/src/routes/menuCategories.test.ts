@@ -128,6 +128,21 @@ describe('POST /api/menu/categories', () => {
     expect(res.body.sortOrder).toBe(1);
     expect(res.body.translations).toHaveLength(2);
     expect(res.body._id).toBeDefined();
+    expect(res.body.skipKitchenCloudPrint).toBe(false);
+  });
+
+  it('should persist skipKitchenCloudPrint when creating a drinks category', async () => {
+    const res = await request(app)
+      .post('/api/menu/categories')
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .send({
+        sortOrder: 8,
+        translations: [{ locale: 'zh-CN', name: '酒水' }],
+        skipKitchenCloudPrint: true,
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body.skipKitchenCloudPrint).toBe(true);
   });
 
   it('should return 401 without auth token', async () => {
@@ -214,6 +229,21 @@ describe('PUT /api/menu/categories/:id', () => {
     expect(res.status).toBe(200);
     expect(res.body.sortOrder).toBe(10);
     expect(res.body.translations[0].name).toBe('Appetizers');
+  });
+
+  it('should update skipKitchenCloudPrint', async () => {
+    const cat = await MenuCategory.create({
+      sortOrder: 1,
+      translations: [{ locale: 'zh-CN', name: '酒水' }],
+    });
+
+    const res = await request(app)
+      .put(`/api/menu/categories/${cat._id}`)
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .send({ skipKitchenCloudPrint: true });
+
+    expect(res.status).toBe(200);
+    expect(res.body.skipKitchenCloudPrint).toBe(true);
   });
 
   it('should return 404 for non-existent category', async () => {

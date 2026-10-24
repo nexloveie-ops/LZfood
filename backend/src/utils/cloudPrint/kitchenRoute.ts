@@ -11,6 +11,7 @@ import { CLOUD_PRINT_ENABLED_KEY, parseCloudPrintEnabled } from './config';
 import { isFeieyunConfigured } from './feieyunClient';
 import { loadOpenDineInTableOrders } from './loadReceipt';
 import { runStoreCloudPrint, type CloudPrintTrigger } from './runJob';
+import { lineSkipsKitchenCloudPrint, loadSkipKitchenMenuItemIds } from './skipKitchenCategory';
 
 /** 功能开 + 云打印开 + 至少一台飞鹅。未配则厨房票进订单中心点打印。 */
 export async function isStoreCloudKitchenReady(storeId: mongoose.Types.ObjectId): Promise<boolean> {
@@ -67,11 +68,12 @@ export function unprintedFoodLineIds(order: {
     refunded?: boolean;
     quantity?: number;
     kitchenPrintedQty?: number;
+    skipKitchenCloudPrint?: boolean;
   }>;
 }): string[] {
   return (order.items || [])
     .filter((it) => {
-      if (it.lineKind === 'delivery_fee' || it.refunded) return false;
+      if (it.lineKind === 'delivery_fee' || it.refunded || it.skipKitchenCloudPrint) return false;
       const q = Number(it.quantity) || 0;
       const printed = Math.max(0, Number(it.kitchenPrintedQty) || 0);
       return q > 0 && printed < q;
@@ -125,18 +127,54 @@ export async function tryKitchenCloudPrintAndMark(opts: {
   orderId: mongoose.Types.ObjectId;
   trigger: Extract<CloudPrintTrigger, 'placement' | 'append'>;
   onlyLineIds?: string[];
-}): Promise<'cloud' | 'pending'> {
+}): Promise<'cloud' | 'pending' | 'skipped'> {
+  const { Order } = getModels() as { Order: mongoose.Model<any> };
+  const order = await Order.findOne({ _id: opts.orderId, storeId: opts.storeId }).lean() as {
+    items?: Array<{
+      _id?: { toString(): string };
+      lineKind?: string;
+      refunded?: boolean;
+      menuItemId?: unknown;
+      skipKitchenCloudPrint?: boolean;
+    }>;
+  } | null;
+  if (!order) return 'pending';
+
+  const skipItemIds = await loadSkipKitchenMenuItemIds(
+    opts.storeId,
+    (order.items || []).map((it) => it.menuItemId),
+  );
+  const requested = (opts.onlyLineIds || []).map((id) => String(id)).filter(Boolean);
+  const only = requested.length > 0 ? new Set(requested) : null;
+  const skipLineIds: string[] = [];
+  const kitchenLineIds: string[] = [];
+  for (const line of order.items || []) {
+    if (line.lineKind === 'delivery_fee' || line.refunded) continue;
+    const id = line._id ? String(line._id) : '';
+    if (!id) continue;
+    if (only && !only.has(id)) continue;
+    if (lineSkipsKitchenCloudPrint(line, skipItemIds)) skipLineIds.push(id);
+    else kitchenLineIds.push(id);
+  }
+
+  if (skipLineIds.length > 0) {
+    await markLinesKitchenPrinted(opts.storeId, opts.orderId, skipLineIds);
+  }
+  if (kitchenLineIds.length === 0) {
+    return skipLineIds.length > 0 ? 'skipped' : 'pending';
+  }
+
   const ready = await isStoreCloudKitchenReady(opts.storeId);
   if (!ready) return 'pending';
   const result = await runStoreCloudPrint({
     storeId: opts.storeId,
     orderId: opts.orderId,
     trigger: opts.trigger,
-    onlyLineIds: opts.onlyLineIds,
+    onlyLineIds: kitchenLineIds,
   });
   const anyOk = (result.printed || []).some((p) => p.ok);
   if (!anyOk) return 'pending';
-  await markLinesKitchenPrinted(opts.storeId, opts.orderId, opts.onlyLineIds);
+  await markLinesKitchenPrinted(opts.storeId, opts.orderId, kitchenLineIds);
   return 'cloud';
 }
 
@@ -144,13 +182,35 @@ export async function tryKitchenCloudPrintAndMark(opts: {
 export async function tryKitchenCloudPrintTableAndMark(opts: {
   storeId: mongoose.Types.ObjectId;
   tableNumber: number;
-}): Promise<{ kitchenPrint: 'cloud' | 'pending'; orderIds: string[] }> {
+}): Promise<{ kitchenPrint: 'cloud' | 'pending' | 'skipped'; orderIds: string[] }> {
   const orders = await loadOpenDineInTableOrders(opts.storeId, opts.tableNumber);
-  const orderIds = orders
-    .filter((o) => (o.items || []).some((it) => it.lineKind !== 'delivery_fee' && !it.refunded))
-    .map((o) => String(o._id));
+  const skipItemIds = await loadSkipKitchenMenuItemIds(
+    opts.storeId,
+    orders.flatMap((o) => (o.items || []).map((it) => it.menuItemId)),
+  );
+  const kitchenOrders = orders.filter((o) =>
+    (o.items || []).some((it) => it.lineKind !== 'delivery_fee' && !it.refunded && !lineSkipsKitchenCloudPrint(it, skipItemIds)),
+  );
+  const skipOnlyOrders = orders.filter((o) =>
+    (o.items || []).some((it) => it.lineKind !== 'delivery_fee' && !it.refunded)
+    && !kitchenOrders.some((k) => String(k._id) === String(o._id)),
+  );
+  const orderIds = [...kitchenOrders, ...skipOnlyOrders].map((o) => String(o._id));
   if (orderIds.length === 0) {
     return { kitchenPrint: 'pending', orderIds: [] };
+  }
+
+  for (const o of orders) {
+    const skipLineIds = (o.items || [])
+      .filter((it) => it.lineKind !== 'delivery_fee' && !it.refunded && lineSkipsKitchenCloudPrint(it, skipItemIds))
+      .map((it) => String(it._id));
+    if (skipLineIds.length > 0 && mongoose.Types.ObjectId.isValid(String(o._id))) {
+      await markLinesKitchenPrinted(opts.storeId, new mongoose.Types.ObjectId(String(o._id)), skipLineIds);
+    }
+  }
+
+  if (kitchenOrders.length === 0) {
+    return { kitchenPrint: 'skipped', orderIds };
   }
 
   const ready = await isStoreCloudKitchenReady(opts.storeId);
@@ -164,9 +224,13 @@ export async function tryKitchenCloudPrintTableAndMark(opts: {
   const anyOk = (result.printed || []).some((p) => p.ok);
   if (!anyOk) return { kitchenPrint: 'pending', orderIds };
 
-  for (const id of orderIds) {
+  for (const o of kitchenOrders) {
+    const id = String(o._id);
     if (!mongoose.Types.ObjectId.isValid(id)) continue;
-    await markLinesKitchenPrinted(opts.storeId, new mongoose.Types.ObjectId(id));
+    const kitchenLineIds = (o.items || [])
+      .filter((it) => it.lineKind !== 'delivery_fee' && !it.refunded && !lineSkipsKitchenCloudPrint(it, skipItemIds))
+      .map((it) => String(it._id));
+    await markLinesKitchenPrinted(opts.storeId, new mongoose.Types.ObjectId(id), kitchenLineIds);
   }
   return { kitchenPrint: 'cloud', orderIds };
 }
@@ -184,6 +248,7 @@ export async function tryKitchenCloudPrintUnprinted(opts: {
       refunded?: boolean;
       quantity?: number;
       kitchenPrintedQty?: number;
+      skipKitchenCloudPrint?: boolean;
     }>;
   } | null;
   if (!order) return 'pending';

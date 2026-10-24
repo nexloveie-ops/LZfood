@@ -4,7 +4,7 @@ import { useAuth } from '../../context/AuthContext';
 import { apiFetch } from '../../api/client';
 
 interface Translation { locale: string; name: string; }
-interface Category { _id: string; sortOrder: number; translations: Translation[]; discountZhe?: number; }
+interface Category { _id: string; sortOrder: number; translations: Translation[]; discountZhe?: number; skipKitchenCloudPrint?: boolean; }
 
 export default function CategoryManager() {
   const { t } = useTranslation();
@@ -17,6 +17,7 @@ export default function CategoryManager() {
   const [nameEn, setNameEn] = useState('');
   const [sortOrder, setSortOrder] = useState(0);
   const [discountZhe, setDiscountZhe] = useState('');
+  const [skipKitchenCloudPrint, setSkipKitchenCloudPrint] = useState(false);
 
   // Drag state
   const dragIdx = useRef<number | null>(null);
@@ -41,10 +42,12 @@ export default function CategoryManager() {
       setNameEn(cat.translations.find(t2 => t2.locale === 'en-US')?.name || '');
       setSortOrder(cat.sortOrder);
       setDiscountZhe(cat.discountZhe != null && cat.discountZhe > 0 ? String(cat.discountZhe) : '');
+      setSkipKitchenCloudPrint(Boolean(cat.skipKitchenCloudPrint));
     } else {
       setEditingId(null);
       setNameZh(''); setNameEn(''); setSortOrder(categories.length);
       setDiscountZhe('');
+      setSkipKitchenCloudPrint(false);
     }
     setShowForm(true);
   };
@@ -59,6 +62,7 @@ export default function CategoryManager() {
         { locale: 'en-US', name: nameEn },
       ],
       discountZhe: !zheRaw || !Number.isFinite(zheNum) ? null : zheNum,
+      skipKitchenCloudPrint,
     };
     const res = editingId
       ? await apiFetch(`/api/menu/categories/${editingId}`, { method: 'PUT', headers, body: JSON.stringify(body) })
@@ -172,6 +176,20 @@ export default function CategoryManager() {
             </div>
           </div>
           <div style={{ fontSize: 11, color: 'var(--text-light)', marginTop: 8, lineHeight: 1.4 }}>{t('admin.categoryDiscountZheHint')}</div>
+          <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginTop: 12, fontSize: 14 }}>
+            <input
+              type="checkbox"
+              checked={skipKitchenCloudPrint}
+              onChange={(e) => setSkipKitchenCloudPrint(e.target.checked)}
+              style={{ marginTop: 3 }}
+            />
+            <span>
+              {t('admin.categorySkipKitchenPrint')}
+              <span style={{ display: 'block', fontSize: 11, color: 'var(--text-light)', marginTop: 4, lineHeight: 1.4 }}>
+                {t('admin.categorySkipKitchenPrintHint')}
+              </span>
+            </span>
+          </label>
           <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
             <button className="btn btn-primary" onClick={handleSave}>{t('common.save')}</button>
             <button className="btn btn-outline" onClick={() => setShowForm(false)}>{t('common.cancel')}</button>
@@ -190,6 +208,7 @@ export default function CategoryManager() {
               <th style={{ padding: '10px 16px', textAlign: 'left' }}>中文</th>
               <th style={{ padding: '10px 16px', textAlign: 'left' }}>English</th>
               <th style={{ padding: '10px 16px', textAlign: 'left' }}>{t('admin.categoryDiscountZhe')}</th>
+              <th style={{ padding: '10px 16px', textAlign: 'left' }}>{t('admin.categorySkipKitchenPrintCol')}</th>
               <th style={{ padding: '10px 16px', textAlign: 'right' }}>操作</th>
             </tr>
           </thead>
@@ -215,6 +234,9 @@ export default function CategoryManager() {
                 <td style={{ padding: '10px 16px' }}>{cat.translations.find(t2 => t2.locale === 'en-US')?.name}</td>
                 <td style={{ padding: '10px 16px', color: cat.discountZhe ? 'var(--red-primary)' : 'var(--text-light)', fontWeight: cat.discountZhe ? 700 : 400 }}>
                   {cat.discountZhe ? `${cat.discountZhe}折` : '—'}
+                </td>
+                <td style={{ padding: '10px 16px', color: cat.skipKitchenCloudPrint ? 'var(--text-light)' : undefined }}>
+                  {cat.skipKitchenCloudPrint ? t('admin.categorySkipKitchenPrintYes') : t('admin.categorySkipKitchenPrintNo')}
                 </td>
                 <td style={{ padding: '10px 16px', textAlign: 'right' }}>
                   {canTrackInventory && (
