@@ -572,6 +572,10 @@ export function createOrdersRouter(io: SocketIOServer): Router {
             ? String((req.body as { dineInGuestLabel: string }).dineInGuestLabel).trim()
             : '';
         orderData.dineInGuestLabel = rawGuest.slice(0, 40);
+        orderData.dineInServeStyle =
+          (req.body as { dineInServeStyle?: unknown }).dineInServeStyle === 'courses'
+            ? 'courses'
+            : 'together';
         if (dineInWf === 'pay_after' || waiterPlacement) {
           // 首次下单对店端可见；顾客点「改单」会先调 dine-in-exposed 隐藏
           // waiterPlacement：先付店也走未结，必须进订单中心
@@ -2527,7 +2531,9 @@ export function createOrdersRouter(io: SocketIOServer): Router {
       }
 
       const dineInWf = order.type === 'dine_in' ? await getDineInWorkflowModeForStore(req.storeId!) : undefined;
-      if (!customerMaySelfCancelOrder(order, dineInWf) && !isStaffCashierOrOwner(req)) {
+      // 店员（收银台/跑单工作台）：厨房已出单也可整单取消，只由前端确认。
+      // 顾客自助：后结堂食一旦出厨仍不可取消。
+      if (!isStaffCashierOrOwner(req) && !customerMaySelfCancelOrder(order, dineInWf)) {
         throw createAppError(
           'FORBIDDEN',
           dineInWf === 'pay_after' && dineInHasKitchenPrint(order)

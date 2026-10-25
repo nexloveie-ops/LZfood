@@ -425,6 +425,7 @@ export default function PayAfterOrderCenter() {
           dailyOrderNumber: order.dailyOrderNumber,
           dineInOrderNumber: order.dineInOrderNumber,
           dineInGuestLabel: order.dineInGuestLabel,
+          dineInServeStyle: order.dineInServeStyle,
           status: order.status,
           items: receiptItems,
           customerName: order.customerName,
@@ -451,6 +452,7 @@ export default function PayAfterOrderCenter() {
           seatNumber: order.seatNumber,
           dailyOrderNumber: order.dailyOrderNumber,
           dineInGuestLabel: order.dineInGuestLabel,
+          dineInServeStyle: order.dineInServeStyle,
           status: order.status,
           items,
         };
@@ -976,6 +978,7 @@ export default function PayAfterOrderCenter() {
                   <div key={o._id} className="pay-after-cover-toolbar">
                     <div className="pay-after-cover-head">
                       {hasGuestIdentity(o) ? <strong>{guestTitle(o, isEn)}</strong> : null}
+                      {o.dineInServeStyle === 'courses' ? <span className="pay-after-badge">{isEn ? 'Courses' : '分道上'}</span> : null}
                       {kitchenUnprintedQty(o) > 0 ? <span className="pay-after-badge warn">{isEn ? 'Awaiting kitchen' : '待出厨房'}</span> : null}
                       <span className="pay-after-cover-amt">€{dineInPayable(o).toFixed(2)}</span>
                       {hasGuestQrAdd(o) ? <span className="pay-after-badge guest">{isEn ? 'Guest add' : '客人加菜'}</span> : null}

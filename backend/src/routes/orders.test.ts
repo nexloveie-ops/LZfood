@@ -1380,6 +1380,48 @@ describe('DELETE /api/orders/:id', () => {
     expect(await Checkout.findById(checkout._id)).toBeNull();
   });
 
+  it('allows staff to delete pay-after dine-in after kitchen printed', async () => {
+    const { Store } = getModels();
+    await Store.findByIdAndUpdate(
+      TEST_STORE_ID,
+      {
+        $setOnInsert: {
+          slug: `test-cancel-${TEST_STORE_ID.toString().slice(-6)}`,
+          displayName: 'Cancel test',
+          subscriptionEndsAt: new Date('2099-01-01'),
+        },
+        $set: { dineInWorkflowMode: 'pay_after' },
+      },
+      { upsert: true },
+    );
+    const item = await createMenuItem();
+    const order = await Order.create({
+      storeId: TEST_STORE_ID,
+      type: 'dine_in',
+      tableNumber: 4,
+      status: 'pending',
+      paymentStatus: 'unpaid',
+      items: [{
+        menuItemId: item._id,
+        quantity: 1,
+        unitPrice: 10,
+        itemName: 'x',
+        kitchenPrintedQty: 1,
+      }],
+    });
+
+    const blocked = await request(app).delete(`/api/orders/${order._id}`);
+    expect(blocked.status).toBe(403);
+    expect(blocked.body.error.message).toBe('厨房已收到订单，无法取消');
+    expect(await Order.findById(order._id)).not.toBeNull();
+
+    const res = await request(app)
+      .delete(`/api/orders/${order._id}`)
+      .set('Authorization', `Bearer ${cashierToken}`);
+    expect(res.status).toBe(200);
+    expect(await Order.findById(order._id)).toBeNull();
+  });
+
   it('returns 403 when customer deletes pending order with partial payment', async () => {
     const item = await createMenuItem();
     const order = await Order.create({

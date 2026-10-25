@@ -88,6 +88,7 @@ interface OrderRow {
   /** 外卖：收银 JWT 创建为 cashier，顾客端为 customer */
   takeoutPlacementSource?: 'cashier' | 'customer';
   dineInGuestLabel?: string;
+  dineInServeStyle?: 'together' | 'courses' | string;
   dineInExposedToStaff?: boolean;
   dineInStaffLockedAt?: string;
   /** 收银创建时客人已通过「电话刷卡」付款；与 paid_online 同流程，结账记为 card */
@@ -238,11 +239,6 @@ function isPhonePlacementKitchenStepDone(o: OrderRow, printedIds: Record<string,
     if (p < q) return !!printedIds[o._id];
   }
   return true;
-}
-
-function orderNeedsStaffCancelConfirm(o: OrderRow): boolean {
-  if (o.status !== 'pending') return true;
-  return o.paymentStatus === 'paid' || o.paymentStatus === 'partial';
 }
 
 /** 后结堂食：仍有未打厨房小票的菜品份数（顾客加菜等）；含 checked_out 以便订单中心在已结账仍待出厨房时继续展示 */
@@ -1110,12 +1106,7 @@ export default function UnifiedOrderCenter() {
 
   const cancelOrder = useCallback(
     async (order: OrderRow, onAfterSuccess?: () => void) => {
-      const msg = orderNeedsStaffCancelConfirm(order)
-        ? (isEn
-          ? 'Cancel and delete this order? Any payment must be refunded manually at the counter.'
-          : '确认取消并删除该订单？已收款需收银线下手动退款。')
-        : (isEn ? 'Cancel this order?' : '确认取消该订单？');
-      if (!confirm(msg)) return;
+      if (!confirm(isEn ? 'Cancel this order?' : '确认取消该订单？')) return;
       setBusyId(order._id);
       try {
         const res = await apiFetch(`/api/orders/${order._id}`, {
@@ -1282,6 +1273,8 @@ export default function UnifiedOrderCenter() {
               seatNumber: src.seatNumber,
               dailyOrderNumber: src.dailyOrderNumber,
               dineInOrderNumber: src.dineInOrderNumber,
+              dineInGuestLabel: src.dineInGuestLabel?.trim() || undefined,
+              dineInServeStyle: src.dineInServeStyle,
               status: src.status,
               items: receiptItems,
               customerName: src.customerName,
@@ -1341,6 +1334,8 @@ export default function UnifiedOrderCenter() {
             seatNumber: src.seatNumber,
             dailyOrderNumber: src.dailyOrderNumber,
             dineInOrderNumber: src.dineInOrderNumber,
+            dineInGuestLabel: src.dineInGuestLabel?.trim() || undefined,
+            dineInServeStyle: src.dineInServeStyle,
             status: src.status,
             items: receiptItems,
             customerName: src.customerName,
@@ -1416,6 +1411,7 @@ export default function UnifiedOrderCenter() {
           dailyOrderNumber: src.dailyOrderNumber,
           dineInOrderNumber: src.dineInOrderNumber,
           dineInGuestLabel: src.dineInGuestLabel?.trim() || undefined,
+          dineInServeStyle: src.dineInServeStyle,
           status: src.status,
           items: src.items
             .filter((it) => it.lineKind !== 'delivery_fee' && !it.refunded)
@@ -1875,6 +1871,7 @@ export default function UnifiedOrderCenter() {
     payFirstCounterGroup: isEn ? 'Counter (pay-first)' : '柜台先结',
     ordersOnTableLabel: isEn ? 'Orders on table' : '本桌订单',
     dineInGuestLabel: isEn ? 'Guest label' : '称呼/备注',
+    dineInServeCourses: isEn ? 'Courses' : '分道上',
     dineInLockOrder: isEn ? 'Lock order (add-only for guest)' : '锁定订单（顾客仅可加菜）',
     dineInLockedBadge: isEn ? 'Locked · guest can only add items' : '已锁定 · 顾客仅可加菜',
     kitchenUnprinted: isEn ? 'Unprinted kitchen qty' : '厨房未打出份数',
@@ -2182,6 +2179,9 @@ export default function UnifiedOrderCenter() {
                               <div style={{ fontSize: 10, color: '#6d4c41', marginBottom: 4, lineHeight: 1.35 }}>
                                 {L.dineInGuestLabel}：{o.dineInGuestLabel.trim()}
                               </div>
+                            ) : null}
+                            {o.type === 'dine_in' && o.dineInServeStyle === 'courses' ? (
+                              <div style={{ fontSize: 10, color: '#6d4c41', marginBottom: 4 }}>{L.dineInServeCourses}</div>
                             ) : null}
                             <div style={{ marginBottom: 6 }}>
                               {orderItemsAmountSummaryBox(o, dineInPayAfter, orderSummaryLabels)}
@@ -2533,6 +2533,9 @@ export default function UnifiedOrderCenter() {
                       </div>
                       {o.type === 'dine_in' && o.dineInGuestLabel?.trim() ? (
                         <div style={{ color: '#6d4c41' }}>{L.dineInGuestLabel}：{o.dineInGuestLabel.trim()}</div>
+                      ) : null}
+                      {o.dineInServeStyle === 'courses' ? (
+                        <div style={{ color: '#6d4c41' }}>{L.dineInServeCourses}</div>
                       ) : null}
                     </div>
                   ) : (o.type !== 'delivery' && o.type !== 'phone') ? (
@@ -3249,6 +3252,9 @@ export default function UnifiedOrderCenter() {
                   <div style={{ fontSize: 12, color: '#555', marginTop: 8 }}>
                     {L.dineInGuestLabel}：{detailModalOrder.dineInGuestLabel.trim()}
                   </div>
+                ) : null}
+                {detailModalOrder.dineInServeStyle === 'courses' ? (
+                  <div style={{ fontSize: 12, color: '#555', marginTop: 8 }}>{L.dineInServeCourses}</div>
                 ) : null}
                 {detailModalOrder.dineInStaffLockedAt ? (
                   <div style={{ fontSize: 12, color: '#c62828', marginTop: 8, fontWeight: 600 }}>{L.dineInLockedBadge}</div>

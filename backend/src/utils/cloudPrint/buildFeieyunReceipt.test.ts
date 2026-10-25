@@ -38,7 +38,9 @@ describe('buildFeieyunReceiptContent pay_after kitchen', () => {
     expect(html).toContain('Table 2');
     expect(html).toContain('<B>1X 金牌钟水饺</B>');
     expect(html).toMatch(/<L><BOLD>Gold dumpling\s+12\.00 EUR<\/BOLD><\/L>/);
-    expect(html).toContain('  · 加辣 Extra spicy +1.00 EUR');
+    expect(html).toContain('<L><B>  · 加辣 Extra spicy +1.00 EUR</B></L>');
+    expect(html).not.toContain('◆');
+    expect(html).not.toContain('其他 / Other');
     expect(html).not.toContain('<RIGHT>12.00 EUR</RIGHT>');
   });
 
@@ -65,7 +67,7 @@ describe('buildFeieyunReceiptContent pay_after kitchen', () => {
     const html = buildFeieyunReceiptContent(sampleReceipt({ dineInWorkflowMode: 'pay_first' }));
     expect(html).toContain('Kitchen / 厨房');
     expect(html).toContain('Order #174501');
-    expect(html).toContain('  · 加辣 Extra spicy +1.00 EUR');
+    expect(html).toContain('<L><B>  · 加辣 Extra spicy +1.00 EUR</B></L>');
     expect(html).toMatch(/<L><BOLD>Gold dumpling\s+12\.00 EUR<\/BOLD><\/L>/);
   });
 
@@ -148,6 +150,33 @@ describe('buildFeieyunReceiptContent pay_after kitchen', () => {
     expect(html).not.toContain('[2]');
   });
 
+  it('omits dish category headers and enlarges option lines', () => {
+    const html = buildFeieyunReceiptContent(sampleReceipt({
+      dineInWorkflowMode: 'pay_after',
+      orders: [{
+        type: 'dine_in',
+        items: [{
+          quantity: 1,
+          unitPrice: 12,
+          itemName: '春卷',
+          itemNameEn: 'Spring roll',
+          categoryId: 'starters',
+          categoryName: '前菜',
+          categoryNameEn: 'Starters',
+          selectedOptions: [{
+            groupName: '酱',
+            choiceName: '甜酸酱',
+            choiceNameEn: 'Sweet chilli',
+          }],
+        }],
+      }],
+    }));
+    expect(html).not.toContain('◆');
+    expect(html).not.toContain('前菜');
+    expect(html).not.toContain('Starters');
+    expect(html).toContain('<L><B>  · 甜酸酱 Sweet chilli</B></L>');
+  });
+
   it('does not change checkout tickets', () => {
     const html = buildFeieyunReceiptContent(sampleReceipt({
       ticketKind: 'checkout',
@@ -155,8 +184,10 @@ describe('buildFeieyunReceiptContent pay_after kitchen', () => {
       paymentMethod: 'cash',
     }));
     expect(html).not.toContain('Kitchen / 厨房');
+    expect(html).not.toContain('一起上 / Together');
+    expect(html).not.toContain('分道上 / Courses');
     expect(html).toContain('Order #174501');
-    expect(html).toContain('  · 加辣 Extra spicy +1.00 EUR');
+    expect(html).toContain('<L><B>  · 加辣 Extra spicy +1.00 EUR</B></L>');
     expect(html).toMatch(/<L><BOLD>Gold dumpling\s+12\.00 EUR<\/BOLD><\/L>/);
   });
 
@@ -173,5 +204,48 @@ describe('buildFeieyunReceiptContent pay_after kitchen', () => {
     expect(html).toContain('Service 10% (waived) / 服务费 10%（已减免）');
     expect(html).not.toContain('Discount');
     expect(html).toContain('Subtotal');
+  });
+
+  it('prints 一起上 on kitchen tickets by default', () => {
+    const html = buildFeieyunReceiptContent(sampleReceipt({ dineInWorkflowMode: 'pay_after' }));
+    expect(html).toContain('<CB>一起上 / Together</CB>');
+  });
+
+  it('prints 分道上 on kitchen tickets when the order is courses', () => {
+    const html = buildFeieyunReceiptContent(sampleReceipt({
+      dineInWorkflowMode: 'pay_after',
+      orders: [{
+        type: 'dine_in',
+        dineInServeStyle: 'courses',
+        items: [{
+          quantity: 1,
+          unitPrice: 12,
+          itemName: '金牌钟水饺',
+          selectedOptions: [],
+        }],
+      }],
+    }));
+    expect(html).toContain('<CB>分道上 / Courses</CB>');
+    expect(html).not.toContain('一起上 / Together');
+  });
+
+  it('prints mixed serve styles on a whole-table kitchen ticket', () => {
+    const html = buildFeieyunReceiptContent(sampleReceipt({
+      dineInWorkflowMode: 'pay_after',
+      wholeTableKitchenTicket: true,
+      orders: [
+        {
+          type: 'dine_in',
+          dineInServeStyle: 'together',
+          items: [{ quantity: 1, unitPrice: 12, itemName: '金牌钟水饺', selectedOptions: [] }],
+        },
+        {
+          type: 'dine_in',
+          dineInServeStyle: 'courses',
+          items: [{ quantity: 1, unitPrice: 28, itemName: '龙虾', selectedOptions: [] }],
+        },
+      ],
+    }));
+    expect(html).toContain('<CB>一起上 + 分道上 / Together + Courses</CB>');
   });
 });

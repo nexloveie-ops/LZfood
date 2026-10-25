@@ -39,6 +39,7 @@ export interface CashierCartDraft {
   deliveryCustomerCollapsed: boolean;
   counterTableInput: string;
   counterGuestLabel: string;
+  dineInServeStyle: 'together' | 'courses';
   editingOrderId: string | null;
   editOrderLabel: string;
   updatedAt: number;
@@ -144,6 +145,7 @@ export function emptyCashierCartDraft(): Omit<CashierCartDraft, 'updatedAt'> {
     deliveryCustomerCollapsed: false,
     counterTableInput: '',
     counterGuestLabel: '',
+    dineInServeStyle: 'together',
     editingOrderId: null,
     editOrderLabel: '',
   };

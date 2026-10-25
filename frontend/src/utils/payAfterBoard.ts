@@ -39,6 +39,7 @@ export type PayAfterOrder = {
   dailyOrderNumber?: number;
   dineInOrderNumber?: string;
   dineInGuestLabel?: string;
+  dineInServeStyle?: 'together' | 'courses' | string;
   customerName?: string;
   customerPhone?: string;
   deliveryAddress?: string;

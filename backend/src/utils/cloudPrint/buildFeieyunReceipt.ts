@@ -43,6 +43,7 @@ export type CloudPrintOrder = {
   dailyOrderNumber?: number;
   dineInOrderNumber?: string;
   dineInGuestLabel?: string;
+  dineInServeStyle?: 'together' | 'courses' | string;
   customerName?: string;
   customerPhone?: string;
   deliveryAddress?: string;
@@ -159,14 +160,7 @@ function optLines(o: CloudPrintOption): string[] {
   if (!label && extraEuro(o.extraPrice) <= 0) return [];
   const price = extraSuffix(o.extraPrice);
   if (!label && !price) return [];
-  return [`  · ${label}${price}`];
-}
-
-function formatCatalogHeader(meta: CatalogMeta): string {
-  const zh = meta.categoryName?.trim() || '';
-  const en = meta.categoryNameEn?.trim() || '';
-  if (zh && en && zh !== en) return `${zh} / ${en}`;
-  return zh || en || 'Category';
+  return [`<L><B>  · ${label}${price}</B></L>`];
 }
 
 function paymentLabels(pm: string): { status: string; method: string } {
@@ -279,6 +273,14 @@ function primaryType(orders: CloudPrintOrder[]): string {
   return 'takeout';
 }
 
+function dineInServeStyleBanner(orders: CloudPrintOrder[]): string {
+  const dine = orders.filter((o) => o.type === 'dine_in');
+  const set = new Set(dine.map((o) => (o.dineInServeStyle === 'courses' ? 'courses' : 'together')));
+  if (set.has('courses') && set.has('together')) return '一起上 + 分道上 / Together + Courses';
+  if (set.has('courses')) return '分道上 / Courses';
+  return '一起上 / Together';
+}
+
 type PartialLine = {
   key: string;
   title: string;
@@ -359,6 +361,9 @@ export function buildFeieyunReceiptContent(receipt: CloudPrintReceipt): string {
 
   if (isDineIn) {
     if (receipt.tableNumber != null && receipt.tableNumber > 0) lines.push(`<CB>Table ${receipt.tableNumber}</CB>`);
+    if (isKitchenTicket) {
+      lines.push(`<CB>${dineInServeStyleBanner(receipt.orders)}</CB>`);
+    }
     if (isPayAfterKitchen && receipt.wholeTableKitchenTicket) {
       lines.push('<CB>整桌 / Whole table</CB>');
     }
@@ -421,10 +426,12 @@ export function buildFeieyunReceiptContent(receipt: CloudPrintReceipt): string {
     lines.push(...notePrintLines(noteZh, noteEn, isPayAfterKitchen));
   };
 
+  const catalogItems = (items: CloudPrintLine[]) => groupByCatalog(items).flatMap((s) => s.items);
+
   if (partial) {
     lines.push(dash());
     lines.push('<C>Partial checkout / 部分结账</C>');
-    for (const section of groupByCatalog(partial.lines.map((L) => ({
+    for (const item of catalogItems(partial.lines.map((L) => ({
       itemName: L.title,
       itemNameEn: L.titleEn,
       quantity: L.qty,
@@ -438,44 +445,37 @@ export function buildFeieyunReceiptContent(receipt: CloudPrintReceipt): string {
       noteZh: L.noteZh,
       noteEn: L.noteEn,
     })))) {
-      lines.push(dash());
-      lines.push(`<C>◆ ${formatCatalogHeader(section)}</C>`);
-      for (const item of section.items) {
-        const src = partial.lines.find((L) => L.title === item.itemName && L.qty === item.quantity);
-        pushItemBlock(
-          itemTitle(item.quantity, item.itemName),
-          src?.amountEuro ?? item.unitPrice * item.quantity,
-          item.itemNameEn,
-          item.selectedOptions,
-          item.noteZh,
-          item.noteEn,
-        );
-      }
+      const src = partial.lines.find((L) => L.title === item.itemName && L.qty === item.quantity);
+      pushItemBlock(
+        itemTitle(item.quantity, item.itemName),
+        src?.amountEuro ?? item.unitPrice * item.quantity,
+        item.itemNameEn,
+        item.selectedOptions,
+        item.noteZh,
+        item.noteEn,
+      );
     }
   } else {
-    for (const section of groupByCatalog(allItems)) {
-      lines.push(dash());
-      lines.push(`<C>◆ ${formatCatalogHeader(section)}</C>`);
-      const showRoundHeads = isPayAfterKitchen && maxRoundIndex(allItems) >= 2;
-      const sectionItems = showRoundHeads || receipt.wholeTableKitchenTicket
-        ? [...section.items].sort((a, b) => Math.floor(Number(a.roundIndex) || 0) - Math.floor(Number(b.roundIndex) || 0))
-        : section.items;
-      let lastRound = 0;
-      for (const item of sectionItems) {
-        const round = Math.floor(Number(item.roundIndex) || 0);
-        if (showRoundHeads && round >= 1 && round !== lastRound) {
-          lastRound = round;
-          lines.push(`<C>Round ${round} / 第${round}轮</C>`);
-        }
-        pushItemBlock(
-          itemTitle(item.quantity, item.itemName, item),
-          item.unitPrice * item.quantity,
-          item.itemNameEn,
-          item.selectedOptions,
-          item.noteZh,
-          item.noteEn,
-        );
+    lines.push(dash());
+    const showRoundHeads = isPayAfterKitchen && maxRoundIndex(allItems) >= 2;
+    const sectionItems = showRoundHeads || receipt.wholeTableKitchenTicket
+      ? [...catalogItems(allItems)].sort((a, b) => Math.floor(Number(a.roundIndex) || 0) - Math.floor(Number(b.roundIndex) || 0))
+      : catalogItems(allItems);
+    let lastRound = 0;
+    for (const item of sectionItems) {
+      const round = Math.floor(Number(item.roundIndex) || 0);
+      if (showRoundHeads && round >= 1 && round !== lastRound) {
+        lastRound = round;
+        lines.push(`<C>Round ${round} / 第${round}轮</C>`);
       }
+      pushItemBlock(
+        itemTitle(item.quantity, item.itemName, item),
+        item.unitPrice * item.quantity,
+        item.itemNameEn,
+        item.selectedOptions,
+        item.noteZh,
+        item.noteEn,
+      );
     }
   }
 

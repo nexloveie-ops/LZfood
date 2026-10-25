@@ -32,6 +32,7 @@ import {
   emptyCashierCartDraft,
   type CashierCartDraft,
 } from '../../utils/cashierCartDraftSession';
+import type { DineInServeStyle } from '../../utils/dineInServeStyle';
 import {
   DELIVERY_FEE_RULES_CONFIG_KEY,
   deliveryFeeForDistance,
@@ -119,6 +120,7 @@ interface ActiveDineInOrderRow {
   _id: string;
   dineInOrderNumber?: string;
   dineInGuestLabel?: string;
+  dineInServeStyle?: 'together' | 'courses' | string;
   items: Array<{
     menuItemId?: string;
     lineKind?: string;
@@ -469,6 +471,9 @@ export default function CashierOrder() {
   const [dineInWorkflowMode, setDineInWorkflowMode] = useState<'pay_first' | 'pay_after'>('pay_first');
   const [counterTableInput, setCounterTableInput] = useState(() => draftSeed?.counterTableInput ?? '');
   const [counterGuestLabel, setCounterGuestLabel] = useState(() => draftSeed?.counterGuestLabel ?? '');
+  const [dineInServeStyle, setDineInServeStyle] = useState<DineInServeStyle>(
+    () => (draftSeed?.dineInServeStyle === 'courses' ? 'courses' : 'together'),
+  );
   const [activeTableOrders, setActiveTableOrders] = useState<ActiveDineInOrderRow[]>([]);
   const [activeTableOrdersLoading, setActiveTableOrdersLoading] = useState(false);
   const dineInActiveFetchGen = useRef(0);
@@ -627,6 +632,7 @@ export default function CashierOrder() {
     setDeliveryCustomerCollapsed(d.deliveryCustomerCollapsed);
     setCounterTableInput(d.counterTableInput);
     setCounterGuestLabel(d.counterGuestLabel);
+    setDineInServeStyle(d.dineInServeStyle === 'courses' ? 'courses' : 'together');
     setEditingOrderId(d.editingOrderId);
     setEditOrderLabel(d.editOrderLabel);
   }, []);
@@ -662,6 +668,7 @@ export default function CashierOrder() {
       deliveryCustomerCollapsed,
       counterTableInput,
       counterGuestLabel,
+      dineInServeStyle,
       editingOrderId,
       editOrderLabel,
     });
@@ -683,6 +690,7 @@ export default function CashierOrder() {
     deliveryCustomerCollapsed,
     counterTableInput,
     counterGuestLabel,
+    dineInServeStyle,
     editingOrderId,
     editOrderLabel,
     editOrderLoading,
@@ -1836,8 +1844,11 @@ export default function CashierOrder() {
     if (orderType === 'dine_in') {
       const table = counterTableInput.trim();
       const guest = counterGuestLabel.trim();
+      const serve = dineInServeStyle === 'courses' ? t('cashier.serveCourses') : t('cashier.serveTogether');
       if (!table) return t('cashier.waiterNeedTable', '请填写桌号');
-      return guest ? `${t('cashier.table')} ${table} · ${guest}` : `${t('cashier.table')} ${table}`;
+      return guest
+        ? `${t('cashier.table')} ${table} · ${guest} · ${serve}`
+        : `${t('cashier.table')} ${table} · ${serve}`;
     }
     if (orderType === 'phone') {
       const bits = [phoneGuestPhone.trim(), phoneGuestName.trim()].filter(Boolean);
@@ -2263,6 +2274,7 @@ export default function CashierOrder() {
       orderBody.seatNumber = 0;
       const gl = counterGuestLabel.trim();
       if (gl) orderBody.dineInGuestLabel = gl.slice(0, 40);
+      orderBody.dineInServeStyle = dineInServeStyle;
     }
     if (orderType === 'takeout') orderBody.staffTakeoutPlacement = true;
     if (matchedBundles.length > 0) {
@@ -2381,6 +2393,7 @@ export default function CashierOrder() {
       };
       const gl = counterGuestLabel.trim();
       if (gl) orderBody.dineInGuestLabel = gl.slice(0, 40);
+      orderBody.dineInServeStyle = dineInServeStyle;
       if (matchedBundles.length > 0) {
         orderBody.appliedBundles = matchedBundles.map((b) => ({
           offerId: b.offer._id,
@@ -2885,6 +2898,31 @@ export default function CashierOrder() {
     );
   }
 
+  const showDineInServeStylePicker = orderType === 'dine_in' && (dineInWorkflowMode === 'pay_after' || waiterMode);
+  const dineInServeStylePicker = (
+    <div className="cashier-serve-style">
+      <span className="cashier-serve-style-label">{t('cashier.serveStyle')}</span>
+      <div className="cashier-serve-style-btns">
+        <button
+          type="button"
+          className={dineInServeStyle === 'together' ? 'is-on' : ''}
+          onClick={() => setDineInServeStyle('together')}
+        >
+          <strong>{t('cashier.serveTogether')}</strong>
+          <span>{t('cashier.serveTogetherSub')}</span>
+        </button>
+        <button
+          type="button"
+          className={dineInServeStyle === 'courses' ? 'is-on' : ''}
+          onClick={() => setDineInServeStyle('courses')}
+        >
+          <strong>{t('cashier.serveCourses')}</strong>
+          <span>{t('cashier.serveCoursesSub')}</span>
+        </button>
+      </div>
+    </div>
+  );
+
   return (
     <div className={`cashier-order-root${waiterMode ? ' is-waiter' : ''}`} style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden', gap: 0 }}>
       {waiterMode ? (
@@ -3247,6 +3285,7 @@ export default function CashierOrder() {
                 />
               </label>
             </div>
+            {showDineInServeStylePicker ? dineInServeStylePicker : null}
             {dineInWorkflowMode === 'pay_after' ? (() => {
               const rawT = counterTableInput.trim();
               const tn = parseInt(rawT, 10);
@@ -3312,6 +3351,7 @@ export default function CashierOrder() {
                           <div style={{ fontWeight: 600 }}>
                             {ord.dineInOrderNumber?.trim() || ord._id.slice(-6)}
                             {ord.dineInGuestLabel?.trim() ? ` · ${ord.dineInGuestLabel.trim()}` : ''}
+                            {ord.dineInServeStyle === 'courses' ? ` · ${t('cashier.serveCourses')}` : ''}
                           </div>
                           <div style={{ color: '#757575', marginTop: 2 }}>{summary || '—'}</div>
                         </div>
@@ -3597,6 +3637,7 @@ export default function CashierOrder() {
                         <span style={{ fontSize: 12, fontWeight: 600 }}>{t('cashier.dineInGuestLabelShort')}</span>
                         <input className="input" type="text" maxLength={40} placeholder={t('cashier.dineInGuestInputPh')} value={counterGuestLabel} onChange={(e) => setCounterGuestLabel(e.target.value)} />
                       </label>
+                      {dineInServeStylePicker}
                     </>
                   ) : null}
                   {orderType === 'phone' ? (
