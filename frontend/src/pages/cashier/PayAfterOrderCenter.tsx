@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
 import { isWaiterMode } from '../../utils/waiterMode';
 import { useTranslation } from 'react-i18next';
 import { connectStoreSocket } from '../../api/storeSocket';
 import { useAuth } from '../../context/AuthContext';
 import { apiFetch } from '../../api/client';
+import { cashierMayLoadOrderToCart } from '../../utils/cashierQrOrderEdit';
+import { computeOrderPayableEuro, computePartialDineInSettlementPreview } from '../../utils/orderPayableEuro';
+import OrderItemOptionGroupList from '../../components/cashier/OrderItemOptionGroupList';
 import { printBuiltReceipt, type BundleDiscountInfo } from '../../components/cashier/ReceiptPrint';
 import { type ReceiptOptionSnapshot } from '../../utils/receiptOptionPrice';
 import { resolveReceiptPaymentMethodFromOrder } from '../../utils/receiptPaymentMethod';
@@ -41,6 +45,95 @@ import {
 
 type FulfillTab = 'takeout' | 'delivery';
 type PayMethod = 'cash' | 'card' | 'member';
+type SplitSettlement = { orderId: string; lineId: string; qty: number };
+type CheckoutTarget = {
+  kind: 'table' | 'order' | 'fulfill' | 'split';
+  tableNumber: number;
+  orderId?: string;
+  lineSettlements?: SplitSettlement[];
+};
+type SplitPicker = { tableNumber: number; orderId?: string };
+
+function unsettledLineQty(it: PayAfterOrderItem): number {
+  if (it.lineKind === 'delivery_fee' || it.refunded) return 0;
+  const settled = Math.max(0, Math.min(Number(it.settledQty) || 0, it.quantity));
+  return Math.max(0, it.quantity - settled);
+}
+
+function splitLineKey(orderId: string, lineId: string): string {
+  return `${orderId}:${lineId}`;
+}
+
+function collectSplitRows(orders: PayAfterOrder[], orderId?: string): Array<{
+  order: PayAfterOrder;
+  item: PayAfterOrderItem;
+  maxQty: number;
+}> {
+  const list: Array<{ order: PayAfterOrder; item: PayAfterOrderItem; maxQty: number }> = [];
+  for (const o of orders) {
+    if (orderId && o._id !== orderId) continue;
+    for (const it of o.items || []) {
+      const maxQty = unsettledLineQty(it);
+      if (maxQty <= 0) continue;
+      list.push({ order: o, item: it, maxQty });
+    }
+  }
+  return list;
+}
+
+function splitFoodEuro(orders: PayAfterOrder[], settlements: SplitSettlement[]): { ok: true; payable: number } | { ok: false; message: string } {
+  const byOrder = new Map<string, { lineId: string; qty: number }[]>();
+  for (const row of settlements) {
+    if (!byOrder.has(row.orderId)) byOrder.set(row.orderId, []);
+    byOrder.get(row.orderId)!.push({ lineId: row.lineId, qty: row.qty });
+  }
+  let payable = 0;
+  for (const o of orders) {
+    const rows = byOrder.get(o._id);
+    if (!rows || rows.length === 0) continue;
+    const preview = computePartialDineInSettlementPreview(o, rows);
+    if (!preview.ok) return preview;
+    payable += preview.payable;
+  }
+  return { ok: true, payable: Math.round(payable * 100) / 100 };
+}
+
+function deliveryStageLabel(stage: string | undefined, isEn: boolean): string {
+  if (stage === 'accepted') return isEn ? 'Accepted' : '已接单';
+  if (stage === 'picked_up_by_driver') return isEn ? 'Driver picked up' : '司机已取';
+  if (stage === 'out_for_delivery') return isEn ? 'Out for delivery' : '配送中';
+  return isEn ? 'New' : '新单';
+}
+
+function deliverySourceLabel(source: PayAfterOrder['deliverySource'], isEn: boolean): string {
+  if (source === 'qr') return isEn ? 'Customer QR' : '顾客扫码';
+  return isEn ? 'Phone / cashier' : '电话 / 收银';
+}
+
+function fulfillPayable(o: PayAfterOrder): number {
+  return computeOrderPayableEuro(o);
+}
+
+function isFulfillUnpaid(o: PayAfterOrder): boolean {
+  return (o.type === 'delivery' || o.type === 'takeout' || o.type === 'phone') && o.status === 'pending';
+}
+
+function fulfillTypeLabel(o: PayAfterOrder, isEn: boolean): string {
+  if (o.type === 'phone') return isEn ? 'Phone' : '电话';
+  if (o.type === 'delivery') return isEn ? 'Delivery' : '送餐';
+  return isEn ? 'Pickup' : '自提';
+}
+
+function fulfillFoodPreview(o: PayAfterOrder, isEn: boolean): string {
+  const foods = (o.items || []).filter((it) => it.lineKind !== 'delivery_fee' && !it.refunded);
+  if (foods.length === 0) return isEn ? 'No items' : '无菜品';
+  const label = (it: PayAfterOrderItem) => {
+    const name = isEn && it.itemNameEn ? it.itemNameEn : it.itemName;
+    return `${it.quantity}× ${name}`;
+  };
+  if (foods.length <= 2) return foods.map(label).join(' · ');
+  return `${foods.slice(0, 2).map(label).join(' · ')} · ${isEn ? `+${foods.length - 2}` : `等${foods.length}道`}`;
+}
 
 function mapOpts(opts: PayAfterOrderItem['selectedOptions']): ReceiptOptionSnapshot[] {
   return (opts || []).map((opt) => ({
@@ -167,13 +260,16 @@ function PayAfterDishCard({
   const opts = dishOptionSummary(it);
   const note = dishNote(it);
   return (
-    <div className={`pay-after-line pay-after-dish${it.refunded ? ' is-void' : ''}`}>
+    <div className={`pay-after-line pay-after-dish${it.refunded ? ' is-void' : ''}${!it.refunded && unsettledLineQty(it) <= 0 ? ' is-settled' : ''}`}>
       <div className="pay-after-line-main">
         <span className="pay-after-line-name">
           {it.isMarketPrice ? formatMarketLineTitle(it.itemName, it.weightKg, it.pricePerKg) : `${it.quantity}× ${it.itemName}`}
           {it.isMarketPrice && isUnweighedMarketLine(it) ? <em className="is-warn"> · {isEn ? 'await weigh' : '待称重'}</em> : null}
           {it.placedBy === 'customer_qr' ? <em> · {isEn ? 'guest' : '客人'}</em> : null}
           {(Number(it.kitchenPrintedQty) || 0) > 0 && !it.skipKitchenCloudPrint ? <em> · {isEn ? 'in kitchen' : '厨房中'}</em> : null}
+          {unsettledLineQty(it) < it.quantity && !it.refunded ? (
+            <em> · {isEn ? `paid ${Math.max(0, it.quantity - unsettledLineQty(it))}/${it.quantity}` : `已结 ${Math.max(0, it.quantity - unsettledLineQty(it))}/${it.quantity}`}</em>
+          ) : null}
           {opts ? <span className="pay-after-dish-opts">{opts}</span> : null}
           {note ? <span className="pay-after-dish-opts">{isEn ? `Note ${note}` : `备注 ${note}`}</span> : null}
         </span>
@@ -216,6 +312,8 @@ export default function PayAfterOrderCenter() {
   const { t, i18n } = useTranslation();
   const isEn = Boolean(i18n.language?.startsWith('en'));
   const { token, user, hasFeature } = useAuth();
+  const { storeSlug } = useParams<{ storeSlug: string }>();
+  const navigate = useNavigate();
   const waiterMode = isWaiterMode();
   const canDelivery = hasFeature('cashier.delivery.page');
   const canMemberWallet = hasFeature('cashier.member.wallet');
@@ -225,7 +323,10 @@ export default function PayAfterOrderCenter() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [fulfillTab, setFulfillTab] = useState<FulfillTab>('takeout');
   const [selectedTable, setSelectedTable] = useState<number | null>(null);
-  const [checkoutTarget, setCheckoutTarget] = useState<{ kind: 'table' | 'order'; tableNumber: number; orderId?: string } | null>(null);
+  const [checkoutTarget, setCheckoutTarget] = useState<CheckoutTarget | null>(null);
+  const [splitPicker, setSplitPicker] = useState<SplitPicker | null>(null);
+  const [splitQtyByKey, setSplitQtyByKey] = useState<Record<string, number>>({});
+  const [detailOrder, setDetailOrder] = useState<PayAfterOrder | null>(null);
   const [payMethod, setPayMethod] = useState<PayMethod>('cash');
   const [cashReceived, setCashReceived] = useState('');
   const [memberPhone, setMemberPhone] = useState('');
@@ -403,6 +504,50 @@ export default function PayAfterOrderCenter() {
     }
   }, [fetchAll, isEn, printKitchenTableLocal, t]);
 
+  const printFulfillReceiptLocal = useCallback(async (order: PayAfterOrder) => {
+    const receiptItems = (order.items || [])
+      .filter((it) => !it.refunded)
+      .map((it) => mapItem(it, it.quantity));
+    if (receiptItems.every((it) => it.lineKind === 'delivery_fee')) {
+      alert(isEn ? 'No items to print.' : '没有可打印的菜品。');
+      return;
+    }
+    setBusyId(order._id);
+    try {
+      const bundles: BundleDiscountInfo[] | undefined = (order.appliedBundles?.length ?? 0) > 0
+        ? order.appliedBundles!.map((b) => ({ name: b.name || '', nameEn: b.nameEn || '', discount: b.discount }))
+        : undefined;
+      const pm = resolveReceiptPaymentMethodFromOrder(order);
+      await printBuiltReceipt({
+        checkoutId: order._id,
+        type: 'seat' as const,
+        totalAmount: fulfillPayable(order),
+        paymentMethod: pm,
+        ...(pm === 'member'
+          ? {
+              memberCreditUsed: Number(order.memberCreditUsed) || 0,
+              memberPhoneSnapshot: String(order.memberPhoneSnapshot || ''),
+            }
+          : {}),
+        checkedOutAt: new Date().toISOString(),
+        orders: [{
+          _id: order._id,
+          type: order.type,
+          dailyOrderNumber: order.dailyOrderNumber,
+          status: order.status,
+          items: receiptItems,
+          customerName: order.customerName,
+          customerPhone: order.customerPhone,
+          deliveryAddress: order.deliveryAddress,
+          postalCode: order.postalCode,
+          deliveryFeeEuro: order.deliveryFeeEuro,
+        }],
+      }, config, { bundleDiscounts: bundles, copies: 1, reprintOnly: true });
+    } finally {
+      setBusyId(null);
+    }
+  }, [config, isEn]);
+
   const printTakeoutDeliveryKitchen = useCallback(async (order: PayAfterOrder) => {
     const items = order.items.filter((it) => it.lineKind !== 'delivery_fee' && !it.refunded).map((it) => mapItem(it, it.quantity));
     const total = items.reduce((s, it) => s + lineTotal(it as PayAfterOrderItem, it.quantity), 0);
@@ -487,9 +632,19 @@ export default function PayAfterOrderCenter() {
 
   const checkoutSubtotal = useMemo(() => {
     if (!checkoutTarget) return 0;
-    if (checkoutTarget.kind === 'order') {
+    if (checkoutTarget.kind === 'split') {
+      const preview = splitFoodEuro(
+        dineInOpen.filter((o) => (o.tableNumber ?? 0) === checkoutTarget.tableNumber),
+        checkoutTarget.lineSettlements || [],
+      );
+      return preview.ok ? preview.payable : 0;
+    }
+    if (checkoutTarget.kind === 'order' || checkoutTarget.kind === 'fulfill') {
       const o = orders.find((x) => x._id === checkoutTarget.orderId);
-      return o ? dineInPayable(o) : 0;
+      if (!o) return 0;
+      return checkoutTarget.kind === 'fulfill' || o.type === 'delivery' || o.type === 'takeout' || o.type === 'phone'
+        ? fulfillPayable(o)
+        : dineInPayable(o);
     }
     return dineInOpen.filter((o) => (o.tableNumber ?? 0) === checkoutTarget.tableNumber).reduce((s, o) => s + dineInPayable(o), 0);
   }, [checkoutTarget, dineInOpen, orders]);
@@ -499,7 +654,10 @@ export default function PayAfterOrderCenter() {
   const serviceChargeAmount = computeServiceChargeEuro(checkoutSubtotal, serviceChargePercent);
   const serviceChargeWaived = parseServiceChargeWaived(config.dine_in_service_charge_waived);
   const foodAfterZhe = checkoutZhe.status === 'ok' ? checkoutZhe.payableEuro : checkoutSubtotal;
-  const checkoutPayable = payableWithServiceCharge(foodAfterZhe, serviceChargeAmount, serviceChargeWaived);
+  const checkoutApplyService = checkoutTarget?.kind !== 'fulfill';
+  const checkoutPayable = checkoutApplyService
+    ? payableWithServiceCharge(foodAfterZhe, serviceChargeAmount, serviceChargeWaived)
+    : foodAfterZhe;
 
   useEffect(() => {
     setDiscountZhe('');
@@ -521,6 +679,7 @@ export default function PayAfterOrderCenter() {
     if (!checkoutTarget) return;
     if (checkoutZhe.status === 'invalid') return;
     if (payMethod === 'cash' && cashNum + 0.001 < checkoutPayable) return;
+    if (checkoutTarget.kind === 'split' && !(checkoutTarget.lineSettlements || []).length) return;
     let body: Record<string, unknown>;
     if (payMethod === 'member') {
       if (!memberPreview) return;
@@ -552,9 +711,20 @@ export default function PayAfterOrderCenter() {
         body.couponAmount = coupon.amount;
       }
       body.skipCloudPrint = true;
-      const url = checkoutTarget.kind === 'order' && checkoutTarget.orderId
-        ? `/api/checkout/seat/${checkoutTarget.orderId}`
-        : `/api/checkout/table/${checkoutTarget.tableNumber}`;
+      if (checkoutTarget.kind === 'split') {
+        const settlements = checkoutTarget.lineSettlements || [];
+        if (settlements.length === 0) return;
+        body.lineSettlements = checkoutTarget.orderId
+          ? settlements.map((s) => ({ lineId: s.lineId, qty: s.qty }))
+          : settlements;
+      }
+      const url = checkoutTarget.kind === 'split'
+        ? (checkoutTarget.orderId
+          ? `/api/checkout/dine-in-partial/${checkoutTarget.orderId}`
+          : `/api/checkout/dine-in-partial-table/${checkoutTarget.tableNumber}`)
+        : (checkoutTarget.kind === 'order' || checkoutTarget.kind === 'fulfill') && checkoutTarget.orderId
+          ? `/api/checkout/seat/${checkoutTarget.orderId}`
+          : `/api/checkout/table/${checkoutTarget.tableNumber}`;
       const res = await apiFetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -577,6 +747,8 @@ export default function PayAfterOrderCenter() {
         }
       }
       setCheckoutTarget(null);
+      setSplitPicker(null);
+      setSplitQtyByKey({});
       await fetchAll();
     } finally {
       setBusyId(null);
@@ -622,6 +794,95 @@ export default function PayAfterOrderCenter() {
   }, [fetchAll, isEn, token]);
 
   const fulfillList = fulfillTab === 'delivery' ? deliveryOrders : takeoutOrders;
+
+  useEffect(() => {
+    setDetailOrder((cur) => {
+      if (!cur) return null;
+      return orders.find((o) => o._id === cur._id) || null;
+    });
+  }, [orders]);
+
+  const openFulfillCheckout = useCallback((order: PayAfterOrder) => {
+    if (waiterMode) {
+      alert(isEn ? 'Take payment on the cashier POS.' : '请在收银台结账。');
+      return;
+    }
+    if (!isFulfillUnpaid(order)) return;
+    setDetailOrder(null);
+    setPayMethod('cash');
+    setCashReceived('');
+    setMemberPhone(String(order.customerPhone || '').trim());
+    setMemberPreview(null);
+    setMemberRemainderTender(null);
+    setCheckoutTarget({ kind: 'fulfill', tableNumber: 0, orderId: order._id });
+  }, [isEn, waiterMode]);
+
+  const openFulfillEdit = useCallback((order: PayAfterOrder) => {
+    if (!cashierMayLoadOrderToCart(order, 'pay_after') || !storeSlug) return;
+    navigate(`/${storeSlug}/cashier/order?editOrderId=${order._id}`);
+  }, [navigate, storeSlug]);
+
+  const splitSourceOrders = useMemo(() => {
+    if (!splitPicker) return [];
+    return dineInOpen.filter((o) => (o.tableNumber ?? 0) === splitPicker.tableNumber);
+  }, [dineInOpen, splitPicker]);
+
+  const splitRows = useMemo(
+    () => collectSplitRows(splitSourceOrders, splitPicker?.orderId),
+    [splitSourceOrders, splitPicker],
+  );
+
+  const splitSettlements = useMemo((): SplitSettlement[] => (
+    splitRows
+      .map(({ order, item }) => ({
+        orderId: order._id,
+        lineId: item._id,
+        qty: Math.floor(Number(splitQtyByKey[splitLineKey(order._id, item._id)]) || 0),
+      }))
+      .filter((s) => s.qty > 0)
+  ), [splitRows, splitQtyByKey]);
+
+  const splitPreview = useMemo(() => {
+    if (splitSettlements.length === 0) return null;
+    return splitFoodEuro(splitSourceOrders, splitSettlements);
+  }, [splitSettlements, splitSourceOrders]);
+
+  const openSplitPicker = useCallback((tableNumber: number, orderId?: string) => {
+    if (waiterMode) {
+      alert(isEn ? 'Take payment on the cashier POS.' : '请在收银台结账。');
+      return;
+    }
+    const source = dineInOpen.filter((o) => (o.tableNumber ?? 0) === tableNumber);
+    const rows = collectSplitRows(source, orderId);
+    if (rows.length === 0) {
+      alert(isEn ? 'Nothing left to split.' : '没有可分单的未结菜品。');
+      return;
+    }
+    const init: Record<string, number> = {};
+    for (const r of rows) init[splitLineKey(r.order._id, r.item._id)] = 0;
+    setSplitQtyByKey(init);
+    setSplitPicker({ tableNumber, orderId });
+  }, [dineInOpen, isEn, waiterMode]);
+
+  const proceedSplitPay = useCallback(() => {
+    if (!splitPicker || !splitPreview || !splitPreview.ok || splitSettlements.length === 0) return;
+    const picked = splitRows.filter((r) => (splitQtyByKey[splitLineKey(r.order._id, r.item._id)] || 0) > 0);
+    if (picked.some((r) => isUnweighedMarketLine(r.item))) {
+      alert(t('cashier.unweighedCannotCheckout'));
+      return;
+    }
+    setPayMethod('cash');
+    setCashReceived('');
+    setMemberPhone('');
+    setMemberPreview(null);
+    setMemberRemainderTender(null);
+    setCheckoutTarget({
+      kind: 'split',
+      tableNumber: splitPicker.tableNumber,
+      orderId: splitPicker.orderId,
+      lineSettlements: splitSettlements,
+    });
+  }, [splitPicker, splitPreview, splitSettlements, splitRows, splitQtyByKey, t]);
 
   return (
     <div className="pay-after-board">
@@ -679,6 +940,14 @@ export default function PayAfterOrderCenter() {
                 </button>
                 <button
                   type="button"
+                  className="btn btn-outline"
+                  disabled={busyId != null || selected.unpaid <= 0.02}
+                  onClick={() => openSplitPicker(selected.tableNumber)}
+                >
+                  {isEn ? 'Split bill' : '分单结账'}
+                </button>
+                <button
+                  type="button"
                   className="btn btn-primary"
                   disabled={busyId != null || selected.unpaid <= 0.02 || selected.orders.some((o) => o.items.some(isUnweighedMarketLine))}
                   onClick={() => {
@@ -722,6 +991,14 @@ export default function PayAfterOrderCenter() {
                       </button>
                       <button type="button" className="btn btn-outline pay-after-btn-quiet" disabled={busyId === o._id} onClick={() => void cancelOrder(o)}>
                         {isEn ? 'Cancel order' : '整单取消'}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-outline"
+                        disabled={busyId != null || dineInPayable(o) <= 0.02}
+                        onClick={() => openSplitPicker(selected.tableNumber, o._id)}
+                      >
+                        {isEn ? 'Split' : '分单'}
                       </button>
                       <button
                         type="button"
@@ -819,17 +1096,43 @@ export default function PayAfterOrderCenter() {
           <div className="pay-after-fulfill-grid">
             {fulfillList.map((o) => {
               const pendingKitchen = kitchenUnprintedQty(o) > 0;
+              const isDelivery = o.type === 'delivery';
+              const unpaid = isFulfillUnpaid(o);
+              const addr = String(o.deliveryAddress || '').trim();
+              const guest = [o.customerName, o.customerPhone].filter((x) => String(x || '').trim()).join(' · ');
               return (
-                <div key={o._id} className="pay-after-fulfill-card">
+                <div
+                  key={o._id}
+                  className="pay-after-fulfill-card is-clickable"
+                  onClick={() => setDetailOrder(o)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      setDetailOrder(o);
+                    }
+                  }}
+                >
                   <div className="pay-after-cover-head">
-                    <strong>#{o.dailyOrderNumber ?? '—'} {o.type === 'phone' ? (isEn ? 'Phone' : '电话') : o.type === 'delivery' ? (isEn ? 'Delivery' : '送餐') : (isEn ? 'Pickup' : '自提')}</strong>
-                    <span className="pay-after-badge neutral">{fulfillStatusLabel(o.status, isEn)}</span>
+                    <strong>#{o.dailyOrderNumber ?? '—'} {fulfillTypeLabel(o, isEn)}</strong>
+                    <span className={`pay-after-badge ${unpaid ? 'warn' : 'neutral'}`}>{fulfillStatusLabel(o.status, isEn)}</span>
                   </div>
-                  <p className="pay-after-fulfill-meta">
-                    {o.customerPhone || o.customerName || o.pickupSlotLabel || '—'}
-                  </p>
+                  <div className="pay-after-fulfill-meta">
+                    {guest ? <div>{guest}</div> : null}
+                    {isDelivery && addr ? <div className="pay-after-fulfill-addr">{addr}</div> : null}
+                    {!isDelivery && o.pickupSlotLabel ? <div>{o.pickupSlotLabel}</div> : null}
+                    <div className="pay-after-fulfill-addr">{fulfillFoodPreview(o, isEn)}</div>
+                    <div>
+                      {isDelivery ? `${isEn ? 'Stage' : '阶段'} ${deliveryStageLabel(o.deliveryStage, isEn)} · ` : ''}
+                      €{fulfillPayable(o).toFixed(2)}
+                    </div>
+                  </div>
                   {pendingKitchen ? <span className="pay-after-badge warn">{isEn ? 'Awaiting kitchen' : '待出厨房'}</span> : null}
-                  <div className="pay-after-cover-actions">
+                  <div className="pay-after-cover-actions" onClick={(e) => e.stopPropagation()}>
+                    <button type="button" className="btn btn-outline" disabled={busyId === o._id} onClick={() => void printFulfillReceiptLocal(o)}>
+                      {isEn ? 'Print receipt' : '打印小票'}
+                    </button>
                     {pendingKitchen ? (
                       <button type="button" className="btn btn-primary" disabled={busyId === o._id} onClick={() => void printTakeoutDeliveryKitchen(o)}>
                         {isEn ? 'Print kitchen' : '出厨房'}
@@ -840,7 +1143,7 @@ export default function PayAfterOrderCenter() {
                         {isEn ? 'Picked up' : '客人取餐完成'}
                       </button>
                     ) : null}
-                    {o.type === 'delivery' && !pendingKitchen ? (
+                    {isDelivery && !pendingKitchen ? (
                       <button type="button" className="btn btn-primary" disabled={busyId === o._id} onClick={() => void setDeliveryPickedUp(o)}>
                         {isEn ? 'Driver picked up' : '司机取走'}
                       </button>
@@ -856,10 +1159,218 @@ export default function PayAfterOrderCenter() {
         )}
       </section>
 
+      {detailOrder ? (
+        <div className="pay-after-modal-backdrop" onClick={() => setDetailOrder(null)}>
+          <div className="pay-after-modal pay-after-modal-wide" onClick={(e) => e.stopPropagation()}>
+            <h3>
+              {fulfillTypeLabel(detailOrder, isEn)} #{detailOrder.dailyOrderNumber ?? '—'}
+            </h3>
+            <div className="pay-after-detail-block">
+              <div className="pay-after-detail-label">{isEn ? 'Customer' : '客人'}</div>
+              <div>{[detailOrder.customerName, detailOrder.customerPhone].filter((x) => String(x || '').trim()).join(' · ') || '—'}</div>
+              {detailOrder.type === 'delivery' ? (
+                <>
+                  <div className="pay-after-detail-label">{isEn ? 'Address' : '送餐地址'}</div>
+                  <div>{String(detailOrder.deliveryAddress || '').trim() || '—'}</div>
+                  <div className="pay-after-detail-label">{isEn ? 'Eircode' : '邮编'}</div>
+                  <div>{String(detailOrder.postalCode || '').trim() || '—'}</div>
+                  <div className="pay-after-detail-label">{isEn ? 'Stage' : '配送阶段'}</div>
+                  <div>
+                    {deliverySourceLabel(detailOrder.deliverySource, isEn)} · {deliveryStageLabel(detailOrder.deliveryStage, isEn)}
+                  </div>
+                  {detailOrder.deliveryDistanceKm != null ? (
+                    <div className="pay-after-detail-muted">
+                      {isEn ? 'Distance' : '直线距离'} {detailOrder.deliveryDistanceKm} km
+                    </div>
+                  ) : null}
+                  {(Number(detailOrder.deliveryFeeEuro) || 0) > 0.001 ? (
+                    <div className="pay-after-detail-muted">
+                      {isEn ? 'Delivery fee' : '送餐费'} €{Number(detailOrder.deliveryFeeEuro).toFixed(2)}
+                    </div>
+                  ) : null}
+                </>
+              ) : (
+                <>
+                  {detailOrder.pickupSlotLabel ? (
+                    <>
+                      <div className="pay-after-detail-label">{isEn ? 'Pickup slot' : '取餐时段'}</div>
+                      <div>{detailOrder.pickupSlotLabel}</div>
+                    </>
+                  ) : null}
+                  {detailOrder.takeoutPlacementSource === 'cashier' ? (
+                    <div className="pay-after-detail-muted">{isEn ? 'Placed at cashier' : '收银代点'}</div>
+                  ) : null}
+                </>
+              )}
+            </div>
+            <div className="pay-after-detail-label">{isEn ? 'Items' : '菜品'}</div>
+            <div className="pay-after-detail-items">
+              {(detailOrder.items || []).filter((it) => it.lineKind !== 'delivery_fee').map((it) => (
+                <div key={it._id} className={`pay-after-detail-line${it.refunded ? ' is-void' : ''}`}>
+                  <div>
+                    <div>
+                      {it.isMarketPrice
+                        ? formatMarketLineTitle(it.itemName, it.weightKg, it.pricePerKg)
+                        : `${it.quantity}× ${it.itemName}`}
+                      {it.refunded ? <em> · {isEn ? 'voided' : '已退'}</em> : null}
+                    </div>
+                    {it.itemNameEn && it.itemNameEn !== it.itemName ? (
+                      <div className="pay-after-detail-muted">{it.itemNameEn}</div>
+                    ) : null}
+                    <OrderItemOptionGroupList options={it.selectedOptions} isEn={isEn} compact />
+                    {String(it.noteZh || it.noteEn || '').trim() ? (
+                      <div className="pay-after-detail-muted">{String(it.noteZh || it.noteEn || '').trim()}</div>
+                    ) : null}
+                  </div>
+                  <strong>€{lineTotal(it).toFixed(2)}</strong>
+                </div>
+              ))}
+            </div>
+            <div className="pay-after-modal-amt">€{fulfillPayable(detailOrder).toFixed(2)}</div>
+            <div className="pay-after-cover-actions" style={{ marginTop: 0 }}>
+              {cashierMayLoadOrderToCart(detailOrder, 'pay_after') && !waiterMode ? (
+                <button type="button" className="btn btn-outline" disabled={busyId === detailOrder._id} onClick={() => openFulfillEdit(detailOrder)}>
+                  {isEn ? 'Edit order' : '改单'}
+                </button>
+              ) : null}
+              {isFulfillUnpaid(detailOrder) && !waiterMode ? (
+                <button type="button" className="btn btn-primary" disabled={busyId === detailOrder._id} onClick={() => openFulfillCheckout(detailOrder)}>
+                  {isEn ? 'Take payment' : '付款'}
+                </button>
+              ) : (
+                <span className="pay-after-badge neutral">{fulfillStatusLabel(detailOrder.status, isEn)}</span>
+              )}
+              <button type="button" className="btn btn-outline" disabled={busyId === detailOrder._id} onClick={() => void printFulfillReceiptLocal(detailOrder)}>
+                {isEn ? 'Print receipt' : '打印小票'}
+              </button>
+              {kitchenUnprintedQty(detailOrder) > 0 ? (
+                <button type="button" className="btn btn-outline" disabled={busyId === detailOrder._id} onClick={() => void printTakeoutDeliveryKitchen(detailOrder)}>
+                  {isEn ? 'Print kitchen' : '出厨房'}
+                </button>
+              ) : detailOrder.type === 'delivery' ? (
+                <button type="button" className="btn btn-outline" disabled={busyId === detailOrder._id} onClick={() => void setDeliveryPickedUp(detailOrder)}>
+                  {isEn ? 'Driver picked up' : '司机取走'}
+                </button>
+              ) : detailOrder.type === 'takeout' && (detailOrder.status === 'paid_online' || detailOrder.status === 'checked_out') ? (
+                <button type="button" className="btn btn-outline" disabled={busyId === detailOrder._id} onClick={() => void finishTakeout(detailOrder)}>
+                  {isEn ? 'Picked up' : '客人取餐完成'}
+                </button>
+              ) : null}
+              <button type="button" className="btn btn-outline pay-after-btn-quiet" disabled={busyId === detailOrder._id} onClick={() => void cancelOrder(detailOrder)}>
+                {t('common.cancel', isEn ? 'Cancel' : '取消')}
+              </button>
+              <button type="button" className="btn btn-outline" onClick={() => setDetailOrder(null)}>{isEn ? 'Close' : '关闭'}</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {splitPicker && !checkoutTarget ? (
+        <div className="pay-after-modal-backdrop" onClick={() => { setSplitPicker(null); setSplitQtyByKey({}); }}>
+          <div className="pay-after-modal pay-after-modal-wide" onClick={(e) => e.stopPropagation()}>
+            <h3>{isEn ? 'Split bill' : '分单结账'}</h3>
+            <p className="pay-after-detail-muted" style={{ marginBottom: 10 }}>
+              {isEn
+                ? 'Tick dishes for this guest. Remaining items stay on the table until fully paid.'
+                : '勾选这位客人要付的菜，剩余菜品继续挂在桌上，全部结完才算已结账。'}
+            </p>
+            <div className="pay-after-split-toolbar">
+              <button
+                type="button"
+                className="btn btn-outline"
+                onClick={() => {
+                  const next: Record<string, number> = {};
+                  for (const r of splitRows) {
+                    next[splitLineKey(r.order._id, r.item._id)] = isUnweighedMarketLine(r.item) ? 0 : r.maxQty;
+                  }
+                  setSplitQtyByKey(next);
+                }}
+              >
+                {isEn ? 'Select all' : '全选未结'}
+              </button>
+              <button type="button" className="btn btn-outline" onClick={() => {
+                const next: Record<string, number> = {};
+                for (const r of splitRows) next[splitLineKey(r.order._id, r.item._id)] = 0;
+                setSplitQtyByKey(next);
+              }}>
+                {isEn ? 'Clear' : '清空'}
+              </button>
+            </div>
+            <div className="pay-after-split-list">
+              {splitRows.map(({ order, item, maxQty }) => {
+                const key = splitLineKey(order._id, item._id);
+                const qty = Math.max(0, Math.min(maxQty, Math.floor(Number(splitQtyByKey[key]) || 0)));
+                const blocked = isUnweighedMarketLine(item);
+                const name = isEn && item.itemNameEn ? item.itemNameEn : item.itemName;
+                return (
+                  <div key={key} className={`pay-after-split-line${qty > 0 ? ' is-on' : ''}${blocked ? ' is-blocked' : ''}`}>
+                    <label className="pay-after-split-check">
+                      <input
+                        type="checkbox"
+                        checked={qty > 0}
+                        disabled={blocked}
+                        onChange={(e) => setSplitQtyByKey((prev) => ({ ...prev, [key]: e.target.checked ? maxQty : 0 }))}
+                      />
+                      <span>
+                        <strong>{item.isMarketPrice ? formatMarketLineTitle(item.itemName, item.weightKg, item.pricePerKg) : name}</strong>
+                        {hasGuestIdentity(order) ? <span className="pay-after-detail-muted"> · {guestTitle(order, isEn)}</span> : null}
+                        {blocked ? <em className="is-warn"> · {isEn ? 'await weigh' : '待称重'}</em> : null}
+                        <OrderItemOptionGroupList options={item.selectedOptions} isEn={isEn} compact />
+                      </span>
+                    </label>
+                    <div className="pay-after-split-stepper">
+                      <button type="button" disabled={blocked || qty <= 0} onClick={() => setSplitQtyByKey((prev) => ({ ...prev, [key]: Math.max(0, qty - 1) }))}>−</button>
+                      <span>{qty}/{maxQty}</span>
+                      <button type="button" disabled={blocked || qty >= maxQty} onClick={() => setSplitQtyByKey((prev) => ({ ...prev, [key]: Math.min(maxQty, qty + 1) }))}>+</button>
+                    </div>
+                    <strong>€{lineTotal(item, qty).toFixed(2)}</strong>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="pay-after-modal-amt">
+              {splitPreview && splitPreview.ok
+                ? `€${payableWithServiceCharge(
+                  splitPreview.payable,
+                  computeServiceChargeEuro(splitPreview.payable, serviceChargePercent),
+                  serviceChargeWaived,
+                ).toFixed(2)}`
+                : '€0.00'}
+            </div>
+            <div className="pay-after-cover-actions" style={{ marginTop: 0 }}>
+              <button type="button" className="btn btn-outline" onClick={() => { setSplitPicker(null); setSplitQtyByKey({}); }}>
+                {isEn ? 'Back' : '返回'}
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={!splitPreview || !splitPreview.ok || splitSettlements.length === 0}
+                onClick={proceedSplitPay}
+              >
+                {isEn ? 'Take payment' : '去付款'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {checkoutTarget ? (
         <div className="pay-after-modal-backdrop" onClick={() => setCheckoutTarget(null)}>
           <div className="pay-after-modal" onClick={(e) => e.stopPropagation()}>
-            <h3>{checkoutTarget.kind === 'table' ? (isEn ? 'Checkout table' : '整桌结账') : (isEn ? 'Checkout this round' : '结账当前轮次')}</h3>
+            <h3>
+              {checkoutTarget.kind === 'table'
+                ? (isEn ? 'Checkout table' : '整桌结账')
+                : checkoutTarget.kind === 'split'
+                  ? (isEn ? 'Split payment' : '分单付款')
+                : checkoutTarget.kind === 'fulfill'
+                  ? (() => {
+                    const o = orders.find((x) => x._id === checkoutTarget.orderId);
+                    if (o?.type === 'delivery') return isEn ? 'Checkout delivery' : '结账送餐';
+                    if (o?.type === 'phone') return isEn ? 'Checkout phone' : '结账电话单';
+                    return isEn ? 'Checkout takeout' : '结账外卖';
+                  })()
+                  : (isEn ? 'Checkout this round' : '结账当前轮次')}
+            </h3>
             <div className="pay-after-modal-amt">
               {checkoutZhe.status === 'ok' ? <div className="pay-after-modal-amt-was">€{checkoutSubtotal.toFixed(2)}</div> : null}
               €{checkoutPayable.toFixed(2)}
@@ -870,12 +1381,14 @@ export default function PayAfterOrderCenter() {
               applied={checkoutZhe}
               isEn={isEn}
             />
-            <CashierServiceChargeWaiveField
-              percent={serviceChargePercent}
-              amount={serviceChargeAmount}
-              waived={serviceChargeWaived}
-              isEn={isEn}
-            />
+            {checkoutApplyService ? (
+              <CashierServiceChargeWaiveField
+                percent={serviceChargePercent}
+                amount={serviceChargeAmount}
+                waived={serviceChargeWaived}
+                isEn={isEn}
+              />
+            ) : null}
             <div className="pay-after-pay-methods">
               {(['cash', 'card'] as const).map((m) => (
                 <button key={m} type="button" className={`btn ${payMethod === m ? 'btn-primary' : 'btn-outline'}`} onClick={() => { setPayMethod(m); setMemberRemainderTender(null); }}>

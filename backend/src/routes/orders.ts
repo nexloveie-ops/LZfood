@@ -2196,10 +2196,44 @@ export function createOrdersRouter(io: SocketIOServer): Router {
         order.items as Parameters<typeof mergeMarketWeighFromPrevious>[0],
         orderItems as Record<string, unknown>[],
       );
+      const deliverySet: Record<string, unknown> = {};
+      let deliveryFeeEuro = Number(order.deliveryFeeEuro) || 0;
+      if (staffAllowed && order.type === 'delivery') {
+        const body = req.body as Record<string, unknown>;
+        const name = typeof body.customerName === 'string' ? body.customerName.trim() : '';
+        const phoneRaw = typeof body.customerPhone === 'string' ? body.customerPhone.trim() : '';
+        const addr = typeof body.deliveryAddress === 'string' ? body.deliveryAddress.trim() : '';
+        const pc = typeof body.postalCode === 'string' ? body.postalCode.trim() : '';
+        if (name) deliverySet.customerName = name;
+        if (phoneRaw) {
+          const normPhone = normalizeMemberPhone(phoneRaw);
+          deliverySet.customerPhone =
+            normPhone.length >= 8 ? normPhone : phoneRaw.replace(/\D/g, '') || phoneRaw;
+        }
+        if (addr) deliverySet.deliveryAddress = addr;
+        if (pc) deliverySet.postalCode = pc;
+        const rawD = body.deliveryDistanceKm;
+        if (typeof rawD === 'number' && Number.isFinite(rawD) && rawD >= 0) {
+          deliverySet.deliveryDistanceKm = rawD;
+        } else if (rawD != null && rawD !== '' && typeof rawD === 'string') {
+          const p = parseFloat(rawD.trim());
+          if (Number.isFinite(p) && p >= 0) deliverySet.deliveryDistanceKm = p;
+        }
+        const rawFeeOverride = body.deliveryFeeEuroOverride;
+        if (rawFeeOverride !== undefined && rawFeeOverride !== null && rawFeeOverride !== '') {
+          const parsedOverride = parseDeliveryFeeEuroInput(rawFeeOverride);
+          if (parsedOverride === null) {
+            throw createAppError('VALIDATION_ERROR', 'deliveryFeeEuroOverride must be a non-negative number');
+          }
+          deliveryFeeEuro = parsedOverride;
+          deliverySet.deliveryFeeEuro = deliveryFeeEuro;
+        }
+      }
+
       appendDeliveryFeeLineToOrderItems(
         orderItems as Record<string, unknown>[],
         order.type,
-        Number(order.deliveryFeeEuro) || 0,
+        deliveryFeeEuro,
       );
 
       if (order.type === 'dine_in' && !staffAllowed) {
@@ -2222,6 +2256,11 @@ export function createOrdersRouter(io: SocketIOServer): Router {
             staffAllowed ? 'staff' : 'customer_qr',
           );
         }
+        mergeDineInKitchenPrintedAndSettledFromPrevious(
+          order.items as Parameters<typeof mergeDineInKitchenPrintedAndSettledFromPrevious>[0],
+          orderItems as Record<string, unknown>[],
+        );
+      } else if (order.type === 'delivery') {
         mergeDineInKitchenPrintedAndSettledFromPrevious(
           order.items as Parameters<typeof mergeDineInKitchenPrintedAndSettledFromPrevious>[0],
           orderItems as Record<string, unknown>[],
@@ -2266,7 +2305,7 @@ export function createOrdersRouter(io: SocketIOServer): Router {
       try {
         updated = await Order.findOneAndUpdate(
           { _id: id, storeId: req.storeId },
-          { $set: { items: orderItems } },
+          { $set: { items: orderItems, ...deliverySet } },
           { new: true },
         );
       } catch (writeErr) {

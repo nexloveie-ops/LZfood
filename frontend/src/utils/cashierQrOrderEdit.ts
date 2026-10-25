@@ -59,3 +59,26 @@ export function cashierMayEditQrOrder(
   if (orderKitchenSubmitted(order)) return false;
   return true;
 }
+
+/** 送餐：pending 未付即可载入点单修改（含收银代点）。 */
+export function cashierMayEditDeliveryOrder(order: QrOrderEditLike): boolean {
+  if (order.type !== 'delivery') return false;
+  return orderUnpaidForQrEdit(order);
+}
+
+/** 外卖自提 / 电话：pending 未付可改；顾客扫码单仍须未出厨房。 */
+export function cashierMayEditTakeoutOrder(order: QrOrderEditLike): boolean {
+  if (order.type !== 'takeout' && order.type !== 'phone') return false;
+  if (!orderUnpaidForQrEdit(order)) return false;
+  if (isCustomerQrOrderForEdit(order) && orderKitchenSubmitted(order)) return false;
+  return true;
+}
+
+export function cashierMayLoadOrderToCart(
+  order: QrOrderEditLike,
+  dineInWorkflowMode: 'pay_first' | 'pay_after',
+): boolean {
+  return cashierMayEditQrOrder(order, dineInWorkflowMode)
+    || cashierMayEditDeliveryOrder(order)
+    || cashierMayEditTakeoutOrder(order);
+}

@@ -1,5 +1,8 @@
 import {
+  cashierMayEditDeliveryOrder,
   cashierMayEditQrOrder,
+  cashierMayEditTakeoutOrder,
+  cashierMayLoadOrderToCart,
   isCustomerQrOrderForEdit,
   orderKitchenSubmitted,
   orderUnpaidForQrEdit,
@@ -26,6 +29,18 @@ describe('cashierQrOrderEdit', () => {
       takeoutPlacementSource: 'cashier',
       items: baseItems,
     }, 'pay_first')).toBe(false);
+  });
+
+  it('allows unpaid cashier takeout in the running-tab cart', () => {
+    const cashierTakeout = {
+      type: 'takeout',
+      status: 'pending',
+      paymentStatus: 'unpaid',
+      takeoutPlacementSource: 'cashier' as const,
+      items: [{ ...baseItems[0], kitchenPrintedQty: 2 }],
+    };
+    expect(cashierMayEditTakeoutOrder(cashierTakeout)).toBe(true);
+    expect(cashierMayLoadOrderToCart(cashierTakeout, 'pay_after')).toBe(true);
   });
 
   it('blocks when kitchen submitted', () => {
@@ -56,6 +71,30 @@ describe('cashierQrOrderEdit', () => {
       paymentStatus: 'unpaid',
       items: baseItems,
     }, 'pay_after')).toBe(false);
+  });
+
+  it('allows unpaid pending delivery even after kitchen', () => {
+    expect(cashierMayEditDeliveryOrder({
+      type: 'delivery',
+      status: 'pending',
+      paymentStatus: 'unpaid',
+      items: [{ ...baseItems[0], kitchenPrintedQty: 2 }],
+    })).toBe(true);
+    expect(cashierMayLoadOrderToCart({
+      type: 'delivery',
+      status: 'pending',
+      paymentStatus: 'unpaid',
+      items: baseItems,
+    }, 'pay_after')).toBe(true);
+  });
+
+  it('blocks paid or completed delivery from cart edit', () => {
+    expect(cashierMayEditDeliveryOrder({
+      type: 'delivery',
+      status: 'paid_online',
+      paymentStatus: 'paid',
+      items: baseItems,
+    })).toBe(false);
   });
 
   it('treats staff-placed dine-in as cashier order, not QR', () => {

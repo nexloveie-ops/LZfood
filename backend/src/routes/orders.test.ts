@@ -1405,6 +1405,54 @@ describe('DELETE /api/orders/:id', () => {
 });
 
 describe('PUT /api/orders/:id/items staff QR edit', () => {
+  it('staff can update pending delivery items and address after kitchen', async () => {
+    const item = await createMenuItem({ price: 10 });
+    const order = await Order.create({
+      storeId: TEST_STORE_ID,
+      type: 'delivery',
+      deliverySource: 'phone',
+      status: 'pending',
+      paymentStatus: 'unpaid',
+      customerName: 'Old',
+      customerPhone: '0861111111',
+      deliveryAddress: '1 Old St',
+      postalCode: 'D01 ABCD',
+      deliveryFeeEuro: 3,
+      items: [{
+        menuItemId: item._id,
+        quantity: 1,
+        unitPrice: 10,
+        itemName: 'x',
+        kitchenPrintedQty: 1,
+      }],
+    });
+
+    const res = await request(app)
+      .put(`/api/orders/${order._id}/items`)
+      .set('Authorization', `Bearer ${cashierToken}`)
+      .send({
+        items: [{ menuItemId: item._id.toString(), quantity: 2 }],
+        customerName: 'New',
+        customerPhone: '0862222222',
+        deliveryAddress: '2 New Rd',
+        postalCode: 'D02 XYZZ',
+        deliveryFeeEuroOverride: 4.5,
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body.customerName).toBe('New');
+    expect(res.body.deliveryAddress).toBe('2 New Rd');
+    expect(res.body.postalCode).toBe('D02 XYZZ');
+    expect(res.body.deliveryFeeEuro).toBe(4.5);
+    const food = (res.body.items as { lineKind?: string; quantity: number; kitchenPrintedQty?: number }[])
+      .filter((i) => i.lineKind !== 'delivery_fee');
+    expect(food[0].quantity).toBe(2);
+    expect(food[0].kitchenPrintedQty).toBe(1);
+    const fee = (res.body.items as { lineKind?: string; unitPrice: number }[])
+      .find((i) => i.lineKind === 'delivery_fee');
+    expect(fee?.unitPrice).toBe(4.5);
+  });
+
   it('returns 409 when staff edits customer takeout after kitchen printed', async () => {
     const item = await createMenuItem();
     const order = await Order.create({

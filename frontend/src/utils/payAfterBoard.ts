@@ -46,6 +46,7 @@ export type PayAfterOrder = {
   deliverySource?: 'phone' | 'qr';
   deliveryStage?: string;
   deliveryFeeEuro?: number;
+  deliveryDistanceKm?: number;
   pickupSlotLabel?: string;
   takeoutPlacementSource?: 'cashier' | 'customer';
   createdAt: string;

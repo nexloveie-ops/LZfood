@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { connectStoreSocket } from '../../api/storeSocket';
 import { useAuth } from '../../context/AuthContext';
 import { apiFetch } from '../../api/client';
-import { cashierMayEditQrOrder } from '../../utils/cashierQrOrderEdit';
+import { cashierMayLoadOrderToCart } from '../../utils/cashierQrOrderEdit';
 import { printBuiltReceipt, type BundleDiscountInfo } from '../../components/cashier/ReceiptPrint';
 import { type ReceiptOptionSnapshot, receiptOptionExtraEuro } from '../../utils/receiptOptionPrice';
 import { computeDineInUnsettledPayableEuro, computePartialDineInSettlementPreview, dineInHasUnsettledFoodLineQty } from '../../utils/orderPayableEuro';
@@ -498,7 +498,7 @@ export default function UnifiedOrderCenter() {
   const dineInPayAfter = config.dine_in_workflow_mode === 'pay_after';
   const dineInWorkflowMode = dineInPayAfter ? 'pay_after' as const : 'pay_first' as const;
   const canEditInOrderTab = useCallback(
-    (o: OrderRow) => cashierMayEditQrOrder(o, dineInWorkflowMode),
+    (o: OrderRow) => cashierMayLoadOrderToCart(o, dineInWorkflowMode),
     [dineInWorkflowMode],
   );
   const openOrderForEdit = useCallback(
