@@ -64,6 +64,7 @@ interface OrderRow {
     refunded?: boolean;
     /** 已打印至厨房小票的份数（后结堂食增量打印） */
     kitchenPrintedQty?: number;
+    skipKitchenCloudPrint?: boolean;
     settledQty?: number;
     isMarketPrice?: boolean;
     weightKg?: number;
@@ -168,15 +169,13 @@ function isTakeoutKitchenReleased(o: OrderRow): boolean {
 
 function isOrderKitchenFullyPrinted(o: OrderRow): boolean {
   if (o.type === 'takeout' && o.takeoutPlacementSource === 'cashier') return true;
-  let hasFood = false;
   for (const it of o.items || []) {
-    if (it.lineKind === 'delivery_fee' || it.refunded) continue;
-    hasFood = true;
+    if (it.lineKind === 'delivery_fee' || it.refunded || it.skipKitchenCloudPrint) continue;
     const q = it.quantity;
     const p = Math.max(0, Math.min(Number(it.kitchenPrintedQty) || 0, q));
     if (p < q) return false;
   }
-  return hasFood;
+  return true;
 }
 
 function fulfillmentStatusLabel(o: OrderRow, isEn: boolean): string {
@@ -232,15 +231,13 @@ function isPhonePlacementKitchenStepDone(o: OrderRow, printedIds: Record<string,
   const prepaid =
     o.phoneCardPaidAtPlacement || o.placementPrepaidMethod === 'card' || o.placementPrepaidMethod === 'member';
   if (o.type !== 'phone' || !prepaid) return false;
-  let hasFood = false;
   for (const it of o.items || []) {
-    if (it.lineKind === 'delivery_fee' || it.refunded) continue;
-    hasFood = true;
+    if (it.lineKind === 'delivery_fee' || it.refunded || it.skipKitchenCloudPrint) continue;
     const q = it.quantity;
     const p = Math.max(0, Math.min(Number(it.kitchenPrintedQty) || 0, q));
     if (p < q) return false;
   }
-  return hasFood || !!printedIds[o._id];
+  return true;
 }
 
 function orderNeedsStaffCancelConfirm(o: OrderRow): boolean {
@@ -254,7 +251,7 @@ function dineInKitchenUnprintedPortions(o: OrderRow): number {
   if (o.status !== 'pending' && o.status !== 'paid_online' && o.status !== 'checked_out') return 0;
   let s = 0;
   for (const it of o.items || []) {
-    if (it.lineKind === 'delivery_fee' || it.refunded) continue;
+    if (it.lineKind === 'delivery_fee' || it.refunded || it.skipKitchenCloudPrint) continue;
     const p = Math.max(0, Math.min(Number(it.kitchenPrintedQty) || 0, it.quantity));
     s += it.quantity - p;
   }
@@ -1226,6 +1223,7 @@ export default function UnifiedOrderCenter() {
         isPayAfterDineIn &&
         src.items.some((it) => {
           if (it.lineKind === 'delivery_fee' || it.refunded) return false;
+          if (it.skipKitchenCloudPrint) return true;
           const printed = Math.max(0, Math.min(Number(it.kitchenPrintedQty) || 0, it.quantity));
           return it.quantity - printed > 0;
         });
@@ -1244,13 +1242,17 @@ export default function UnifiedOrderCenter() {
         const increments: { lineId: string; qty: number }[] = [];
         for (const item of src.items) {
           if (item.lineKind === 'delivery_fee' || item.refunded) continue;
+          if (item.skipKitchenCloudPrint) {
+            receiptItems.push(mapItemToReceipt(item, item.quantity));
+            continue;
+          }
           const printed = Math.max(0, Math.min(Number(item.kitchenPrintedQty) || 0, item.quantity));
           const unprinted = item.quantity - printed;
           if (unprinted <= 0) continue;
           receiptItems.push(mapItemToReceipt(item, unprinted));
           increments.push({ lineId: item._id, qty: unprinted });
         }
-        if (receiptItems.length === 0 || increments.length === 0) {
+        if (receiptItems.length === 0) {
           alert(isEn ? 'No new kitchen items to print.' : '没有未打印的新增菜品。');
           return;
         }

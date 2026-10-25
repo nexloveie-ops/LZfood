@@ -23,9 +23,7 @@ import {
   hasGuestIdentity,
   hasGuestQrAdd,
   isOpenDineIn,
-  itemNeedsKitchenPrint,
   kitchenUnprintedQty,
-  unprintedFoodLineIds,
   type PayAfterOrder,
   type PayAfterOrderItem,
 } from '../../utils/payAfterBoard';
@@ -70,6 +68,7 @@ function mapItem(item: PayAfterOrderItem, qty: number) {
     pricePerKg: item.pricePerKg,
     noteZh: item.noteZh,
     noteEn: item.noteEn,
+    skipKitchenCloudPrint: item.skipKitchenCloudPrint,
     selectedOptions: mapOpts(item.selectedOptions),
   };
 }
@@ -82,7 +81,7 @@ function lineTotal(item: PayAfterOrderItem, qty = item.quantity): number {
 function foodLineIds(items: PayAfterOrderItem[], round?: number): string[] {
   return (items || [])
     .filter((it) => {
-      if (!itemNeedsKitchenPrint(it)) return false;
+      if (it.lineKind === 'delivery_fee' || it.refunded) return false;
       if (round == null) return true;
       return Math.max(1, Math.floor(Number(it.roundIndex) || 1)) === round;
     })
@@ -305,7 +304,11 @@ export default function PayAfterOrderCenter() {
     const receiptItems: ReturnType<typeof mapItem>[] = [];
     const increments: { lineId: string; qty: number }[] = [];
     for (const item of order.items) {
-      if (!idSet.has(item._id) || !itemNeedsKitchenPrint(item)) continue;
+      if (!idSet.has(item._id) || item.lineKind === 'delivery_fee' || item.refunded) continue;
+      if (item.skipKitchenCloudPrint) {
+        receiptItems.push(mapItem(item, item.quantity));
+        continue;
+      }
       const printed = Math.max(0, Math.min(Number(item.kitchenPrintedQty) || 0, item.quantity));
       const unprinted = item.quantity - printed;
       if (unprinted <= 0) continue;
@@ -353,11 +356,50 @@ export default function PayAfterOrderCenter() {
     }
   }, [config, isEn, token]);
 
+  const printFullOrderLocal = useCallback(async (order: PayAfterOrder) => {
+    const receiptItems = (order.items || [])
+      .filter((it) => it.lineKind !== 'delivery_fee' && !it.refunded)
+      .map((it) => mapItem(it, it.quantity));
+    if (receiptItems.length === 0) {
+      alert(isEn ? 'No items to print.' : '没有可打印的菜品。');
+      return;
+    }
+    setBusyId(order._id);
+    try {
+      const total = receiptItems.reduce((s, it) => s + lineTotal(it as PayAfterOrderItem, it.quantity), 0);
+      await printBuiltReceipt({
+        checkoutId: order._id,
+        type: 'seat' as const,
+        totalAmount: total,
+        paymentMethod: 'pending' as const,
+        checkedOutAt: new Date().toISOString(),
+        tableNumber: order.tableNumber,
+        orders: [{
+          _id: order._id,
+          type: order.type,
+          seatNumber: order.seatNumber,
+          dailyOrderNumber: order.dailyOrderNumber,
+          dineInOrderNumber: order.dineInOrderNumber,
+          dineInGuestLabel: order.dineInGuestLabel,
+          status: order.status,
+          items: receiptItems,
+          customerName: order.customerName,
+          customerPhone: order.customerPhone,
+          deliveryAddress: order.deliveryAddress,
+          postalCode: order.postalCode,
+          deliveryFeeEuro: order.deliveryFeeEuro,
+        }],
+      }, config, { copies: 1, reprintOnly: true });
+    } finally {
+      setBusyId(null);
+    }
+  }, [config, isEn]);
+
   const printKitchenTableLocal = useCallback(async (orders: PayAfterOrder[]) => {
     const receiptOrders = orders
       .map((order) => {
         const items = (order.items || [])
-          .filter((it) => itemNeedsKitchenPrint(it))
+          .filter((it) => it.lineKind !== 'delivery_fee' && !it.refunded)
           .map((it) => mapItem(it, it.quantity));
         return {
           _id: order._id,
@@ -371,7 +413,7 @@ export default function PayAfterOrderCenter() {
       })
       .filter((o) => o.items.length > 0);
     if (receiptOrders.length === 0) {
-      alert(isEn ? 'No kitchen items to print.' : '没有可打印的菜品。');
+      alert(isEn ? 'No items to print.' : '没有可打印的菜品。');
       return;
     }
     const total = orders.reduce((sum, order) => (
@@ -388,7 +430,7 @@ export default function PayAfterOrderCenter() {
       tableNumber: orders[0]?.tableNumber,
       wholeTableKitchenTicket: true,
       orders: receiptOrders,
-    }, config, { copies: 1 });
+    }, config, { copies: 1, reprintOnly: true });
     for (const order of orders) {
       if (foodLineIds(order.items).length === 0) continue;
       const mark = await apiFetch(`/api/orders/${order._id}/kitchen-printed-all`, {
@@ -404,7 +446,7 @@ export default function PayAfterOrderCenter() {
 
   const printKitchenTable = useCallback(async (tableNumber: number, orders: PayAfterOrder[]) => {
     if (orders.every((o) => foodLineIds(o.items).length === 0)) {
-      alert(isEn ? 'No kitchen items to print.' : '没有可打印的菜品。');
+      alert(isEn ? 'No items to print.' : '没有可打印的菜品。');
       return;
     }
     setBusyId(`table-k-${tableNumber}`);
@@ -433,7 +475,15 @@ export default function PayAfterOrderCenter() {
       }),
     });
     const d = await res.json().catch(() => null) as { kitchenPrint?: string; error?: { message?: string } } | null;
-    if (res.ok && (d?.kitchenPrint === 'cloud' || d?.kitchenPrint === 'skipped')) return;
+    const skipIds = lineIds.filter((id) => order.items.find((it) => it._id === id)?.skipKitchenCloudPrint);
+    if (res.ok && d?.kitchenPrint === 'cloud') {
+      if (skipIds.length > 0) await printKitchenLocal(order, skipIds);
+      return;
+    }
+    if (res.ok && d?.kitchenPrint === 'skipped') {
+      await printKitchenLocal(order, lineIds);
+      return;
+    }
     if (!res.ok && d?.error?.message) {
       /* still try local so the kitchen can cook */
     }
@@ -758,11 +808,6 @@ export default function PayAfterOrderCenter() {
             </div>
             <div className="pay-after-cover-block">
               {selected.orders.map((o) => {
-                const addOnlyIds = unprintedFoodLineIds(o.items);
-                const printIds = hasGuestQrAdd(o) || addOnlyIds.length < foodLineIds(o.items).length
-                  ? addOnlyIds
-                  : foodLineIds(o.items);
-                const printAppend = hasGuestQrAdd(o) || addOnlyIds.length < foodLineIds(o.items).length;
                 return (
                   <div key={o._id} className="pay-after-cover-toolbar">
                     <div className="pay-after-cover-head">
@@ -775,8 +820,8 @@ export default function PayAfterOrderCenter() {
                       <button
                         type="button"
                         className="btn btn-outline"
-                        disabled={busyId != null || printIds.length === 0}
-                        onClick={() => void runKitchenPrint(o._id, [{ order: o, lineIds: printIds, append: printAppend }])}
+                        disabled={busyId != null || foodLineIds(o.items).length === 0}
+                        onClick={() => void printFullOrderLocal(o)}
                       >
                         {isEn ? 'Print order' : '打印整单'}
                       </button>

@@ -51,6 +51,7 @@ interface ReceiptOrderItem {
   pricePerKg?: number;
   noteZh?: string;
   noteEn?: string;
+  skipKitchenCloudPrint?: boolean;
 }
 
 function receiptNotePlainLines(item: { noteZh?: string; noteEn?: string }): string[] {

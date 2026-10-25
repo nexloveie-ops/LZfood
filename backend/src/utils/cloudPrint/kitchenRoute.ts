@@ -157,9 +157,6 @@ export async function tryKitchenCloudPrintAndMark(opts: {
     else kitchenLineIds.push(id);
   }
 
-  if (skipLineIds.length > 0) {
-    await markLinesKitchenPrinted(opts.storeId, opts.orderId, skipLineIds);
-  }
   if (kitchenLineIds.length === 0) {
     return skipLineIds.length > 0 ? 'skipped' : 'pending';
   }
@@ -198,15 +195,6 @@ export async function tryKitchenCloudPrintTableAndMark(opts: {
   const orderIds = [...kitchenOrders, ...skipOnlyOrders].map((o) => String(o._id));
   if (orderIds.length === 0) {
     return { kitchenPrint: 'pending', orderIds: [] };
-  }
-
-  for (const o of orders) {
-    const skipLineIds = (o.items || [])
-      .filter((it) => it.lineKind !== 'delivery_fee' && !it.refunded && lineSkipsKitchenCloudPrint(it, skipItemIds))
-      .map((it) => String(it._id));
-    if (skipLineIds.length > 0 && mongoose.Types.ObjectId.isValid(String(o._id))) {
-      await markLinesKitchenPrinted(opts.storeId, new mongoose.Types.ObjectId(String(o._id)), skipLineIds);
-    }
   }
 
   if (kitchenOrders.length === 0) {

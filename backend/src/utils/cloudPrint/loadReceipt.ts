@@ -2,6 +2,7 @@ import mongoose from 'mongoose';
 import { getModels } from '../../getModels';
 import { getDineInWorkflowModeForStore } from '../dineInWorkflowMode';
 import type { CloudPrintLine, CloudPrintOrder, CloudPrintReceipt, CloudPrintTicketKind } from './buildFeieyunReceipt';
+import { filterKitchenCloudPrintLines } from './skipKitchenCategory';
 
 function pickName(translations: { locale: string; name: string }[] | undefined, locale: string): string {
   return translations?.find((t) => t.locale === locale)?.name?.trim() || '';
@@ -222,9 +223,7 @@ export async function loadCloudPrintTableTicket(
   if (filtered.length === 0) return null;
 
   const enriched = await enrichLinesWithCategories(storeId, filtered);
-  const kitchenEnriched = enriched.map((lines) =>
-    lines.filter((it) => it.lineKind !== 'delivery_fee' && !it.skipKitchenCloudPrint),
-  );
+  const kitchenEnriched = enriched.map((lines) => filterKitchenCloudPrintLines(lines));
   const kitchenOrders = filtered
     .map((o, i) => ({ order: o, items: kitchenEnriched[i] || [] }))
     .filter((row) => row.items.length > 0);
@@ -285,7 +284,7 @@ export async function loadCloudPrintOrderTicket(
   if ((filtered.items || []).length === 0) return null;
 
   const enriched = await enrichLinesWithCategories(storeId, [filtered]);
-  const items = (enriched[0] || []).filter((it) => it.lineKind !== 'delivery_fee' && !it.skipKitchenCloudPrint);
+  const items = filterKitchenCloudPrintLines(enriched[0] || []);
   if (items.length === 0) return null;
   const foodTotal = items.reduce((s, it) => s + lineUnitTotal(it), 0);
   const bundles = filtered.appliedBundles || [];

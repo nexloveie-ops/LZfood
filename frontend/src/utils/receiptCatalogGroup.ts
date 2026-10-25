@@ -10,6 +10,7 @@ export type ReceiptCatalogMeta = {
   categoryName: string;
   categoryNameEn: string;
   categorySortOrder: number;
+  skipKitchenCloudPrint?: boolean;
 };
 
 export type CatalogGroupableItem = {
@@ -30,6 +31,7 @@ type CategoryRow = {
   _id: string;
   sortOrder: number;
   translations?: { locale: string; name: string }[];
+  skipKitchenCloudPrint?: boolean;
 };
 
 type MenuItemRow = {
@@ -97,6 +99,7 @@ export async function loadMenuCatalogLookup(force = false): Promise<CatalogLooku
       categoryName: pickTranslationName(c.translations, 'zh-CN') || pickTranslationName(c.translations, 'en-US') || 'Category',
       categoryNameEn: pickTranslationName(c.translations, 'en-US') || pickTranslationName(c.translations, 'zh-CN') || '',
       categorySortOrder: Number.isFinite(c.sortOrder) ? c.sortOrder : 9999,
+      skipKitchenCloudPrint: Boolean(c.skipKitchenCloudPrint),
     });
   }
 
@@ -126,6 +129,7 @@ export function resolveItemCatalogMeta(
       categoryName: item.categoryName || 'Category',
       categoryNameEn: item.categoryNameEn || '',
       categorySortOrder: item.categorySortOrder ?? 9999,
+      skipKitchenCloudPrint: item.skipKitchenCloudPrint,
     };
   }
   const mid = item.menuItemId ? String(item.menuItemId) : '';
@@ -174,6 +178,7 @@ export function groupItemsByMenuCatalog<T extends CatalogGroupableItem & Partial
               categoryName: it.categoryName || 'Category',
               categoryNameEn: it.categoryNameEn || '',
               categorySortOrder: it.categorySortOrder ?? 9999,
+              skipKitchenCloudPrint: it.skipKitchenCloudPrint,
             }
           : uncategorizedMeta();
 

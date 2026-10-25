@@ -53,3 +53,15 @@ export function lineSkipsKitchenCloudPrint(
   const mid = line.menuItemId ? String(line.menuItemId) : '';
   return Boolean(mid && skipItemIds.has(mid));
 }
+
+/** 自动出厨默认去掉酒水；收银「打印整单」传 includeSkipKitchen 后保留。 */
+export function filterKitchenCloudPrintLines<T extends { lineKind?: string; skipKitchenCloudPrint?: boolean }>(
+  items: T[],
+  opts?: { includeSkipKitchen?: boolean },
+): T[] {
+  return items.filter((it) => {
+    if (it.lineKind === 'delivery_fee') return false;
+    if (opts?.includeSkipKitchen) return true;
+    return !it.skipKitchenCloudPrint;
+  });
+}
