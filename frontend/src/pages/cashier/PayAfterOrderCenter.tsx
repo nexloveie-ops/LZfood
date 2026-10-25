@@ -299,63 +299,6 @@ export default function PayAfterOrderCenter() {
     if (selectedTable == null && tables[0]) setSelectedTable(tables[0].tableNumber);
   }, [selectedTable, tables]);
 
-  const printKitchenLocal = useCallback(async (order: PayAfterOrder, lineIds: string[]) => {
-    const idSet = new Set(lineIds);
-    const receiptItems: ReturnType<typeof mapItem>[] = [];
-    const increments: { lineId: string; qty: number }[] = [];
-    for (const item of order.items) {
-      if (!idSet.has(item._id) || item.lineKind === 'delivery_fee' || item.refunded) continue;
-      if (item.skipKitchenCloudPrint) {
-        receiptItems.push(mapItem(item, item.quantity));
-        continue;
-      }
-      const printed = Math.max(0, Math.min(Number(item.kitchenPrintedQty) || 0, item.quantity));
-      const unprinted = item.quantity - printed;
-      if (unprinted <= 0) continue;
-      receiptItems.push(mapItem(item, unprinted));
-      increments.push({ lineId: item._id, qty: unprinted });
-    }
-    if (receiptItems.length === 0) {
-      alert(isEn ? 'No kitchen items to print.' : '没有可打印的菜品。');
-      return;
-    }
-    const total = receiptItems.reduce((s, it) => s + lineTotal(it as PayAfterOrderItem, it.quantity), 0);
-    await printBuiltReceipt({
-      checkoutId: order._id,
-      type: 'seat' as const,
-      totalAmount: total,
-      paymentMethod: 'pending' as const,
-      checkedOutAt: new Date().toISOString(),
-      tableNumber: order.tableNumber,
-      orders: [{
-        _id: order._id,
-        type: order.type,
-        seatNumber: order.seatNumber,
-        dailyOrderNumber: order.dailyOrderNumber,
-        dineInOrderNumber: order.dineInOrderNumber,
-        dineInGuestLabel: order.dineInGuestLabel,
-        status: order.status,
-        items: receiptItems,
-        customerName: order.customerName,
-        customerPhone: order.customerPhone,
-        deliveryAddress: order.deliveryAddress,
-        postalCode: order.postalCode,
-        deliveryFeeEuro: order.deliveryFeeEuro,
-      }],
-    }, config, { copies: 1 });
-    if (increments.length > 0) {
-      const mark = await apiFetch(`/api/orders/${order._id}/kitchen-printed-increment`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ increments }),
-      });
-      if (!mark.ok) {
-        const err = (await mark.json().catch(() => ({}))) as { error?: { message?: string } };
-        alert(err?.error?.message || (isEn ? 'Printed but failed to save kitchen state.' : '已打印，但未能保存厨房出单。'));
-      }
-    }
-  }, [config, isEn, token]);
-
   const printFullOrderLocal = useCallback(async (order: PayAfterOrder) => {
     const receiptItems = (order.items || [])
       .filter((it) => it.lineKind !== 'delivery_fee' && !it.refunded)
@@ -459,54 +402,6 @@ export default function PayAfterOrderCenter() {
       setBusyId(null);
     }
   }, [fetchAll, isEn, printKitchenTableLocal, t]);
-
-  const printKitchenCloud = useCallback(async (order: PayAfterOrder, lineIds: string[], roundIndex?: number, append?: boolean) => {
-    if (lineIds.length === 0) {
-      alert(isEn ? 'No kitchen items to print.' : '没有可打印的菜品。');
-      return;
-    }
-    const res = await apiFetch(`/api/orders/${order._id}/kitchen-cloud-print`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({
-        lineIds,
-        ...(roundIndex != null ? { roundIndex } : {}),
-        ...(append ? { append: true } : {}),
-      }),
-    });
-    const d = await res.json().catch(() => null) as { kitchenPrint?: string; error?: { message?: string } } | null;
-    const skipIds = lineIds.filter((id) => order.items.find((it) => it._id === id)?.skipKitchenCloudPrint);
-    if (res.ok && d?.kitchenPrint === 'cloud') {
-      if (skipIds.length > 0) await printKitchenLocal(order, skipIds);
-      return;
-    }
-    if (res.ok && d?.kitchenPrint === 'skipped') {
-      await printKitchenLocal(order, lineIds);
-      return;
-    }
-    if (!res.ok && d?.error?.message) {
-      /* still try local so the kitchen can cook */
-    }
-    await printKitchenLocal(order, lineIds);
-  }, [isEn, printKitchenLocal, token]);
-
-  const runKitchenPrint = useCallback(async (busyKey: string, jobs: Array<{ order: PayAfterOrder; lineIds: string[]; roundIndex?: number; append?: boolean }>) => {
-    if (jobs.length === 0) {
-      alert(isEn ? 'No kitchen items to print.' : '没有可打印的菜品。');
-      return;
-    }
-    setBusyId(busyKey);
-    try {
-      for (const job of jobs) {
-        await printKitchenCloud(job.order, job.lineIds, job.roundIndex, job.append);
-      }
-      await fetchAll();
-    } catch (e) {
-      alert(e instanceof Error ? e.message : t('common.error'));
-    } finally {
-      setBusyId(null);
-    }
-  }, [fetchAll, isEn, printKitchenCloud, t]);
 
   const printTakeoutDeliveryKitchen = useCallback(async (order: PayAfterOrder) => {
     const items = order.items.filter((it) => it.lineKind !== 'delivery_fee' && !it.refunded).map((it) => mapItem(it, it.quantity));

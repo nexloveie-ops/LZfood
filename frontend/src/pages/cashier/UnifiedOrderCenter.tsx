@@ -235,7 +235,7 @@ function isPhonePlacementKitchenStepDone(o: OrderRow, printedIds: Record<string,
     if (it.lineKind === 'delivery_fee' || it.refunded || it.skipKitchenCloudPrint) continue;
     const q = it.quantity;
     const p = Math.max(0, Math.min(Number(it.kitchenPrintedQty) || 0, q));
-    if (p < q) return false;
+    if (p < q) return !!printedIds[o._id];
   }
   return true;
 }
