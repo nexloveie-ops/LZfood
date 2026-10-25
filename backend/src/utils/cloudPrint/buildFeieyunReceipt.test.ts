@@ -213,46 +213,4 @@ describe('buildFeieyunReceiptContent pay_after kitchen', () => {
     expect(html).toContain('Subtotal');
   });
 
-  it('prints 一起上 on kitchen tickets by default', () => {
-    const html = buildFeieyunReceiptContent(sampleReceipt({ dineInWorkflowMode: 'pay_after' }));
-    expect(html).toContain('<CB>一起上 / Together</CB>');
-  });
-
-  it('prints 分道上 on kitchen tickets when the order is courses', () => {
-    const html = buildFeieyunReceiptContent(sampleReceipt({
-      dineInWorkflowMode: 'pay_after',
-      orders: [{
-        type: 'dine_in',
-        dineInServeStyle: 'courses',
-        items: [{
-          quantity: 1,
-          unitPrice: 12,
-          itemName: '金牌钟水饺',
-          selectedOptions: [],
-        }],
-      }],
-    }));
-    expect(html).toContain('<CB>分道上 / Courses</CB>');
-    expect(html).not.toContain('一起上 / Together');
-  });
-
-  it('prints mixed serve styles on a whole-table kitchen ticket', () => {
-    const html = buildFeieyunReceiptContent(sampleReceipt({
-      dineInWorkflowMode: 'pay_after',
-      wholeTableKitchenTicket: true,
-      orders: [
-        {
-          type: 'dine_in',
-          dineInServeStyle: 'together',
-          items: [{ quantity: 1, unitPrice: 12, itemName: '金牌钟水饺', selectedOptions: [] }],
-        },
-        {
-          type: 'dine_in',
-          dineInServeStyle: 'courses',
-          items: [{ quantity: 1, unitPrice: 28, itemName: '龙虾', selectedOptions: [] }],
-        },
-      ],
-    }));
-    expect(html).toContain('<CB>一起上 + 分道上 / Together + Courses</CB>');
-  });
 });

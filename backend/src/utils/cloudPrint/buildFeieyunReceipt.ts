@@ -43,7 +43,6 @@ export type CloudPrintOrder = {
   dailyOrderNumber?: number;
   dineInOrderNumber?: string;
   dineInGuestLabel?: string;
-  dineInServeStyle?: 'together' | 'courses' | string;
   customerName?: string;
   customerPhone?: string;
   deliveryAddress?: string;
@@ -279,14 +278,6 @@ function primaryType(orders: CloudPrintOrder[]): string {
   return 'takeout';
 }
 
-function dineInServeStyleBanner(orders: CloudPrintOrder[]): string {
-  const dine = orders.filter((o) => o.type === 'dine_in');
-  const set = new Set(dine.map((o) => (o.dineInServeStyle === 'courses' ? 'courses' : 'together')));
-  if (set.has('courses') && set.has('together')) return '一起上 + 分道上 / Together + Courses';
-  if (set.has('courses')) return '分道上 / Courses';
-  return '一起上 / Together';
-}
-
 type PartialLine = {
   key: string;
   title: string;
@@ -367,9 +358,6 @@ export function buildFeieyunReceiptContent(receipt: CloudPrintReceipt): string {
 
   if (isDineIn) {
     if (receipt.tableNumber != null && receipt.tableNumber > 0) lines.push(`<CB>Table ${receipt.tableNumber}</CB>`);
-    if (isKitchenTicket) {
-      lines.push(`<CB>${dineInServeStyleBanner(receipt.orders)}</CB>`);
-    }
     if (isPayAfterKitchen && receipt.wholeTableKitchenTicket) {
       lines.push('<CB>整桌 / Whole table</CB>');
     }

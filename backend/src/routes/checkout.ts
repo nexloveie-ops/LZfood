@@ -1229,7 +1229,6 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
           dailyOrderNumber: o.dailyOrderNumber,
           dineInOrderNumber: (o as Record<string, unknown>).dineInOrderNumber,
           dineInGuestLabel: (o as Record<string, unknown>).dineInGuestLabel,
-          dineInServeStyle: (o as Record<string, unknown>).dineInServeStyle === 'courses' ? 'courses' : 'together',
           status: o.status,
           items: mapItemsWithCatalog((o.items as Record<string, unknown>[]) || []),
           customerName: (o as { customerName?: string }).customerName,

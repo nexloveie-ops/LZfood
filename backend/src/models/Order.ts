@@ -53,8 +53,6 @@ const OrderSchema = new mongoose.Schema({
   dineInOrderNumber: { type: String },
   /** 后结堂食：顾客自选称呼/桌边备注（可选，短字符串） */
   dineInGuestLabel: { type: String, default: '' },
-  /** 堂食上菜方式：只印在厨房小票，厨房自行安排（无起菜流程） */
-  dineInServeStyle: { type: String, enum: ['together', 'courses'], default: 'together' },
   /** 后结堂食：顾客修改中暂不对店员展示时为 false；缺省视为 true（与 pay_first 历史单一致） */
   dineInExposedToStaff: { type: Boolean },
   /** 后结堂食：店员锁定后顾客仅可加菜不可减删（由 PUT items 校验） */

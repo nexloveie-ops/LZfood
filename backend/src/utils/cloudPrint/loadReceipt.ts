@@ -118,7 +118,6 @@ function toCloudPrintOrder(o: LeanOrder, items: CloudPrintLine[]): CloudPrintOrd
     dailyOrderNumber: o.dailyOrderNumber as number | undefined,
     dineInOrderNumber: o.dineInOrderNumber as string | undefined,
     dineInGuestLabel: o.dineInGuestLabel as string | undefined,
-    dineInServeStyle: o.dineInServeStyle === 'courses' ? 'courses' : 'together',
     customerName: o.customerName as string | undefined,
     customerPhone: o.customerPhone as string | undefined,
     deliveryAddress: o.deliveryAddress as string | undefined,

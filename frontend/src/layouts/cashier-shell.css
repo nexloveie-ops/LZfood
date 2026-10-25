@@ -723,61 +723,6 @@
   padding: 10px 12px;
 }
 
-.cashier-serve-style {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.cashier-serve-style-label {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--text-secondary);
-}
-
-.cashier-serve-style-btns {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
-
-.cashier-serve-style-btns button {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 2px;
-  min-height: 44px;
-  padding: 6px 8px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: #f8fafc;
-  cursor: pointer;
-  color: var(--text-primary);
-}
-
-.cashier-serve-style-btns button strong {
-  font-size: 14px;
-  font-weight: 700;
-  line-height: 1.2;
-}
-
-.cashier-serve-style-btns button span {
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--text-secondary);
-}
-
-.cashier-serve-style-btns button.is-on {
-  border-color: var(--portal-accent);
-  background: var(--portal-accent-soft);
-  color: var(--portal-accent);
-}
-
-.cashier-serve-style-btns button.is-on span {
-  color: var(--portal-accent);
-}
-
 .pay-after-board {
   display: flex;
   flex-direction: column;

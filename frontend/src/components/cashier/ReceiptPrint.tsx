@@ -19,7 +19,6 @@ import {
   type ReceiptCatalogMeta,
   type ReceiptCatalogSection,
 } from '../../utils/receiptCatalogGroup';
-import { dineInServeStyleBannerFromOrders } from '../../utils/dineInServeStyle';
 import {
   receiptPaymentMethodLabel,
   receiptPaymentStatusLabel,
@@ -94,7 +93,6 @@ interface ReceiptOrder {
   dineInOrderNumber?: string;
   /** 后结堂食：称呼/桌边备注（整桌小票分单分隔行展示） */
   dineInGuestLabel?: string;
-  dineInServeStyle?: 'together' | 'courses' | string;
   status: string;
   items: ReceiptOrderItem[];
   customerName?: string;
@@ -617,10 +615,6 @@ function buildReceiptPlainText(
     }
     const seats = [...new Set(receipt.orders.map((o) => o.seatNumber).filter((s) => s != null && s > 0))].sort();
     if (seats.length > 0) lines.push(plainCenter(`Seat ${seats.join(', ')}`));
-    {
-      const serve = dineInServeStyleBannerFromOrders(receipt.orders);
-      if (serve) lines.push(plainCenter(serve));
-    }
     if (receipt.wholeTableKitchenTicket) {
       lines.push(plainCenter('全桌厨房单 / Whole table'));
       const labels = receipt.orders
@@ -844,10 +838,6 @@ function buildReceiptHTML(
     if (receipt.tableNumber != null && receipt.tableNumber > 0) html += `<div class="big">Table ${receipt.tableNumber}</div>`;
     const seats = [...new Set(receipt.orders.map(o => o.seatNumber).filter(s => s != null && s > 0))].sort();
     if (seats.length > 0) html += `<div class="big">Seat ${seats.join(', ')}</div>`;
-    {
-      const serve = dineInServeStyleBannerFromOrders(receipt.orders);
-      if (serve) html += `<div class="big">${serve}</div>`;
-    }
     if (receipt.wholeTableKitchenTicket) {
       html += `<div style="font-size:15px;margin-top:6px;font-weight:700">全桌厨房单 / Whole table kitchen</div>`;
       const nums = receipt.orders.map((o) => o.dineInOrderNumber).filter((n): n is string => Boolean(n && String(n).trim()));
@@ -1151,7 +1141,6 @@ export default function ReceiptPrint({ checkoutId, cashReceived, changeAmount, b
             <>
               {receipt.tableNumber != null && receipt.tableNumber > 0 && <div style={{ fontSize: 20 }}>Table {receipt.tableNumber}</div>}
               {(() => { const s = [...new Set(receipt.orders.map(o => o.seatNumber).filter(v => v != null && v > 0))].sort(); return s.length > 0 ? <div style={{ fontSize: 20 }}>Seat {s.join(', ')}</div> : null; })()}
-              {(() => { const serve = dineInServeStyleBannerFromOrders(receipt.orders); return serve ? <div style={{ fontSize: 20 }}>{serve}</div> : null; })()}
               {receipt.wholeTableKitchenTicket ? (
                 <>
                   <div style={{ fontSize: 16, marginTop: 4 }}>全桌厨房单 / Whole table kitchen</div>
@@ -1376,10 +1365,6 @@ function buildKitchenOrderBasicsPlain(receipt: ReceiptData, config: RestaurantCo
     }
     const seats = [...new Set(receipt.orders.map((o) => o.seatNumber).filter((s) => s != null && s > 0))].sort();
     if (seats.length > 0) lines.push(plainCenter(`Seat ${seats.join(', ')}`));
-    {
-      const serve = dineInServeStyleBannerFromOrders(receipt.orders);
-      if (serve) lines.push(plainCenter(serve));
-    }
     if (receipt.wholeTableKitchenTicket) {
       lines.push(plainCenter('全桌 / Whole table'));
       const labels = receipt.orders
@@ -1480,10 +1465,6 @@ function buildCatalogKitchenHTML(
     if (receipt.tableNumber != null && receipt.tableNumber > 0) html += `<div class="big">Table ${receipt.tableNumber}</div>`;
     const seats = [...new Set(receipt.orders.map((o) => o.seatNumber).filter((s) => s != null && s > 0))].sort();
     if (seats.length > 0) html += `<div class="big">Seat ${seats.join(', ')}</div>`;
-    {
-      const serve = dineInServeStyleBannerFromOrders(receipt.orders);
-      if (serve) html += `<div class="big">${serve}</div>`;
-    }
     if (receipt.wholeTableKitchenTicket) {
       html += `<div style="font-size:15px;margin-top:4px">全桌 / Whole table</div>`;
       const labels = receipt.orders

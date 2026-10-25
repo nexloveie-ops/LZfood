@@ -572,10 +572,6 @@ export function createOrdersRouter(io: SocketIOServer): Router {
             ? String((req.body as { dineInGuestLabel: string }).dineInGuestLabel).trim()
             : '';
         orderData.dineInGuestLabel = rawGuest.slice(0, 40);
-        orderData.dineInServeStyle =
-          (req.body as { dineInServeStyle?: unknown }).dineInServeStyle === 'courses'
-            ? 'courses'
-            : 'together';
         if (dineInWf === 'pay_after' || waiterPlacement) {
           // 首次下单对店端可见；顾客点「改单」会先调 dine-in-exposed 隐藏
           // waiterPlacement：先付店也走未结，必须进订单中心
