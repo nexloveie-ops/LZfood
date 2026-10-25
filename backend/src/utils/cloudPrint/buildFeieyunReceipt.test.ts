@@ -37,8 +37,11 @@ describe('buildFeieyunReceiptContent pay_after kitchen', () => {
     expect(html).not.toContain('Ref:');
     expect(html).toContain('Table 2');
     expect(html).toContain('<B>1X 金牌钟水饺</B>');
-    expect(html).toMatch(/<L><BOLD>Gold dumpling\s+12\.00 EUR<\/BOLD><\/L>/);
-    expect(html).toContain('<L><B>  · 加辣 Extra spicy +1.00 EUR</B></L>');
+    expect(html).toMatch(/Gold dumpling\s+12\.00 EUR/);
+    expect(html).not.toMatch(/<L><BOLD>Gold dumpling/);
+    expect(html).toContain('<B>  · 加辣 +1.00 EUR</B>');
+    expect(html).toContain('    Extra spicy');
+    expect(html).not.toContain('<L><B>  · 加辣 Extra spicy +1.00 EUR</B></L>');
     expect(html).not.toContain('◆');
     expect(html).not.toContain('其他 / Other');
     expect(html).not.toContain('<RIGHT>12.00 EUR</RIGHT>');
@@ -67,8 +70,9 @@ describe('buildFeieyunReceiptContent pay_after kitchen', () => {
     const html = buildFeieyunReceiptContent(sampleReceipt({ dineInWorkflowMode: 'pay_first' }));
     expect(html).toContain('Kitchen / 厨房');
     expect(html).toContain('Order #174501');
-    expect(html).toContain('<L><B>  · 加辣 Extra spicy +1.00 EUR</B></L>');
-    expect(html).toMatch(/<L><BOLD>Gold dumpling\s+12\.00 EUR<\/BOLD><\/L>/);
+    expect(html).toContain('<B>  · 加辣 +1.00 EUR</B>');
+    expect(html).toContain('    Extra spicy');
+    expect(html).toMatch(/Gold dumpling\s+12\.00 EUR/);
   });
 
   it('merges a whole table onto one kitchen ticket without order numbers', () => {
@@ -174,7 +178,8 @@ describe('buildFeieyunReceiptContent pay_after kitchen', () => {
     expect(html).not.toContain('◆');
     expect(html).not.toContain('前菜');
     expect(html).not.toContain('Starters');
-    expect(html).toContain('<L><B>  · 甜酸酱 Sweet chilli</B></L>');
+    expect(html).toContain('<B>  · 甜酸酱</B>');
+    expect(html).toContain('    Sweet chilli');
   });
 
   it('does not change checkout tickets', () => {
@@ -187,8 +192,10 @@ describe('buildFeieyunReceiptContent pay_after kitchen', () => {
     expect(html).not.toContain('一起上 / Together');
     expect(html).not.toContain('分道上 / Courses');
     expect(html).toContain('Order #174501');
-    expect(html).toContain('<L><B>  · 加辣 Extra spicy +1.00 EUR</B></L>');
-    expect(html).toMatch(/<L><BOLD>Gold dumpling\s+12\.00 EUR<\/BOLD><\/L>/);
+    expect(html).toContain('<B>  · 加辣 +1.00 EUR</B>');
+    expect(html).toContain('    Extra spicy');
+    expect(html).toMatch(/Gold dumpling\s+12\.00 EUR/);
+    expect(html).not.toMatch(/<L><BOLD>Gold dumpling/);
   });
 
   it('prints waived service as its own line, not a discount', () => {

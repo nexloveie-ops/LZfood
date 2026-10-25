@@ -147,8 +147,8 @@ function notePrintLines(noteZh?: string, noteEn?: string, kitchenEmphasis = fals
     if (secondary) out.push(`    ${secondary}`);
     return out;
   }
-  const out = [`<L><B>  备注 ${primary}</B></L>`];
-  if (secondary) out.push(`<L><B>    ${secondary}</B></L>`);
+  const out = [`<B>  备注 ${primary}</B>`];
+  if (secondary) out.push(`    ${secondary}`);
   return out;
 }
 
@@ -156,11 +156,17 @@ function optLines(o: CloudPrintOption): string[] {
   const zh = String(o.choiceName || o.groupName || '').trim();
   const en = String(o.choiceNameEn || o.groupNameEn || '').trim();
   const fallback = extraEuro(o.extraPrice) > 0 ? 'Option' : '';
-  const label = zh && en && en !== zh ? `${zh} ${en}` : (zh || en || fallback);
-  if (!label && extraEuro(o.extraPrice) <= 0) return [];
   const price = extraSuffix(o.extraPrice);
+  const out: string[] = [];
+  if (zh) {
+    out.push(`<B>  · ${zh}${price}</B>`);
+    if (en && en !== zh) out.push(`    ${en}`);
+    return out;
+  }
+  const label = en || fallback;
   if (!label && !price) return [];
-  return [`<L><B>  · ${label}${price}</B></L>`];
+  out.push(`  · ${label}${price}`);
+  return out;
 }
 
 function paymentLabels(pm: string): { status: string; method: string } {
@@ -417,8 +423,7 @@ export function buildFeieyunReceiptContent(receipt: CloudPrintReceipt): string {
     const zhName = title.replace(/^\d+X\s/, '').trim();
     const amountText = euro(amount);
     if (en && en !== zhName) {
-      // <L> 只加高，一行仍是 48 列，英文和金额才能排在同一行右侧。
-      lines.push(`<L><BOLD>${padRow(en, amountText)}</BOLD></L>`);
+      lines.push(padRow(en, amountText));
     } else {
       lines.push(`<RIGHT>${amountText}</RIGHT>`);
     }
