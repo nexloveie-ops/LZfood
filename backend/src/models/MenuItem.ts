@@ -90,6 +90,9 @@ const InventorySubdocSchema = new mongoose.Schema(
 );
 
 const MenuItemSchema = new mongoose.Schema({
+  menuId: { type: mongoose.Schema.Types.ObjectId, ref: 'Menu', index: true },
+  /** 共用另一道菜的 Track A 库存 / 沽清；本行仍可有独立价钱与选项 */
+  stockShareItemId: { type: mongoose.Schema.Types.ObjectId, ref: 'MenuItem' },
   categoryId: { type: mongoose.Schema.Types.ObjectId, ref: 'MenuCategory', required: true },
   price: { type: Number, required: true },
   /** 选填折扣价：填写且低于 price 时按此价销售，菜单显示原价划线。 */

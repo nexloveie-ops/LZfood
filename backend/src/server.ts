@@ -11,6 +11,7 @@ import { attachStoreContext } from './middleware/storeContext';
 import { errorHandler } from './middleware/errorHandler';
 import { getFileStream, USE_GCS } from './storage';
 import authRouter from './routes/auth';
+import menusRouter from './routes/menus';
 import menuCategoriesRouter from './routes/menuCategories';
 import menuItemsRouter from './routes/menuItems';
 import marketPricesRouter from './routes/marketPrices';
@@ -116,6 +117,8 @@ app.use('/api/public', publicWidgetRouter);
 app.use('/api/public', publicTranslateRouter);
 app.use('/api/public', publicTodaysSpecialsRouter);
 app.use('/api/public/portal', publicPortalRouter);
+
+app.use('/api/menus', menusRouter);
 
 // Menu categories routes
 app.use('/api/menu/categories', menuCategoriesRouter);

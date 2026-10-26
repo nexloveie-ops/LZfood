@@ -17,8 +17,8 @@ export default function I18nEditor() {
 
   const fetchData = useCallback(async () => {
     const [catRes, itemRes] = await Promise.all([
-      apiFetch('/api/menu/categories', { headers: { Authorization: `Bearer ${token}` } }),
-      apiFetch('/api/menu/items?ownOptionGroups=1&includeHidden=1', { headers: { Authorization: `Bearer ${token}` } }),
+      apiFetch('/api/menu/categories?all=1', { headers: { Authorization: `Bearer ${token}` } }),
+      apiFetch('/api/menu/items?ownOptionGroups=1&includeHidden=1&all=1', { headers: { Authorization: `Bearer ${token}` } }),
     ]);
     const cats: Translatable[] = catRes.ok ? (await catRes.json()).map((c: RawEntry) => ({ ...c, kind: 'category' as const })) : [];
     const items: Translatable[] = itemRes.ok ? (await itemRes.json()).map((i: RawEntry) => ({ ...i, kind: 'item' as const })) : [];

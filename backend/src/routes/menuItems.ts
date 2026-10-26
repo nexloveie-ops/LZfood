@@ -23,6 +23,7 @@ import { sanitizePurchaseUnits, enrichPurchaseUnitsForResponse } from '../utils/
 import { isValidConsumptionQty, roundConsumptionQty } from '../utils/consumptionQty';
 import { dublinCalendarDate, loadTodayPricePerKgMap } from '../utils/marketPrice';
 import { menuItemListPriceEuro, parseMenuItemDiscountPriceInput } from '../utils/menuItemSellPrice';
+import { applyStockShareOverlay, catalogMenuScope } from '../utils/storeMenu';
 
 function menuModels() {
   return getModels() as {
@@ -152,6 +153,14 @@ router.get('/', optionalAuthMiddleware, async (req: Request, res: Response, next
     const canSeeHidden = !!req.user && (
       hasPermission(req.user.role, 'menu:write') || hasPermission(req.user.role, 'order:read')
     );
+    if (req.storeId) {
+      const scope = await catalogMenuScope(req.storeId, {
+        menuId: req.query.menuId,
+        channel: req.query.channel,
+        all: canSeeHidden ? req.query.all : undefined,
+      });
+      Object.assign(filter, scope.filter);
+    }
     if (shouldExcludeHiddenMenuItems({ includeHiddenQuery: req.query.includeHidden, canSeeHidden })) {
       filter.isHidden = { $ne: true };
     }
@@ -165,12 +174,15 @@ router.get('/', optionalAuthMiddleware, async (req: Request, res: Response, next
     const items = await MenuItem.find(filter).lean();
     void soldOutSweep.catch(() => {});
 
+    const overlaid = req.storeId
+      ? await applyStockShareOverlay(req.storeId, items as Record<string, unknown>[])
+      : items;
     const baseItemsUnknown = ownOnly
-      ? items.map((item) => ({
+      ? overlaid.map((item) => ({
           ...(item as Record<string, unknown>),
           optionGroups: normalizeNestedOptionGroups((item as { optionGroups?: unknown }).optionGroups),
         }))
-      : await mergeTemplateOptionGroupsForItems(req.storeId!, items);
+      : await mergeTemplateOptionGroupsForItems(req.storeId!, overlaid);
     const baseItems = baseItemsUnknown as unknown as Array<{
       translations: Array<{ locale: string; name?: string }>;
       inventory?: { purchaseUnits?: unknown };
@@ -270,6 +282,7 @@ router.post(
 
       const item = await MenuItem.create({
         storeId: req.storeId,
+        menuId: categoryExists.get('menuId') || undefined,
         categoryId,
         price,
         ...(disc != null ? { discountPrice: disc } : {}),
@@ -368,7 +381,11 @@ router.put(
       }
 
       const updateData: Record<string, unknown> = {};
-      if (categoryId !== undefined) updateData.categoryId = categoryId;
+      if (categoryId !== undefined) {
+        updateData.categoryId = categoryId;
+        const cat = await MenuCategory.findOne({ _id: categoryId, storeId: req.storeId }).select('menuId');
+        if (cat?.get('menuId')) updateData.menuId = cat.get('menuId');
+      }
       if (price !== undefined) updateData.price = price;
       let unsetDiscount = false;
       if (discountPrice !== undefined || isMarketPrice === true) {

@@ -120,7 +120,7 @@ export function shouldKitchenCloudPrintAfterCashierPay(input: {
 
 /**
  * 有云打印则推飞鹅并记已出厨房；否则返回 pending，由订单中心点打印。
- * 结账自动打印开关不参与厨房出票。
+ * 飞鹅只出厨房票；份数走店铺云打印配置。
  */
 export async function tryKitchenCloudPrintAndMark(opts: {
   storeId: mongoose.Types.ObjectId;

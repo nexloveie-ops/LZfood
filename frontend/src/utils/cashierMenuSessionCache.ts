@@ -29,8 +29,8 @@ export const CASHIER_MENU_CACHE_MAX_AGE_MS = 60_000;
 
 const cache = new Map<string, CashierMenuSessionEntry>();
 
-export function cashierMenuSessionCacheKey(storeSlug: string, lang: string): string {
-  return `${storeSlug || '_default'}:${lang}`;
+export function cashierMenuSessionCacheKey(storeSlug: string, lang: string, channel = 'dine_in'): string {
+  return `${storeSlug || '_default'}:${lang}:${channel || 'dine_in'}`;
 }
 
 export function getCashierMenuSessionCache(key: string): CashierMenuSessionEntry | undefined {

@@ -3,17 +3,20 @@ import { getModels } from '../../getModels';
 import { FeatureKeys, resolveStoreEffectiveFeatures } from '../featureCatalog';
 import { buildFeieyunReceiptContent } from './buildFeieyunReceipt';
 import {
-  CLOUD_PRINT_AUTO_KEY,
   CLOUD_PRINT_COPIES_KEY,
   CLOUD_PRINT_ENABLED_KEY,
-  parseCloudPrintAutoCheckout,
   parseCloudPrintCopies,
   parseCloudPrintEnabled,
 } from './config';
 import { feieyunPrintMsg, isFeieyunConfigured } from './feieyunClient';
-import { loadCloudPrintOrderTicket, loadCloudPrintReceipt, loadCloudPrintTableTicket } from './loadReceipt';
+import { loadCloudPrintOrderTicket, loadCloudPrintTableTicket } from './loadReceipt';
 
 export type CloudPrintTrigger = 'checkout' | 'reprint' | 'placement' | 'append';
+
+/** 飞鹅只出厨房票（下单/加菜）；结账小票走本地打印。 */
+export function isKitchenCloudPrintTrigger(trigger: CloudPrintTrigger): trigger is 'placement' | 'append' {
+  return trigger === 'placement' || trigger === 'append';
+}
 
 export type CloudPrintJobResult = {
   skipped?: string;
@@ -50,7 +53,7 @@ export async function runStoreCloudPrint(opts: {
 
   const cfgRows = await SystemConfig.find({
     storeId: opts.storeId,
-    key: { $in: [CLOUD_PRINT_ENABLED_KEY, CLOUD_PRINT_COPIES_KEY, CLOUD_PRINT_AUTO_KEY] },
+    key: { $in: [CLOUD_PRINT_ENABLED_KEY, CLOUD_PRINT_COPIES_KEY] },
   }).lean() as unknown as Array<{ key: string; value: string }>;
   const cfg: Record<string, string> = {};
   for (const r of cfgRows) cfg[r.key] = r.value;
@@ -58,25 +61,23 @@ export async function runStoreCloudPrint(opts: {
   if (!parseCloudPrintEnabled(cfg[CLOUD_PRINT_ENABLED_KEY])) {
     return { skipped: 'disabled' };
   }
-  if (opts.trigger === 'checkout' && !parseCloudPrintAutoCheckout(cfg[CLOUD_PRINT_AUTO_KEY])) {
-    return { skipped: 'auto_off' };
+  if (!isKitchenCloudPrintTrigger(opts.trigger)) {
+    return { skipped: 'kitchen_only' };
   }
 
   let receipt;
-  if ((opts.trigger === 'placement' || opts.trigger === 'append') && opts.tableNumber != null) {
+  if (opts.tableNumber != null) {
     receipt = await loadCloudPrintTableTicket(opts.storeId, opts.tableNumber);
-  } else if (opts.trigger === 'placement' || opts.trigger === 'append') {
+  } else {
     receipt = opts.orderId
       ? await loadCloudPrintOrderTicket(opts.storeId, opts.orderId, {
           ticketKind: opts.trigger,
           onlyLineIds: opts.onlyLineIds,
         })
       : null;
-  } else {
-    receipt = opts.checkoutId ? await loadCloudPrintReceipt(opts.storeId, opts.checkoutId) : null;
   }
   if (!receipt) {
-    return { skipped: (opts.trigger === 'placement' || opts.trigger === 'append') ? 'order_not_found' : 'checkout_not_found' };
+    return { skipped: 'order_not_found' };
   }
 
   const content = buildFeieyunReceiptContent(receipt);
@@ -100,7 +101,7 @@ export function scheduleStoreCloudPrint(storeId: mongoose.Types.ObjectId, checko
   });
 }
 
-/** 手持下单/加菜：不走结账自动开关，店铺开了云打印即推飞鹅。 */
+/** 下单/加菜厨房票：店铺开了云打印即推飞鹅，份数走 cloud_print_copies。 */
 export function scheduleOrderCloudPrint(
   storeId: mongoose.Types.ObjectId,
   orderId: mongoose.Types.ObjectId,

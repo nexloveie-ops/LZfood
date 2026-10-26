@@ -1,10 +1,12 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import mongoose from 'mongoose';
 import { getModels } from '../getModels';
-import { requirePermission } from '../middleware/auth';
+import { optionalAuthMiddleware, requirePermission } from '../middleware/auth';
+import { hasPermission } from '../middleware/permissions';
 import { requireAuthSameStore } from '../middleware/authForStore';
 import { createAppError } from '../middleware/errorHandler';
 import { parseMenuCategoryDiscountZheInput } from '../utils/menuItemSellPrice';
+import { catalogMenuScope, ensureDefaultMenu } from '../utils/storeMenu';
 
 const router = Router();
 
@@ -19,11 +21,21 @@ function parseSkipKitchenCloudPrint(raw: unknown): boolean | undefined {
  * GET /api/menu/categories
  * Public — requires store context (X-Store-Slug / DEFAULT_STORE_SLUG).
  */
-router.get('/', async (req: Request, res: Response, next: NextFunction) => {
+router.get('/', optionalAuthMiddleware, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { MenuCategory } = getModels();
     const lang = req.query.lang as string | undefined;
-    const categories = await MenuCategory.find({ storeId: req.storeId }).sort({ sortOrder: 1 }).lean();
+    const canAll = !!req.user && (
+      hasPermission(req.user.role, 'menu:write') || hasPermission(req.user.role, 'order:read')
+    );
+    const scope = req.storeId
+      ? await catalogMenuScope(req.storeId, {
+          menuId: req.query.menuId,
+          channel: req.query.channel,
+          all: canAll ? req.query.all : undefined,
+        })
+      : { filter: { storeId: req.storeId }, unavailable: false };
+    const categories = await MenuCategory.find(scope.filter).sort({ sortOrder: 1 }).lean();
 
     if (lang) {
       const filtered = (categories as { translations?: { locale: string; name: string }[] }[]).map((cat) => {
@@ -51,7 +63,7 @@ router.post(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { MenuCategory } = getModels();
-      const { sortOrder, translations, discountZhe, skipKitchenCloudPrint } = req.body;
+      const { sortOrder, translations, discountZhe, skipKitchenCloudPrint, menuId: bodyMenuId } = req.body;
 
       if (sortOrder == null || !Array.isArray(translations) || translations.length === 0) {
         throw createAppError(
@@ -77,8 +89,14 @@ router.post(
         throw createAppError('VALIDATION_ERROR', 'skipKitchenCloudPrint must be boolean');
       }
       const skipKitchen = parseSkipKitchenCloudPrint(skipKitchenCloudPrint) === true;
+      const def = await ensureDefaultMenu(req.storeId!);
+      const menuIdRaw = typeof bodyMenuId === 'string' ? bodyMenuId.trim() : '';
+      const menuId = menuIdRaw && mongoose.Types.ObjectId.isValid(menuIdRaw)
+        ? menuIdRaw
+        : def._id;
       const category = await MenuCategory.create({
         storeId: req.storeId,
+        menuId,
         sortOrder,
         translations,
         ...(zhe != null ? { discountZhe: zhe } : {}),

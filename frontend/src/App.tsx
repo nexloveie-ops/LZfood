@@ -39,6 +39,7 @@ import CashierOrderCenterGate from './pages/cashier/CashierOrderCenterGate';
 import RestockPage from './pages/cashier/RestockPage';
 import { syncWaiterModeFromSearch } from './utils/waiterMode';
 import CategoryManager from './pages/admin/CategoryManager';
+import MenuManager from './pages/admin/MenuManager';
 import MenuItemManager from './pages/admin/MenuItemManager';
 import OptionGroupTemplates from './pages/admin/OptionGroupTemplates';
 import InventoryManager from './pages/admin/InventoryManager';
@@ -233,6 +234,7 @@ export default function App() {
               <Route index element={<CategoryManager />} />
               <Route path="restaurant" element={<RestaurantInfo />} />
               <Route path="delivery-fees" element={<RequireFeature featureKey="cashier.delivery.page"><DeliveryFeeSettings /></RequireFeature>} />
+              <Route path="menus" element={<MenuManager />} />
               <Route path="categories" element={<CategoryManager />} />
               <Route path="menu-items" element={<MenuItemManager />} />
               <Route path="option-group-templates" element={<RequireFeature featureKey="admin.optionGroupTemplates.page"><OptionGroupTemplates /></RequireFeature>} />

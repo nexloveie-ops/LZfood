@@ -16,6 +16,7 @@ import BannerPlatformCredit from '../../components/customer/BannerPlatformCredit
 import CustomerMenuToolbar from '../../components/customer/CustomerMenuToolbar';
 import { buildPickupSlotGroups, flattenPickupSlotGroups } from '../../utils/pickupSlots';
 import { isDineInCustomerFlow } from '../../utils/qrCode';
+import { menuChannelFromCustomerSearch } from '../../utils/menuChannel';
 
 export default function CartPage() {
   const { items, increaseQuantity, decreaseQuantity, removeItem, clearCart, getItemKey, editOrderId, setEditOrderId } = useCart();
@@ -53,6 +54,7 @@ export default function CartPage() {
   const seat = searchParams.get('seat');
   const orderType = searchParams.get('type');
   const isDineInCart = isDineInCustomerFlow(searchParams);
+  const customerOrderType = isDineInCart ? 'dine_in' : orderType === 'delivery' ? 'delivery' : 'takeout';
   const isPayAfterAdd = isDineInCart && !!editOrderId && config.dine_in_workflow_mode === 'pay_after';
   const cartDisplayItems = isPayAfterAdd ? items.filter((i) => !isLockedCartBaseline(i)) : items;
 
@@ -81,17 +83,18 @@ export default function CartPage() {
   useEffect(() => {
     let loaded = 0;
     const check = () => { loaded++; if (loaded >= 2) setOffersLoaded(true); };
-    apiFetch('/api/offers').then(r => r.ok ? r.json() : []).then(d => { setOffers(d); check(); }).catch(() => check());
-    apiFetch('/api/menu/items?ownOptionGroups=1').then(r => r.ok ? r.json() : []).then((data: { _id: string; categoryId: string }[]) => {
+    const ch = menuChannelFromCustomerSearch(searchParams);
+    apiFetch(`/api/offers?channel=${encodeURIComponent(ch)}`).then(r => r.ok ? r.json() : []).then(d => { setOffers(d); check(); }).catch(() => check());
+    apiFetch(`/api/menu/items?ownOptionGroups=1&channel=${encodeURIComponent(ch)}`).then(r => r.ok ? r.json() : []).then((data: { _id: string; categoryId: string }[]) => {
       const map: Record<string, string> = {};
       for (const item of data) map[item._id] = item.categoryId;
       setMenuItemCategories(map);
       check();
     }).catch(() => check());
-  }, []);
+  }, [searchParams]);
 
   useEffect(() => {
-    if (orderType !== 'delivery') {
+    if (customerOrderType !== 'delivery') {
       setDeliveryFeeRules([]);
       return;
     }
@@ -107,7 +110,7 @@ export default function CartPage() {
         if (!cancelled) setDeliveryFeeRules([]);
       });
     return () => { cancelled = true; };
-  }, [orderType]);
+  }, [customerOrderType]);
 
   const lookupEircode = useCallback(async (raw: string) => {
     const norm = raw.toUpperCase().replace(/[\s-]/g, '');
@@ -141,7 +144,7 @@ export default function CartPage() {
   }, []);
 
   useEffect(() => {
-    if (orderType !== 'delivery') {
+    if (customerOrderType !== 'delivery') {
       setDeliveryDistanceKm(null);
       setDeliveryGeoError('');
       setDeliveryGeoLoading(false);
@@ -149,7 +152,7 @@ export default function CartPage() {
     }
     const tmr = window.setTimeout(() => { void lookupEircode(deliveryPostalCode); }, 500);
     return () => window.clearTimeout(tmr);
-  }, [deliveryPostalCode, orderType, lookupEircode]);
+  }, [deliveryPostalCode, customerOrderType, lookupEircode]);
 
   // Bundle matching
   const matchedBundles: MatchedBundle[] = useMemo(() => {
@@ -186,11 +189,11 @@ export default function CartPage() {
   const finalTotal = bundleTotals.finalTotal;
 
   const deliveryFeeAmount = useMemo(() => {
-    if (orderType !== 'delivery' || deliveryDistanceKm == null) return 0;
+    if (customerOrderType !== 'delivery' || deliveryDistanceKm == null) return 0;
     return deliveryFeeForDistance(deliveryFeeRules, deliveryDistanceKm);
-  }, [orderType, deliveryDistanceKm, deliveryFeeRules]);
+  }, [customerOrderType, deliveryDistanceKm, deliveryFeeRules]);
 
-  const grandTotal = orderType === 'delivery' ? finalTotal + deliveryFeeAmount : finalTotal;
+  const grandTotal = customerOrderType === 'delivery' ? finalTotal + deliveryFeeAmount : finalTotal;
 
   const pickupSlotGroups = useMemo(
     () => buildPickupSlotGroups(config.business_hours_slots),
@@ -235,7 +238,7 @@ export default function CartPage() {
     if (cartDisplayItems.length === 0) return;
     if (submitting) return;
 
-    if (orderType === 'takeout' && !editOrderId && !takeoutContactReady) {
+    if (customerOrderType === 'takeout' && !editOrderId && !takeoutContactReady) {
       const message = getPickupContactError();
       setError(message);
       pickupContactRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -278,7 +281,7 @@ export default function CartPage() {
           if (config.dine_in_workflow_mode === 'pay_after') {
             body.dineInGuestLabel = dineInGuestLabel.trim().slice(0, 40);
           }
-        } else if (orderType === 'takeout') {
+        } else if (customerOrderType === 'takeout') {
           body.type = 'takeout';
           body.customerPhone = pickupCustomerPhone.trim();
           const pickupName = pickupCustomerName.trim();
@@ -295,7 +298,7 @@ export default function CartPage() {
               body.pickupSlotStart = slot.startIso;
             }
           }
-        } else if (orderType === 'delivery') {
+        } else if (customerOrderType === 'delivery') {
           if (!deliveryCustomerName.trim() || !deliveryCustomerPhone.trim() || !deliveryAddress.trim() || !deliveryPostalCode.trim()) {
             setError('请填写送餐姓名、电话、地址与邮编');
             return;
@@ -462,8 +465,8 @@ export default function CartPage() {
         })}
       </div>
 
-      {error && orderType !== 'takeout' ? <div style={{ color: 'var(--red-primary)', marginTop: 12, fontSize: 13 }}>{error}</div> : null}
-      {orderType === 'delivery' && (
+      {error && customerOrderType !== 'takeout' ? <div style={{ color: 'var(--red-primary)', marginTop: 12, fontSize: 13 }}>{error}</div> : null}
+      {customerOrderType === 'delivery' && (
         <div style={{
           marginTop: 12,
           padding: '12px 14px',
@@ -504,7 +507,7 @@ export default function CartPage() {
           </div>
         </div>
       )}
-      {orderType === 'takeout' && !editOrderId && (
+      {customerOrderType === 'takeout' && !editOrderId && (
         <div ref={pickupContactRef} style={{ marginTop: 12, display: 'grid', gap: 8 }}>
           <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-dark)' }}>
             {t('customer.pickupContactTitle')}
@@ -512,7 +515,7 @@ export default function CartPage() {
           <div style={{ fontSize: 11, color: 'var(--text-light)', lineHeight: 1.45, marginTop: -4 }}>
             {t('customer.pickupContactHint')}
           </div>
-          {error && orderType === 'takeout' ? (
+          {error && customerOrderType === 'takeout' ? (
             <div
               role="alert"
               style={{
@@ -578,7 +581,7 @@ export default function CartPage() {
           </select>
         </div>
       )}
-      {orderType === 'delivery' && (
+      {customerOrderType === 'delivery' && (
         <div style={{ marginTop: 12, display: 'grid', gap: 8 }}>
           <input className="input" placeholder={lang === 'zh-CN' ? '收货姓名' : 'Recipient name'} value={deliveryCustomerName} onChange={e => setDeliveryCustomerName(e.target.value)} />
           <input className="input" placeholder={lang === 'zh-CN' ? '联系电话' : 'Phone'} value={deliveryCustomerPhone} onChange={e => setDeliveryCustomerPhone(e.target.value)} />
@@ -641,7 +644,7 @@ export default function CartPage() {
               return s + (i.price + extra) * i.quantity;
             }, 0).toFixed(2)}</div>
           )}
-          {orderType === 'delivery' && deliveryFeeAmount > 0 ? (
+          {customerOrderType === 'delivery' && deliveryFeeAmount > 0 ? (
             <div style={{ fontSize: 11, color: 'var(--text-light)' }}>
               {t('cashier.deliveryFee')} +€{deliveryFeeAmount.toFixed(2)}
             </div>

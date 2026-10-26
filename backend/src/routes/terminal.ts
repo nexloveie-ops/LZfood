@@ -11,7 +11,6 @@ import {
   markDineInFoodLinesFullySettled,
   markDineInKitchenPrintedQtyFull,
 } from '../utils/dineInMarkLinesFullySettled';
-import { scheduleStoreCloudPrint } from '../utils/cloudPrint/runJob';
 import {
   shouldKitchenCloudPrintAfterCashierPay,
   tryKitchenCloudPrintUnprinted,
@@ -294,7 +293,6 @@ router.post('/confirm', ...requireAuthSameStore, async (req: Request, res: Respo
       });
     }
 
-    scheduleStoreCloudPrint(req.storeId!, checkout._id as mongoose.Types.ObjectId, 'checkout');
     scheduleStampAwardForCheckout(req.storeId!, checkout._id as mongoose.Types.ObjectId);
 
     res.json({

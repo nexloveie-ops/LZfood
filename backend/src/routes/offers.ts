@@ -6,6 +6,7 @@ import { requireAuthSameStore } from '../middleware/authForStore';
 import { createAppError } from '../middleware/errorHandler';
 import { requireFeature } from '../middleware/featureAccess';
 import { FeatureKeys } from '../utils/featureCatalog';
+import { catalogMenuScope, ensureDefaultMenu } from '../utils/storeMenu';
 
 const router = Router();
 
@@ -13,8 +14,14 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { Offer } = getModels();
     const now = new Date();
+    const scope = req.storeId
+      ? await catalogMenuScope(req.storeId, {
+          menuId: req.query.menuId,
+          channel: req.query.channel,
+        })
+      : { filter: { storeId: req.storeId } };
     const offers = await Offer.find({
-      storeId: req.storeId,
+      ...scope.filter,
       active: true,
       $or: [
         { startDate: { $exists: false } },
@@ -37,7 +44,12 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
 router.get('/all', ...requireAuthSameStore, requirePermission('admin:manage'), requireFeature(FeatureKeys.AdminOffersPage), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { Offer } = getModels();
-    const offers = await Offer.find({ storeId: req.storeId }).sort({ createdAt: -1 }).lean();
+    const scope = await catalogMenuScope(req.storeId!, {
+      menuId: req.query.menuId,
+      channel: req.query.channel,
+      all: req.query.all,
+    });
+    const offers = await Offer.find(scope.filter).sort({ createdAt: -1 }).lean();
     res.json(offers);
   } catch (err) {
     next(err);
@@ -47,7 +59,7 @@ router.get('/all', ...requireAuthSameStore, requirePermission('admin:manage'), r
 router.post('/', ...requireAuthSameStore, requirePermission('admin:manage'), requireFeature(FeatureKeys.AdminOffersPage), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { Offer } = getModels();
-    const { name, nameEn, description, descriptionEn, bundlePrice, slots, excludedItemIds, active, startDate, endDate } = req.body;
+    const { name, nameEn, description, descriptionEn, bundlePrice, slots, excludedItemIds, active, startDate, endDate, menuId: bodyMenuId } = req.body;
 
     if (!name || typeof name !== 'string') {
       throw createAppError('VALIDATION_ERROR', 'name is required');
@@ -68,8 +80,12 @@ router.post('/', ...requireAuthSameStore, requirePermission('admin:manage'), req
       }
     }
 
+    const def = await ensureDefaultMenu(req.storeId!);
+    const menuIdRaw = typeof bodyMenuId === 'string' ? bodyMenuId.trim() : '';
+    const menuId = menuIdRaw && mongoose.Types.ObjectId.isValid(menuIdRaw) ? menuIdRaw : def._id;
     const offer = await Offer.create({
       storeId: req.storeId,
+      menuId,
       name,
       nameEn,
       description,

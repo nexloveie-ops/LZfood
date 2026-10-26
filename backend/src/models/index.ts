@@ -1,6 +1,7 @@
 /** 仅导出 Schema，供 LZFood 注册与测试；运行时 Model 见 `getModels()` */
 export { AdminSchema } from './Admin';
 export { AllergenSchema, AllergenTranslationSchema } from './Allergen';
+export { MenuSchema, MenuTranslationSchema } from './Menu';
 export { MenuCategorySchema, CategoryTranslationSchema } from './MenuCategory';
 export { MenuItemSchema, ItemTranslationSchema } from './MenuItem';
 export { OrderSchema, OrderItemSubdocSchema } from './Order';

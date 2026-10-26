@@ -44,6 +44,13 @@ import {
 } from '../utils/marketPrice';
 import { menuItemSellPriceEuro } from '../utils/menuItemSellPrice';
 import {
+  assertItemsBelongToMenu,
+  loadStockShareRoots,
+  parseMenuChannel,
+  remapServingsToStockShare,
+  resolveStoreMenu,
+} from '../utils/storeMenu';
+import {
   adHocOptionsToSnapshots,
   parseAdHocOptionsFromItemPayload,
   type AdHocOptionInput,
@@ -181,6 +188,25 @@ type MenuItemForOrder = MenuItemLike & {
   isHidden?: boolean;
   isMarketPrice?: boolean;
 };
+
+async function assertMenuItemsForChannel(
+  storeId: mongoose.Types.ObjectId,
+  type: unknown,
+  menuItems: Array<{ _id: { toString(): string }; menuId?: unknown; isSoldOut?: boolean; isHidden?: boolean }>,
+  menuItemIds: string[],
+  allowedExtraIds?: Set<string>,
+): Promise<void> {
+  const channel = parseMenuChannel(type);
+  if (!channel) return;
+  const resolved = await resolveStoreMenu(storeId, channel);
+  if (!resolved.menu) {
+    throw createAppError('MENU_UNAVAILABLE', '当前该点餐方式没有可用菜单', {
+      reason: resolved.reason,
+      channel,
+    });
+  }
+  assertItemsBelongToMenu(menuItems, menuItemIds, resolved.menu._id.toString(), allowedExtraIds);
+}
 
 function assertMenuItemsVisibleForOrder(
   menuItems: Array<{ _id: { toString(): string }; isSoldOut?: boolean; isHidden?: boolean }>,
@@ -536,6 +562,7 @@ export function createOrdersRouter(io: SocketIOServer): Router {
       const menuItems = await MenuItem.find({ storeId: req.storeId, _id: { $in: menuItemIds } });
 
       assertMenuItemsVisibleForOrder(menuItems, menuItemIds);
+      await assertMenuItemsForChannel(req.storeId!, type, menuItems, menuItemIds);
 
       // Build a lookup map for menu items
       const menuItemMap = new Map(menuItems.map((m) => [m._id.toString(), m as MenuItemForOrder]));
@@ -778,13 +805,18 @@ export function createOrdersRouter(io: SocketIOServer): Router {
       );
 
       /** 库存追踪：在订单写入前先做原子扣减；后续任何抛错都要把扣减回滚 */
-      const inventoryServings = aggregateServingsByMenuItem(
-        items as OrderItemForInventory[],
+      const inventoryServings = remapServingsToStockShare(
+        aggregateServingsByMenuItem(items as OrderItemForInventory[]),
+        menuItems as Array<{ _id: { toString(): string }; stockShareItemId?: unknown }>,
+      );
+      const stockRoots = await loadStockShareRoots(
+        req.storeId!,
+        menuItems as Array<{ stockShareItemId?: unknown }>,
       );
       const inventoryDeduction = await deductStockForOrderCreation(
         req.storeId!,
         inventoryServings,
-        menuItems as unknown as Parameters<typeof deductStockForOrderCreation>[2],
+        [...menuItems, ...stockRoots] as unknown as Parameters<typeof deductStockForOrderCreation>[2],
       );
 
       /** B 模式（原材料 BoM）扣减：用已解析选项快照的 orderItems，与改单路径一致 */
@@ -1863,15 +1895,21 @@ export function createOrdersRouter(io: SocketIOServer): Router {
         }
         const order = await Order.findOne({ _id: id, storeId: req.storeId });
         if (!order) throw createAppError('NOT_FOUND', 'Order not found');
-        if (String(order.type) !== 'dine_in') {
-          throw createAppError('VALIDATION_ERROR', 'kitchen-cloud-print is only for dine_in orders');
-        }
-        const wfPrint = await getDineInWorkflowModeForStore(req.storeId!);
-        if (wfPrint !== 'pay_after') {
-          throw createAppError('VALIDATION_ERROR', '厨房云打印仅用于跑单模式');
-        }
-        if (!['pending', 'paid_online', 'checked_out'].includes(String(order.status))) {
-          throw createAppError('ORDER_NOT_MODIFIABLE', 'Order status does not allow kitchen print');
+        const orderType = String(order.type);
+        if (orderType === 'dine_in') {
+          const wfPrint = await getDineInWorkflowModeForStore(req.storeId!);
+          if (wfPrint !== 'pay_after') {
+            throw createAppError('VALIDATION_ERROR', '厨房云打印仅用于跑单模式');
+          }
+          if (!['pending', 'paid_online', 'checked_out'].includes(String(order.status))) {
+            throw createAppError('ORDER_NOT_MODIFIABLE', 'Order status does not allow kitchen print');
+          }
+        } else if (orderType === 'takeout') {
+          if (String(order.status) !== 'pending') {
+            throw createAppError('ORDER_NOT_MODIFIABLE', 'Order status does not allow kitchen print');
+          }
+        } else {
+          throw createAppError('VALIDATION_ERROR', 'kitchen-cloud-print is only for dine_in or takeout orders');
         }
 
         const rawLines = (req.body as { lineIds?: unknown }).lineIds;
@@ -1972,17 +2010,25 @@ export function createOrdersRouter(io: SocketIOServer): Router {
         const menuItemIds = items.map((i: { menuItemId: string }) => i.menuItemId);
         const menuItems = await MenuItem.find({ storeId: req.storeId, _id: { $in: menuItemIds } });
         assertMenuItemsVisibleForOrder(menuItems, menuItemIds);
+        await assertMenuItemsForChannel(req.storeId!, order.type, menuItems, menuItemIds);
 
         const menuItemMap = new Map(menuItems.map((m) => [m._id.toString(), m as MenuItemForOrder]));
         const staffAllowed = isStaffCashierOrOwner(req);
         const newLines = await buildOrderItemsPayload(req.storeId!, items, menuItemMap, staffAllowed);
         stampNewDineInLines(order.items as Parameters<typeof stampNewDineInLines>[0], newLines as Record<string, unknown>[], 'staff');
 
-        const inventoryServings = aggregateServingsByMenuItem(items as OrderItemForInventory[]);
+        const inventoryServings = remapServingsToStockShare(
+          aggregateServingsByMenuItem(items as OrderItemForInventory[]),
+          menuItems as Array<{ _id: { toString(): string }; stockShareItemId?: unknown }>,
+        );
+        const stockRoots = await loadStockShareRoots(
+          req.storeId!,
+          menuItems as Array<{ stockShareItemId?: unknown }>,
+        );
         const inventoryDeduction = await deductStockForOrderCreation(
           req.storeId!,
           inventoryServings,
-          menuItems as unknown as Parameters<typeof deductStockForOrderCreation>[2],
+          [...menuItems, ...stockRoots] as unknown as Parameters<typeof deductStockForOrderCreation>[2],
         );
 
         const bomLinesForDeduction = newLines
@@ -2186,6 +2232,10 @@ export function createOrdersRouter(io: SocketIOServer): Router {
       const menuItems = await MenuItem.find({ storeId: req.storeId, _id: { $in: menuItemIds } });
 
       assertMenuItemsVisibleForOrder(menuItems, menuItemIds);
+      const existingIds = new Set(
+        ((order.items || []) as Array<{ menuItemId?: unknown }>).map((it) => String(it.menuItemId || '')).filter(Boolean),
+      );
+      await assertMenuItemsForChannel(req.storeId!, order.type, menuItems, menuItemIds, existingIds);
 
       // Build a lookup map for menu items
       const menuItemMap = new Map(menuItems.map((m) => [m._id.toString(), m as MenuItemForOrder]));
@@ -2268,14 +2318,21 @@ export function createOrdersRouter(io: SocketIOServer): Router {
       }
 
       /** 库存追踪：仅对新增加的份数做扣减（同 menuItemId 的累计差额） */
-      const deltaServings = diffServings(
-        order.items as OrderItemForInventory[],
-        orderItems as unknown as OrderItemForInventory[],
+      const deltaServings = remapServingsToStockShare(
+        diffServings(
+          order.items as OrderItemForInventory[],
+          orderItems as unknown as OrderItemForInventory[],
+        ),
+        menuItems as Array<{ _id: { toString(): string }; stockShareItemId?: unknown }>,
+      );
+      const stockRoots = await loadStockShareRoots(
+        req.storeId!,
+        menuItems as Array<{ stockShareItemId?: unknown }>,
       );
       const inventoryDelta = await deductStockForOrderCreation(
         req.storeId!,
         deltaServings,
-        menuItems as unknown as Parameters<typeof deductStockForOrderCreation>[2],
+        [...menuItems, ...stockRoots] as unknown as Parameters<typeof deductStockForOrderCreation>[2],
       );
 
       /** B 模式增量扣减：先算 BoM 差额，再走原子扣减；失败回滚 A 模式扣减 */

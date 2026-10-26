@@ -1,5 +1,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { apiFetch } from '../api/client';
+import { menuChannelFromCustomerSearch, menuChannelQuery } from '../utils/menuChannel';
 import { emptyBomSnapshot, type BomAvailabilitySnapshot } from '../utils/bomAvailability';
 import type { OfferData } from '../utils/bundleMatcher';
 
@@ -46,6 +48,7 @@ export interface CustomerAllergen {
 
 type BootstrapState = {
   ready: boolean;
+  menuUnavailable: boolean;
   categories: CustomerMenuCategory[];
   items: CustomerMenuItem[];
   allergens: CustomerAllergen[];
@@ -55,6 +58,7 @@ type BootstrapState = {
 
 const emptyState: BootstrapState = {
   ready: false,
+  menuUnavailable: false,
   categories: [],
   items: [],
   allergens: [],
@@ -76,19 +80,23 @@ export function CustomerMenuBootstrapProvider({
   lang: string;
 }) {
   const [state, setState] = useState<BootstrapState>(emptyState);
+  const [searchParams] = useSearchParams();
+  const channel = menuChannelFromCustomerSearch(searchParams);
 
   useEffect(() => {
     let cancelled = false;
-    setState((prev) => ({ ...prev, ready: false }));
+    setState((prev) => ({ ...prev, ready: false, menuUnavailable: false }));
+    const ch = menuChannelQuery(channel);
 
     void Promise.all([
-      apiFetch(`/api/menu/categories?lang=${encodeURIComponent(lang)}`).then((r) => r.json()),
-      apiFetch(`/api/menu/items?lang=${encodeURIComponent(lang)}`).then((r) => r.json()),
-      apiFetch('/api/menu/bom-availability').then((r) => (r.ok ? r.json() : emptyBomSnapshot())),
+      apiFetch(`/api/menus/current?${ch}`).then((r) => (r.ok ? r.json() : { unavailable: false })),
+      apiFetch(`/api/menu/categories?lang=${encodeURIComponent(lang)}&${ch}`).then((r) => r.json()),
+      apiFetch(`/api/menu/items?lang=${encodeURIComponent(lang)}&${ch}`).then((r) => r.json()),
+      apiFetch(`/api/menu/bom-availability?${ch}`).then((r) => (r.ok ? r.json() : emptyBomSnapshot())),
       apiFetch('/api/allergens').then((r) => r.json()),
-      apiFetch('/api/offers').then((r) => (r.ok ? r.json() : [])),
+      apiFetch(`/api/offers?${ch}`).then((r) => (r.ok ? r.json() : [])),
     ])
-      .then(([categoryData, itemData, bomData, allergenData, offerData]) => {
+      .then(([currentData, categoryData, itemData, bomData, allergenData, offerData]) => {
         if (cancelled) return;
         const bom =
           bomData && typeof bomData === 'object' && 'enabled' in (bomData as object)
@@ -96,6 +104,7 @@ export function CustomerMenuBootstrapProvider({
             : emptyBomSnapshot();
         setState({
           ready: true,
+          menuUnavailable: Boolean((currentData as { unavailable?: boolean }).unavailable),
           categories: asArray<CustomerMenuCategory>(categoryData),
           items: asArray<CustomerMenuItem>(itemData),
           allergens: asArray<CustomerAllergen>(allergenData),
@@ -112,7 +121,7 @@ export function CustomerMenuBootstrapProvider({
     return () => {
       cancelled = true;
     };
-  }, [lang]);
+  }, [lang, channel]);
 
   return (
     <CustomerMenuBootstrapContext.Provider value={state}>

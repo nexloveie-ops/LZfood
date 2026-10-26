@@ -10,6 +10,7 @@ import './admin-shell.css';
 const sidebarItems = [
   { path: 'restaurant', icon: '🏪', key: 'admin.restaurantInfo' },
   { path: 'delivery-fees', icon: '🚚', key: 'admin.deliveryFeesNav', featureKey: 'cashier.delivery.page' },
+  { path: 'menus', icon: '📋', key: 'admin.menus' },
   { path: 'categories', icon: '📂', key: 'admin.categories' },
   { path: 'menu-items', icon: '🍽️', key: 'admin.menuItems' },
   { path: 'option-group-templates', icon: '🧩', key: 'admin.optionGroupTemplatesNav', featureKey: 'admin.optionGroupTemplates.page' },

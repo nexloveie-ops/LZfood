@@ -13,6 +13,8 @@ import RecommendedStar from '../../components/RecommendedStar';
 import TodaysSpecialIcon from '../../components/TodaysSpecialIcon';
 import SpiceLevelHint, { clampSpiceLevel, type SpiceLevel } from '../../components/SpiceLevelHint';
 import MenuPriceLabel from '../../components/MenuPriceLabel';
+import AdminMenuPicker from '../../components/admin/AdminMenuPicker';
+import { useAdminMenus } from '../../hooks/useAdminMenus';
 
 interface Translation { locale: string; name: string; description?: string; }
 interface Category { _id: string; sortOrder?: number; translations: Translation[]; discountZhe?: number; }
@@ -127,6 +129,7 @@ export default function MenuItemManager() {
   const { t } = useTranslation();
   const { token, hasFeature } = useAuth();
   const canTrackInventory = hasFeature('inventory.tracking');
+  const { menus, menuId, setMenuId } = useAdminMenus();
   const [items, setItems] = useState<MenuItem[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [allergens, setAllergens] = useState<AllergenData[]>([]);
@@ -152,8 +155,8 @@ export default function MenuItemManager() {
 
   const fetchData = useCallback(async () => {
     const requests: Promise<Response>[] = [
-      apiFetch('/api/menu/categories', { headers: authHeaders }),
-      apiFetch('/api/menu/items?ownOptionGroups=1&includeHidden=1', { headers: authHeaders }),
+      apiFetch(`/api/menu/categories${menuId ? `?menuId=${encodeURIComponent(menuId)}` : ''}`, { headers: authHeaders }),
+      apiFetch(`/api/menu/items?ownOptionGroups=1&includeHidden=1${menuId ? `&menuId=${encodeURIComponent(menuId)}` : ''}`, { headers: authHeaders }),
       apiFetch('/api/allergens', { headers: authHeaders }),
     ];
     if (canTrackInventory) {
@@ -176,7 +179,7 @@ export default function MenuItemManager() {
           .map((r) => ({ _id: r._id, baseUnit: r.baseUnit || '', translations: r.translations || [] })),
       );
     }
-  }, [token, canTrackInventory]);
+  }, [token, canTrackInventory, menuId]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -799,9 +802,12 @@ export default function MenuItemManager() {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, gap: 12, flexWrap: 'wrap' }}>
         <h2 style={{ fontSize: 18, fontWeight: 700 }}>{t('admin.menuItems')}</h2>
-        <button className="btn btn-primary" onClick={() => startEdit(null)}>{t('common.add')}</button>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+          <AdminMenuPicker menus={menus} menuId={menuId} onChange={setMenuId} />
+          <button className="btn btn-primary" onClick={() => startEdit(null)}>{t('common.add')}</button>
+        </div>
       </div>
 
       {showForm && !editingId && (

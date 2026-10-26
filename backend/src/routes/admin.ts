@@ -58,10 +58,8 @@ import { normalizeDeliveryAddressKey } from '../utils/customerProfileDelivery';
 import { normalizeMemberPhone, customerPhoneMatchCandidates, expandOrderPhoneQueryVariants, hashMemberPin, IRISH_MEMBER_MOBILE_RE, PIN_MIN_LEN, PIN_MAX_LEN } from '../utils/memberWalletOps';
 import { generateWidgetApiKey } from '../utils/widgetApiKey';
 import {
-  CLOUD_PRINT_AUTO_KEY,
   CLOUD_PRINT_COPIES_KEY,
   CLOUD_PRINT_ENABLED_KEY,
-  parseCloudPrintAutoCheckout,
   parseCloudPrintCopies,
   parseCloudPrintEnabled,
 } from '../utils/cloudPrint/config';
@@ -1673,7 +1671,7 @@ router.get(
       const [cfgRows, printers] = await Promise.all([
         SystemConfig.find({
           storeId: req.storeId,
-          key: { $in: [CLOUD_PRINT_ENABLED_KEY, CLOUD_PRINT_COPIES_KEY, CLOUD_PRINT_AUTO_KEY] },
+          key: { $in: [CLOUD_PRINT_ENABLED_KEY, CLOUD_PRINT_COPIES_KEY] },
         }).lean() as Promise<unknown> as Promise<Array<{ key: string; value: string }>>,
         CloudPrinter.find({ storeId: req.storeId }).sort({ createdAt: 1 }).lean() as Promise<unknown> as Promise<Array<{
           sn: string;
@@ -1685,7 +1683,6 @@ router.get(
       res.json({
         enabled: parseCloudPrintEnabled(cfg[CLOUD_PRINT_ENABLED_KEY]),
         copies: parseCloudPrintCopies(cfg[CLOUD_PRINT_COPIES_KEY]),
-        autoCheckout: parseCloudPrintAutoCheckout(cfg[CLOUD_PRINT_AUTO_KEY]),
         printers: printers.map((p) => ({ sn: p.sn, label: p.label || '' })),
       });
     } catch (err) {
@@ -1703,12 +1700,10 @@ router.put(
     try {
       const { SystemConfig } = adminModels();
       const enabled = !!req.body?.enabled;
-      const autoCheckout = !!req.body?.autoCheckout;
       const copies = parseCloudPrintCopies(req.body?.copies);
       const pairs: Array<[string, string]> = [
         [CLOUD_PRINT_ENABLED_KEY, enabled ? '1' : '0'],
         [CLOUD_PRINT_COPIES_KEY, String(copies)],
-        [CLOUD_PRINT_AUTO_KEY, autoCheckout ? '1' : '0'],
       ];
       for (const [key, value] of pairs) {
         await SystemConfig.findOneAndUpdate(
@@ -1717,7 +1712,7 @@ router.put(
           { upsert: true },
         );
       }
-      res.json({ enabled, copies, autoCheckout });
+      res.json({ enabled, copies });
     } catch (err) {
       next(err);
     }

@@ -218,6 +218,7 @@ export default function MenuView({ storeFrontEmbed = false }: { storeFrontEmbed?
   const initialHeroHidden =
     storeFrontEmbed &&
     !isDineInCustomerFlow(searchParams) &&
+    searchParams.get('type') != null &&
     searchParams.get('type') !== 'takeout' &&
     searchParams.get('type') !== 'delivery';
 
@@ -465,6 +466,12 @@ export default function MenuView({ storeFrontEmbed = false }: { storeFrontEmbed?
             ) : null}
         </div>
       </div>
+
+      {menuBootstrap.menuUnavailable ? (
+        <div style={{ padding: '16px 16px 0', fontSize: 14, color: '#c62828', fontWeight: 600 }}>
+          {t('customer.menuUnavailable')}
+        </div>
+      ) : null}
 
       <div className="menu-tabs-row">
         <div ref={tabsRef} className="menu-tabs">

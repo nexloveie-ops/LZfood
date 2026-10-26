@@ -31,8 +31,8 @@ export default function InventoryManager() {
 
   const fetchItems = useCallback(async () => {
     const [itemsRes, catsRes] = await Promise.all([
-      apiFetch('/api/menu/items?ownOptionGroups=1&includeHidden=1', { headers: { Authorization: `Bearer ${token}` } }),
-      apiFetch('/api/menu/categories', { headers: { Authorization: `Bearer ${token}` } }),
+      apiFetch('/api/menu/items?ownOptionGroups=1&includeHidden=1&all=1', { headers: { Authorization: `Bearer ${token}` } }),
+      apiFetch('/api/menu/categories?all=1', { headers: { Authorization: `Bearer ${token}` } }),
     ]);
     if (itemsRes.ok) setItems(await itemsRes.json());
     if (catsRes.ok) {

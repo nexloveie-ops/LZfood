@@ -4,6 +4,7 @@ import { getModels } from '../getModels';
 import { mergeTemplateOptionGroupsForItems } from '../utils/optionGroupTemplateApply';
 import { FeatureKeys, resolveStoreEffectiveFeatures } from '../utils/featureCatalog';
 import { buildBomAvailabilitySnapshot } from '../utils/bomAvailability';
+import { catalogMenuScope } from '../utils/storeMenu';
 
 const router = Router();
 
@@ -28,7 +29,11 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
       RawMaterial: mongoose.Model<any>;
     };
 
-    const items = await MenuItem.find({ storeId: req.storeId, isHidden: { $ne: true } })
+    const scope = await catalogMenuScope(req.storeId, {
+      menuId: req.query.menuId,
+      channel: req.query.channel,
+    });
+    const items = await MenuItem.find({ ...scope.filter, isHidden: { $ne: true } })
       .select('consumption optionGroups categoryId')
       .lean();
     const merged = await mergeTemplateOptionGroupsForItems(req.storeId, items);

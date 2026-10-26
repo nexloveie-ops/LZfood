@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../../context/AuthContext';
 import { apiFetch } from '../../api/client';
+import AdminMenuPicker from '../../components/admin/AdminMenuPicker';
+import { useAdminMenus } from '../../hooks/useAdminMenus';
 
 interface SlotData {
   _id?: string;
@@ -31,6 +33,7 @@ export default function OfferManager() {
   const { t, i18n } = useTranslation();
   const { token } = useAuth();
   const lang = i18n.language;
+  const { menus, menuId, setMenuId } = useAdminMenus();
 
   const [offers, setOffers] = useState<OfferData[]>([]);
   const [categories, setCategories] = useState<CategoryOption[]>([]);
@@ -61,9 +64,9 @@ export default function OfferManager() {
     setLoading(true);
     try {
       const [offersRes, catsRes, itemsRes] = await Promise.all([
-        apiFetch('/api/offers/all', { headers: { Authorization: `Bearer ${token}` } }),
-        apiFetch(`/api/menu/categories?lang=${lang}`),
-        apiFetch('/api/menu/items?ownOptionGroups=1&includeHidden=1'),
+        apiFetch(`/api/offers/all${menuId ? `?menuId=${encodeURIComponent(menuId)}` : ''}`, { headers: { Authorization: `Bearer ${token}` } }),
+        apiFetch(`/api/menu/categories?lang=${lang}${menuId ? `&menuId=${encodeURIComponent(menuId)}` : ''}`),
+        apiFetch(`/api/menu/items?ownOptionGroups=1&includeHidden=1${menuId ? `&menuId=${encodeURIComponent(menuId)}` : ''}`),
       ]);
       if (offersRes.ok) setOffers(await offersRes.json());
       let catOrder = new Map<string, number>();
@@ -106,7 +109,7 @@ export default function OfferManager() {
       }
     } catch { /* ignore */ }
     finally { setLoading(false); }
-  }, [token, lang]);
+  }, [token, lang, menuId]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -160,6 +163,7 @@ export default function OfferManager() {
         active: formActive,
         startDate: formStart || null,
         endDate: formEnd || null,
+        menuId,
       };
 
       const url = editing ? `/api/offers/${editing._id}` : '/api/offers';
@@ -258,9 +262,12 @@ export default function OfferManager() {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, gap: 12, flexWrap: 'wrap' }}>
         <h2 style={{ fontSize: 18, fontWeight: 700 }}>🎁 套餐优惠管理</h2>
-        <button className="btn btn-primary" onClick={openCreate}>+ 新建优惠</button>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+          <AdminMenuPicker menus={menus} menuId={menuId} onChange={setMenuId} />
+          <button className="btn btn-primary" onClick={openCreate}>+ 新建优惠</button>
+        </div>
       </div>
 
       {/* Offer list */}

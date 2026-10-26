@@ -17,6 +17,7 @@ const OfferSlotSchema = new mongoose.Schema({
 }, { _id: true });
 
 const OfferSchema = new mongoose.Schema({
+  menuId: { type: mongoose.Schema.Types.ObjectId, ref: 'Menu', index: true },
   name: { type: String, required: true },
   nameEn: { type: String, default: '' },
   description: { type: String, default: '' },

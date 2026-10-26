@@ -28,7 +28,6 @@ import {
 } from '../utils/platformMemberWalletOps';
 import { computeRefundChannelBreakdown } from '../utils/memberRefundAlign';
 import { FeatureKeys, resolveStoreEffectiveFeatures } from '../utils/featureCatalog';
-import { scheduleStoreCloudPrint } from '../utils/cloudPrint/runJob';
 import {
   shouldKitchenCloudPrintAfterCashierPay,
   tryKitchenCloudPrintAndMark,
@@ -149,7 +148,7 @@ async function foldCheckoutServiceIfPayAfter(opts: {
   });
 }
 
-/** 订单中心结账：只打本地小票，不推飞鹅。点单台 seat 结账仍看管理员「结账自动打」。 */
+/** 订单中心结账：不推飞鹅结账单；厨房票已在下单/付款时出。 */
 function requestSkipsCheckoutCloudPrint(body: unknown): boolean {
   const b = body && typeof body === 'object' ? (body as Record<string, unknown>) : {};
   return b.skipCloudPrint === true || b.skipCloudPrint === 'true' || b.skipCloudPrint === 1;
@@ -711,9 +710,6 @@ export function createCheckoutRouter(io: SocketIOServer): Router {
 
       res.status(201).json(checkout);
       if (req.storeId && checkout?._id) {
-        if (!skipCloudPrint) {
-          scheduleStoreCloudPrint(req.storeId, checkout._id as mongoose.Types.ObjectId, 'checkout');
-        }
         scheduleStampAwardForCheckout(req.storeId, checkout._id as mongoose.Types.ObjectId);
       }
     } catch (err) {

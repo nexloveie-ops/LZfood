@@ -15,7 +15,6 @@ export default function CloudPrintSettings({ embedded = false }: { embedded?: bo
   const [err, setErr] = useState('');
   const [enabled, setEnabled] = useState(true);
   const [copies, setCopies] = useState(1);
-  const [autoCheckout, setAutoCheckout] = useState(true);
   const [printers, setPrinters] = useState<Printer[]>([]);
 
   const load = useCallback(async () => {
@@ -31,12 +30,10 @@ export default function CloudPrintSettings({ embedded = false }: { embedded?: bo
       const data = await res.json() as {
         enabled: boolean;
         copies: number;
-        autoCheckout: boolean;
         printers: Printer[];
       };
       setEnabled(!!data.enabled);
       setCopies(data.copies || 1);
-      setAutoCheckout(data.autoCheckout !== false);
       setPrinters(Array.isArray(data.printers) ? data.printers : []);
     } catch {
       setErr(t('common.error'));
@@ -54,7 +51,7 @@ export default function CloudPrintSettings({ embedded = false }: { embedded?: bo
       const res = await apiFetch('/api/admin/cloud-print', {
         method: 'PUT',
         headers,
-        body: JSON.stringify({ enabled, copies, autoCheckout }),
+        body: JSON.stringify({ enabled, copies }),
       });
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
@@ -117,18 +114,6 @@ export default function CloudPrintSettings({ embedded = false }: { embedded?: bo
               />
               <span style={{ fontSize: 12, color: 'var(--text-light)' }}>{t('admin.cloudPrintCopiesHint')}</span>
             </label>
-
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ fontSize: 14, marginBottom: 8 }}>{t('admin.cloudPrintWhen')}</div>
-              <label style={{ display: 'block', marginBottom: 6, fontSize: 14 }}>
-                <input type="radio" name="cloudPrintWhen" checked={autoCheckout} onChange={() => setAutoCheckout(true)} style={{ marginRight: 6 }} />
-                {t('admin.cloudPrintAuto')}
-              </label>
-              <label style={{ display: 'block', fontSize: 14 }}>
-                <input type="radio" name="cloudPrintWhen" checked={!autoCheckout} onChange={() => setAutoCheckout(false)} style={{ marginRight: 6 }} />
-                {t('admin.cloudPrintReprintOnly')}
-              </label>
-            </div>
 
             <button className="btn btn-primary" onClick={() => void save()} disabled={saving}>
               {saving ? t('common.loading') : t('common.save')}

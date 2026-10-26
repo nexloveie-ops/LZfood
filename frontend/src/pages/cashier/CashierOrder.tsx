@@ -24,6 +24,7 @@ import {
   patchCashierMenuInventoryQty,
   CASHIER_MENU_CACHE_MAX_AGE_MS,
 } from '../../utils/cashierMenuSessionCache';
+import { menuChannelQuery } from '../../utils/menuChannel';
 import {
   cashierCartDraftKey,
   getCashierCartDraft,
@@ -320,7 +321,9 @@ export default function CashierOrder() {
   const draftSeed = !editOrderIdParam ? getCashierCartDraft(draftKey) : undefined;
   if (draftSeed?.order?.length) bumpLineIdCounterFromLines(draftSeed.order);
 
-  const menuSessionCacheKey = cashierMenuSessionCacheKey(getConfiguredStoreSlug(), lang);
+  const initialOrderType = draftSeed?.orderType ?? 'dine_in';
+  const orderTypeRef = useRef<'dine_in' | 'takeout' | 'phone' | 'delivery'>(initialOrderType);
+  const menuSessionCacheKey = cashierMenuSessionCacheKey(getConfiguredStoreSlug(), lang, initialOrderType);
   const initialMenuCache = getCashierMenuSessionCache(menuSessionCacheKey);
 
   const [categories, setCategories] = useState<Category[]>(() => (initialMenuCache?.categories as Category[]) ?? []);
@@ -330,7 +333,7 @@ export default function CashierOrder() {
 
   const fetchBomSnapshot = useCallback(async () => {
     try {
-      const res = await apiFetch('/api/menu/bom-availability');
+      const res = await apiFetch(`/api/menu/bom-availability?${menuChannelQuery(orderTypeRef.current)}`);
       if (!res.ok) {
         setBomSnapshot(emptyBomSnapshot());
         return;
@@ -378,7 +381,7 @@ export default function CashierOrder() {
         }
         return next;
       });
-      const cacheKey = cashierMenuSessionCacheKey(getConfiguredStoreSlug(), lang);
+      const cacheKey = cashierMenuSessionCacheKey(getConfiguredStoreSlug(), lang, orderTypeRef.current);
       for (const u of updates) {
         patchCashierMenuInventoryQty(cacheKey, u.menuItemId, u.currentQty);
       }
@@ -389,8 +392,10 @@ export default function CashierOrder() {
   const [search, setSearch] = useState('');
   const [order, setOrder] = useState<OrderLine[]>(() => (draftSeed?.order as OrderLine[] | undefined) ?? []);
   const [orderType, setOrderType] = useState<'dine_in' | 'takeout' | 'phone' | 'delivery'>(
-    () => draftSeed?.orderType ?? 'dine_in',
+    () => initialOrderType,
   );
+  const [menuUnavailable, setMenuUnavailable] = useState(false);
+  orderTypeRef.current = orderType;
   /** 电话单：后端要求 `customerPhone`（见 POST /api/orders type=phone） */
   const [phoneGuestPhone, setPhoneGuestPhone] = useState(() => draftSeed?.phoneGuestPhone ?? '');
   const [phoneGuestName, setPhoneGuestName] = useState(() => draftSeed?.phoneGuestName ?? '');
@@ -441,7 +446,7 @@ export default function CashierOrder() {
 
   // Payment modal state
   const [showPayment, setShowPayment] = useState(false);
-  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'card' | 'mixed' | 'member'>('cash');
+  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'card' | 'mixed' | 'member' | 'pay_later'>('cash');
   const [memberPhone, setMemberPhone] = useState('');
   const [memberPreview, setMemberPreview] = useState<CashierMemberPreview | null>(null);
   const [cashReceived, setCashReceived] = useState('');
@@ -467,6 +472,7 @@ export default function CashierOrder() {
 
   /** 与后台 / 管理端「堂食流程」一致：切换 pay_first / pay_after 时分流 */
   const [dineInWorkflowMode, setDineInWorkflowMode] = useState<'pay_first' | 'pay_after'>('pay_first');
+  const canTakeoutPayLater = waiterMode || dineInWorkflowMode === 'pay_after';
   const [counterTableInput, setCounterTableInput] = useState(() => draftSeed?.counterTableInput ?? '');
   const [counterGuestLabel, setCounterGuestLabel] = useState(() => draftSeed?.counterGuestLabel ?? '');
   const [activeTableOrders, setActiveTableOrders] = useState<ActiveDineInOrderRow[]>([]);
@@ -513,17 +519,30 @@ export default function CashierOrder() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /** 全店菜单：缓存秒开 + 始终后台刷新（售罄/库存与后台同步） */
+  /** 当前点餐方式对应的菜单：缓存秒开 + 始终后台刷新（售罄/库存与后台同步） */
   const fetchMenu = useCallback(async (opts?: { force?: boolean }): Promise<MenuItem[]> => {
-    const cacheKey = cashierMenuSessionCacheKey(getConfiguredStoreSlug(), lang);
+    const channel = orderType;
+    const channelQs = menuChannelQuery(channel);
+    const cacheKey = cashierMenuSessionCacheKey(getConfiguredStoreSlug(), lang, channel);
     const cached = getCashierMenuSessionCache(cacheKey);
     const cacheFresh = !opts?.force
       && cached
       && Date.now() - cached.fetchedAt < CASHIER_MENU_CACHE_MAX_AGE_MS;
 
+    const applyItems = (nextItems: MenuItem[]) => {
+      const ids = new Set(nextItems.map((it) => it._id));
+      setOrder((prev) => {
+        const kept = prev.filter((line) => ids.has(line.menuItemId));
+        if (kept.length !== prev.length) setError(t('cashier.menuItemsDroppedForChannel'));
+        return kept;
+      });
+    };
+
     if (cached && cached.menuItems.length > 0) {
+      setMenuUnavailable(false);
       setCategories(cached.categories as Category[]);
       setMenuItems(cached.menuItems as MenuItem[]);
+      applyItems(cached.menuItems as MenuItem[]);
       if (cached.categories.length > 0) {
         setActiveCat((prev) =>
           prev && cached.categories.some((c) => c._id === prev) ? prev : cached.categories[0]._id,
@@ -535,10 +554,11 @@ export default function CashierOrder() {
         setMenuLoading(false);
         void (async () => {
           try {
-            const itemsRes = await apiFetch(`/api/menu/items?lang=${encodeURIComponent(lang)}&includeHidden=1`);
+            const itemsRes = await apiFetch(`/api/menu/items?lang=${encodeURIComponent(lang)}&includeHidden=1&${channelQs}`);
             if (!itemsRes.ok) return;
             const items: MenuItem[] = await itemsRes.json();
             setMenuItems(items);
+            applyItems(items);
             setCashierMenuSessionCache(cacheKey, {
               categories: cached!.categories,
               menuItems: items,
@@ -556,10 +576,15 @@ export default function CashierOrder() {
     }
 
     try {
-      const [catRes, itemsRes] = await Promise.all([
-        apiFetch(`/api/menu/categories?lang=${encodeURIComponent(lang)}`),
-        apiFetch(`/api/menu/items?lang=${encodeURIComponent(lang)}&includeHidden=1`),
+      const [curRes, catRes, itemsRes] = await Promise.all([
+        apiFetch(`/api/menus/current?${channelQs}`),
+        apiFetch(`/api/menu/categories?lang=${encodeURIComponent(lang)}&${channelQs}`),
+        apiFetch(`/api/menu/items?lang=${encodeURIComponent(lang)}&includeHidden=1&${channelQs}`),
       ]);
+      if (curRes.ok) {
+        const cur = await curRes.json() as { unavailable?: boolean };
+        setMenuUnavailable(Boolean(cur.unavailable));
+      }
       let cats: Category[] = cached?.categories as Category[] ?? [];
       let items: MenuItem[] = cached?.menuItems as MenuItem[] ?? [];
       if (catRes.ok) {
@@ -574,6 +599,7 @@ export default function CashierOrder() {
       if (itemsRes.ok) {
         items = await itemsRes.json();
         setMenuItems(items);
+        applyItems(items);
       }
       if (cats.length > 0 || items.length > 0) {
         setCashierMenuSessionCache(cacheKey, { categories: cats, menuItems: items });
@@ -582,7 +608,7 @@ export default function CashierOrder() {
     } finally {
       setMenuLoading(false);
     }
-  }, [lang]);
+  }, [lang, orderType, t]);
 
   useEffect(() => {
     if (!canMemberWallet) {
@@ -1049,12 +1075,12 @@ export default function CashierOrder() {
 
   const fetchPromosDeferred = useCallback(async () => {
     const [offersRes, couponsRes] = await Promise.all([
-      apiFetch('/api/offers'),
+      apiFetch(`/api/offers?${menuChannelQuery(orderTypeRef.current)}`),
       apiFetch('/api/coupons'),
     ]);
     if (offersRes.ok) setOffers(await offersRes.json());
     if (couponsRes.ok) setAvailableCoupons(await couponsRes.json());
-  }, []);
+  }, [orderType]);
 
   useEffect(() => {
     void fetchMenu();
@@ -2662,7 +2688,11 @@ export default function CashierOrder() {
         await handleSubmitDineInPayAfterOnly();
         return;
       }
-      await handleWaiterTakeoutOrder();
+      if (order.some((l) => l.isMarketPrice)) {
+        await handleWaiterTakeoutOrder();
+        return;
+      }
+      await handleOpenPayment();
       return;
     }
     if (orderType === 'phone') {
@@ -2731,6 +2761,35 @@ export default function CashierOrder() {
         throw new Error(t('cashier.numberedVoucher.paymentOrderMissing'));
       }
       await syncCartToPaymentOrder(targetOrderId);
+
+      if (paymentMethod === 'pay_later') {
+        if (orderType !== 'takeout' || !canTakeoutPayLater) {
+          throw new Error(t('common.error'));
+        }
+        const kitchenRes = await apiFetch(`/api/orders/${targetOrderId}/kitchen-cloud-print`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({}),
+        });
+        if (!kitchenRes.ok) {
+          const d = await kitchenRes.json().catch(() => null);
+          throw new Error(d?.error?.message || t('common.error'));
+        }
+        setShowPayment(false);
+        setPaymentOrderId(null);
+        setPaymentDraftOrderId(null);
+        setVoucherCode('');
+        setVoucherPreview(null);
+        setPhoneOrderId(targetOrderId);
+        setOrder([]);
+        if (editingOrderId) {
+          setEditingOrderId(null);
+          setEditOrderLabel('');
+          setSearchParams({}, { replace: true });
+        }
+        purgeCartDraft();
+        return;
+      }
 
       let payAmount = amountAfterCoupon;
       let numberedVoucherCode = '';
@@ -3079,6 +3138,11 @@ export default function CashierOrder() {
               </button>
             ) : null}
           </div>
+          {menuUnavailable ? (
+            <div style={{ fontSize: 12, color: '#c62828', marginTop: 8, fontWeight: 600 }}>
+              {t('cashier.menuUnavailable')}
+            </div>
+          ) : null}
         </div>
         ) : null}
 
@@ -3530,7 +3594,7 @@ export default function CashierOrder() {
                 : t('cashier.editOrderSaveCheckout', '保存并结账'))
               : order.some((l) => l.isMarketPrice)
                 ? t('cashier.submitAwaitWeigh')
-              : waiterMode
+              : waiterMode && (orderType !== 'takeout' || order.some((l) => l.isMarketPrice))
                 ? t('cashier.waiterPlaceUnpaid')
               : orderType === 'phone'
               ? t('cashier.createPhoneOrder')
@@ -3558,7 +3622,9 @@ export default function CashierOrder() {
             onClick={() => void handlePrimaryAction()}
             disabled={order.length === 0 || paying || paymentModalPreparing || editOrderLoading || !!editOrderLoadError}
           >
-            {t('cashier.waiterPlaceUnpaid')}
+            {orderType === 'takeout' && !order.some((l) => l.isMarketPrice)
+              ? t('cashier.placeOrderCheckout')
+              : t('cashier.waiterPlaceUnpaid')}
           </button>
         </div>
       ) : null}
@@ -3663,16 +3729,20 @@ export default function CashierOrder() {
               onDiscountInteraction={() => setCashReceived('')}
             />
 
-            {voucherAwaitingValidate ? (
+            {voucherAwaitingValidate && paymentMethod !== 'pay_later' ? (
               <div style={{ fontSize: 12, color: '#c62828', marginBottom: 12, padding: '8px 10px', background: '#ffebee', borderRadius: 8 }}>
                 {t('cashier.numberedVoucher.validateFirst')}
               </div>
             ) : null}
 
-            {!voucherAwaitingValidate ? (
             <>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
-              {(canMemberWallet ? (['cash', 'card', 'mixed', 'member'] as const) : (['cash', 'card', 'mixed'] as const)).map((m) => (
+              {(
+                [
+                  ...(canMemberWallet ? (['cash', 'card', 'mixed', 'member'] as const) : (['cash', 'card', 'mixed'] as const)),
+                  ...(canTakeoutPayLater && orderType === 'takeout' ? (['pay_later'] as const) : []),
+                ] as const
+              ).map((m) => (
                 <button
                   key={m}
                   onClick={() => {
@@ -3689,7 +3759,7 @@ export default function CashierOrder() {
                     border: '1px solid var(--border)',
                   }}
                 >
-                  {t(`cashier.${m}`)}
+                  {m === 'pay_later' ? t('cashier.payLater') : t(`cashier.${m}`)}
                 </button>
               ))}
             </div>
@@ -3733,19 +3803,14 @@ export default function CashierOrder() {
                   paying ||
                   paymentModalPreparing ||
                   !paymentOrderId && !editingOrderId ||
-                  voucherAwaitingValidate ||
+                  (paymentMethod !== 'pay_later' && voucherAwaitingValidate) ||
                   (paymentMethod === 'cash' && cashReceivedNum < amountToPay - 0.001) ||
                   (paymentMethod === 'member' && !canMemberFullWalletPay(memberPreview, amountToPay))
                 }>
-                {paying ? t('common.loading') : t('cashier.submitCheckout')}
+                {paying ? t('common.loading') : paymentMethod === 'pay_later' ? t('cashier.submitPayLater') : t('cashier.submitCheckout')}
               </button>
             </div>
             </>
-            ) : (
-              <div style={{ display: 'flex', gap: 8 }}>
-                <button className="btn btn-outline" style={{ flex: 1 }} onClick={() => void closePaymentModal()}>{t('common.cancel')}</button>
-              </div>
-            )}
           </div>
         </div>
       )}

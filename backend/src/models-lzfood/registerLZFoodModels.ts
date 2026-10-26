@@ -1,4 +1,5 @@
 import type { Connection, Model } from 'mongoose';
+import { MenuSchema } from '../models/Menu';
 import { MenuCategorySchema } from '../models/MenuCategory';
 import { MenuItemSchema } from '../models/MenuItem';
 import { AllergenSchema } from '../models/Allergen';
@@ -88,6 +89,7 @@ function withStoreId<T extends mongoose.Schema>(base: T): mongoose.Schema {
 
 export type LZFoodModels = {
   Store: Model<unknown>;
+  Menu: Model<unknown>;
   MenuCategory: Model<unknown>;
   MenuItem: Model<unknown>;
   Allergen: Model<unknown>;
@@ -153,6 +155,7 @@ export function registerLZFoodModels(conn: Connection): LZFoodModels {
     conn.model<unknown>(name, schema, collection);
 
   const Store = m('Store', StoreSchema, 'stores');
+  const Menu = m('Menu', withStoreId(MenuSchema), 'menus');
   const MenuCategory = m('MenuCategory', withStoreId(MenuCategorySchema), 'menu_categories');
   const MenuItem = m('MenuItem', withStoreId(MenuItemSchema), 'menu_items');
   const Allergen = m('Allergen', withStoreId(AllergenSchema), 'allergens');
@@ -286,6 +289,7 @@ export function registerLZFoodModels(conn: Connection): LZFoodModels {
 
   cached = {
     Store,
+    Menu,
     MenuCategory,
     MenuItem,
     Allergen,

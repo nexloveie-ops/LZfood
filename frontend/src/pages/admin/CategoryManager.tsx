@@ -2,6 +2,8 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../../context/AuthContext';
 import { apiFetch } from '../../api/client';
+import AdminMenuPicker from '../../components/admin/AdminMenuPicker';
+import { useAdminMenus } from '../../hooks/useAdminMenus';
 
 interface Translation { locale: string; name: string; }
 interface Category { _id: string; sortOrder: number; translations: Translation[]; discountZhe?: number; skipKitchenCloudPrint?: boolean; }
@@ -9,6 +11,7 @@ interface Category { _id: string; sortOrder: number; translations: Translation[]
 export default function CategoryManager() {
   const { t } = useTranslation();
   const { token, hasFeature } = useAuth();
+  const { menus, menuId, setMenuId } = useAdminMenus();
   const canTrackInventory = hasFeature('inventory.tracking');
   const [categories, setCategories] = useState<Category[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -26,12 +29,13 @@ export default function CategoryManager() {
   const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
 
   const fetchCategories = useCallback(async () => {
-    const res = await apiFetch('/api/menu/categories', { headers: { Authorization: `Bearer ${token}` } });
+    const qs = menuId ? `?menuId=${encodeURIComponent(menuId)}` : '';
+    const res = await apiFetch(`/api/menu/categories${qs}`, { headers: { Authorization: `Bearer ${token}` } });
     if (res.ok) {
       const data: Category[] = await res.json();
       setCategories(data.sort((a, b) => a.sortOrder - b.sortOrder));
     }
-  }, [token]);
+  }, [token, menuId]);
 
   useEffect(() => { fetchCategories(); }, [fetchCategories]);
 
@@ -63,6 +67,7 @@ export default function CategoryManager() {
       ],
       discountZhe: !zheRaw || !Number.isFinite(zheNum) ? null : zheNum,
       skipKitchenCloudPrint,
+      menuId,
     };
     const res = editingId
       ? await apiFetch(`/api/menu/categories/${editingId}`, { method: 'PUT', headers, body: JSON.stringify(body) })
@@ -154,9 +159,12 @@ export default function CategoryManager() {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, gap: 12, flexWrap: 'wrap' }}>
         <h2 style={{ fontSize: 18, fontWeight: 700 }}>{t('admin.categories')}</h2>
-        <button className="btn btn-primary" onClick={() => startEdit(null)}>{t('common.add')}</button>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+          <AdminMenuPicker menus={menus} menuId={menuId} onChange={setMenuId} />
+          <button className="btn btn-primary" onClick={() => startEdit(null)}>{t('common.add')}</button>
+        </div>
       </div>
 
       {showForm && (
