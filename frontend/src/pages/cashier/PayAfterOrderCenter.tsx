@@ -242,6 +242,14 @@ function dishNote(it: PayAfterOrderItem): string {
   return zh || en;
 }
 
+const SERVE_LONG_PRESS_MS = 480;
+
+function servedLineQty(it: PayAfterOrderItem): number {
+  if (it.lineKind === 'delivery_fee' || it.refunded) return 0;
+  const q = Math.max(0, it.quantity || 0);
+  return Math.max(0, Math.min(Math.floor(Number(it.servedQty) || 0), q));
+}
+
 function PayAfterDishCard({
   it,
   lineIdx,
@@ -249,6 +257,7 @@ function PayAfterDishCard({
   weighLabel,
   onWeigh,
   onVoid,
+  onServe,
 }: {
   it: PayAfterOrderItem;
   lineIdx: number;
@@ -256,17 +265,69 @@ function PayAfterDishCard({
   weighLabel: string;
   onWeigh: () => void;
   onVoid: () => void;
+  onServe: (delta: 1 | -1) => void;
 }) {
+  const { t } = useTranslation();
   const opts = dishOptionSummary(it);
   const note = dishNote(it);
+  const served = servedLineQty(it);
+  const serveable = !it.refunded;
+  const fillPct = it.quantity > 0 ? (served / it.quantity) * 100 : 0;
+  const timerRef = useRef<number | null>(null);
+  const longFiredRef = useRef(false);
+
+  const clearServeTimer = () => {
+    if (timerRef.current != null) {
+      window.clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+  };
+
+  const isActionControl = (target: EventTarget | null) =>
+    target instanceof Element && Boolean(target.closest('button, input, a'));
+
   return (
-    <div className={`pay-after-line pay-after-dish${it.refunded ? ' is-void' : ''}${!it.refunded && unsettledLineQty(it) <= 0 ? ' is-settled' : ''}`}>
+    <div
+      className={`pay-after-line pay-after-dish${it.refunded ? ' is-void' : ''}${!it.refunded && unsettledLineQty(it) <= 0 ? ' is-settled' : ''}${serveable ? ' is-serveable' : ''}${served >= it.quantity && serveable ? ' is-served-full' : ''}${served > 0 && serveable ? ' is-served' : ''}`}
+      title={serveable ? t('cashier.servedHint') : undefined}
+      onPointerDown={(e) => {
+        if (!serveable || isActionControl(e.target)) return;
+        longFiredRef.current = false;
+        clearServeTimer();
+        timerRef.current = window.setTimeout(() => {
+          longFiredRef.current = true;
+          onServe(-1);
+        }, SERVE_LONG_PRESS_MS);
+      }}
+      onPointerUp={clearServeTimer}
+      onPointerCancel={clearServeTimer}
+      onPointerLeave={clearServeTimer}
+      onContextMenu={(e) => {
+        if (!serveable) return;
+        e.preventDefault();
+      }}
+      onClick={(e) => {
+        if (!serveable || isActionControl(e.target)) return;
+        if (longFiredRef.current) {
+          longFiredRef.current = false;
+          e.preventDefault();
+          return;
+        }
+        onServe(1);
+      }}
+    >
+      {serveable && fillPct > 0 ? (
+        <span className="pay-after-dish-served-fill" style={{ width: `${fillPct}%` }} aria-hidden />
+      ) : null}
       <div className="pay-after-line-main">
         <span className="pay-after-line-name">
           {it.isMarketPrice ? formatMarketLineTitle(it.itemName, it.weightKg, it.pricePerKg) : `${it.quantity}× ${it.itemName}`}
           {it.isMarketPrice && isUnweighedMarketLine(it) ? <em className="is-warn"> · {isEn ? 'await weigh' : '待称重'}</em> : null}
           {it.placedBy === 'customer_qr' ? <em> · {isEn ? 'guest' : '客人'}</em> : null}
           {(Number(it.kitchenPrintedQty) || 0) > 0 && !it.skipKitchenCloudPrint ? <em> · {isEn ? 'in kitchen' : '厨房中'}</em> : null}
+          {served > 0 ? (
+            <em> · {t('cashier.servedMark', { n: served, q: it.quantity })}</em>
+          ) : null}
           {unsettledLineQty(it) < it.quantity && !it.refunded ? (
             <em> · {isEn ? `paid ${Math.max(0, it.quantity - unsettledLineQty(it))}/${it.quantity}` : `已结 ${Math.max(0, it.quantity - unsettledLineQty(it))}/${it.quantity}`}</em>
           ) : null}
@@ -335,6 +396,7 @@ export default function PayAfterOrderCenter() {
   const [discountZhe, setDiscountZhe] = useState('');
   const [weighTarget, setWeighTarget] = useState<{ orderId: string; item: PayAfterOrderItem } | null>(null);
   const fetchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const serveQueueRef = useRef(new Map<string, Promise<void>>());
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
@@ -616,6 +678,48 @@ export default function PayAfterOrderCenter() {
       setBusyId(null);
     }
   }, [fetchAll, isEn, token]);
+
+  const bumpServedQty = useCallback((orderId: string, lineId: string, delta: 1 | -1) => {
+    setOrders((prev) => prev.map((o) => {
+      if (o._id !== orderId) return o;
+      return {
+        ...o,
+        items: o.items.map((it) => {
+          if (it._id !== lineId) return it;
+          const q = Math.max(0, it.quantity || 0);
+          const cur = Math.max(0, Math.min(Math.floor(Number(it.servedQty) || 0), q));
+          const next = Math.max(0, Math.min(q, cur + delta));
+          if (next === cur) return it;
+          return { ...it, servedQty: next };
+        }),
+      };
+    }));
+  }, []);
+
+  const serveLine = useCallback((order: PayAfterOrder, line: PayAfterOrderItem, delta: 1 | -1) => {
+    if (line.refunded || line.lineKind === 'delivery_fee') return;
+    const q = Math.max(0, line.quantity || 0);
+    const cur = Math.max(0, Math.min(Math.floor(Number(line.servedQty) || 0), q));
+    const next = Math.max(0, Math.min(q, cur + delta));
+    if (next === cur) return;
+    const key = `${order._id}:${line._id}`;
+    const prev = serveQueueRef.current.get(key) || Promise.resolve();
+    const job = prev.then(async () => {
+      bumpServedQty(order._id, line._id, delta);
+      const res = await apiFetch(`/api/orders/${order._id}/serve-line`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ lineId: line._id, delta }),
+      });
+      if (!res.ok) {
+        bumpServedQty(order._id, line._id, delta === 1 ? -1 : 1);
+        const d = await res.json().catch(() => null) as { error?: { message?: string } } | null;
+        alert(d?.error?.message || (isEn ? 'Could not update served dishes' : '上菜标记失败'));
+      }
+    });
+    const tracked = job.then(() => undefined, () => undefined);
+    serveQueueRef.current.set(key, tracked);
+  }, [bumpServedQty, isEn, token]);
 
   const weighLine = useCallback(async (orderId: string, lineId: string, weightKg: number, pricePerKg: number) => {
     const res = await apiFetch(`/api/orders/${orderId}/weigh-line`, {
@@ -1054,6 +1158,7 @@ export default function PayAfterOrderCenter() {
                               weighLabel={t('cashier.weigh')}
                               onWeigh={() => setWeighTarget({ orderId: col.order._id, item: it })}
                               onVoid={() => void voidLine(col.order, it._id)}
+                              onServe={(delta) => void serveLine(col.order, it, delta)}
                             />
                           ))}
                           {Array.from({ length: pad }, (_, i) => (

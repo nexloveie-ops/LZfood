@@ -53,6 +53,32 @@ describe('mergeDineInKitchenPrintedAndSettledFromPrevious', () => {
     mergeDineInKitchenPrintedAndSettledFromPrevious(prev, next);
     expect(next[0].kitchenPrintedQty).toBe(2);
     expect(next[0].settledQty).toBe(0);
+    expect(next[0].servedQty).toBe(0);
+  });
+
+  it('preserves servedQty when quantity increases on one line', () => {
+    const prev = [
+      {
+        lineKind: 'menu',
+        menuItemId: 'm1',
+        quantity: 2,
+        servedQty: 2,
+        selectedOptions: [],
+      },
+    ];
+    const next: Record<string, unknown>[] = [
+      {
+        lineKind: 'menu',
+        menuItemId: 'm1',
+        quantity: 3,
+        unitPrice: 10,
+        itemName: 'X',
+        itemNameEn: 'X',
+        selectedOptions: [],
+      },
+    ];
+    mergeDineInKitchenPrintedAndSettledFromPrevious(prev, next);
+    expect(next[0].servedQty).toBe(2);
   });
 
   it('distributes printed qty across two new lines with same key', () => {

@@ -1099,6 +1099,39 @@
   border: 1px solid var(--portal-border);
   background: #fff;
   border-radius: 10px;
+  position: relative;
+  overflow: hidden;
+}
+
+.pay-after-dish-served-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  background: #86efac;
+  pointer-events: none;
+  z-index: 0;
+  transition: width 0.16s ease;
+}
+
+.pay-after-dish.is-serveable {
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+}
+
+.pay-after-dish.is-served-full {
+  border-color: #16a34a;
+}
+
+.pay-after-dish.is-serveable:hover {
+  background: #fff;
+}
+
+.pay-after-dish > :not(.pay-after-dish-served-fill) {
+  position: relative;
+  z-index: 1;
 }
 
 .pay-after-dish .pay-after-line-main {

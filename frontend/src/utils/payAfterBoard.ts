@@ -14,6 +14,7 @@ export type PayAfterOrderItem = {
   kitchenPrintedQty?: number;
   skipKitchenCloudPrint?: boolean;
   settledQty?: number;
+  servedQty?: number;
   roundIndex?: number;
   placedBy?: 'staff' | 'customer_qr';
   isMarketPrice?: boolean;

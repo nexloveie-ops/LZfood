@@ -24,6 +24,8 @@ const OrderItemSubdocSchema = new mongoose.Schema({
   skipKitchenCloudPrint: { type: Boolean, default: false },
   /** 后结堂食：已通过收银/Stripe 结清的份数（≤ quantity），用于部分结账与剩余应付 */
   settledQty: { type: Number, default: 0, min: 0 },
+  /** 跑单堂食：已上桌给客人的份数（≤ quantity）；点击 +1，长按 −1 */
+  servedQty: { type: Number, default: 0, min: 0 },
   /** 跑单桌账内第几轮点菜（厨房只打本轮新增；结账小票按轮分段） */
   roundIndex: { type: Number, default: 1, min: 1 },
   /** 本行来源：店员/手持 vs 客人桌码。换桌时随行走。 */

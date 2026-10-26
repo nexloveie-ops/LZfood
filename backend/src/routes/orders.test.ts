@@ -1610,3 +1610,105 @@ describe('handheld dine-in tab merge', () => {
     expect(res.status).toBe(400);
   });
 });
+
+describe('POST /api/orders/:id/serve-line', () => {
+  it('increments and decrements servedQty on dine-in lines', async () => {
+    const item = await createMenuItem({ price: 10 });
+    const order = await Order.create({
+      storeId: TEST_STORE_ID,
+      type: 'dine_in',
+      tableNumber: 3,
+      seatNumber: 1,
+      status: 'pending',
+      items: [{
+        menuItemId: item._id,
+        quantity: 3,
+        unitPrice: 10,
+        itemName: '宫保鸡丁',
+        servedQty: 0,
+      }],
+    });
+    const lineId = String(order.items[0]._id);
+
+    const up = await request(app)
+      .post(`/api/orders/${order._id}/serve-line`)
+      .set('Authorization', `Bearer ${cashierToken}`)
+      .send({ lineId, delta: 1 });
+    expect(up.status).toBe(200);
+    expect(up.body.items[0].servedQty).toBe(1);
+
+    const up2 = await request(app)
+      .post(`/api/orders/${order._id}/serve-line`)
+      .set('Authorization', `Bearer ${cashierToken}`)
+      .send({ lineId, delta: 1 });
+    expect(up2.body.items[0].servedQty).toBe(2);
+
+    const down = await request(app)
+      .post(`/api/orders/${order._id}/serve-line`)
+      .set('Authorization', `Bearer ${cashierToken}`)
+      .send({ lineId, delta: -1 });
+    expect(down.status).toBe(200);
+    expect(down.body.items[0].servedQty).toBe(1);
+  });
+
+  it('clamps at quantity and zero', async () => {
+    const item = await createMenuItem({ price: 10 });
+    const order = await Order.create({
+      storeId: TEST_STORE_ID,
+      type: 'dine_in',
+      tableNumber: 3,
+      status: 'pending',
+      items: [{
+        menuItemId: item._id,
+        quantity: 1,
+        unitPrice: 10,
+        itemName: '宫保鸡丁',
+        servedQty: 0,
+      }],
+    });
+    const lineId = String(order.items[0]._id);
+    const orderId = String(order._id);
+
+    const over = await request(app)
+      .post(`/api/orders/${orderId}/serve-line`)
+      .set('Authorization', `Bearer ${cashierToken}`)
+      .send({ lineId, delta: 1 });
+    expect(over.body.items[0].servedQty).toBe(1);
+    const over2 = await request(app)
+      .post(`/api/orders/${orderId}/serve-line`)
+      .set('Authorization', `Bearer ${cashierToken}`)
+      .send({ lineId, delta: 1 });
+    expect(over2.body.items[0].servedQty).toBe(1);
+
+    await request(app)
+      .post(`/api/orders/${orderId}/serve-line`)
+      .set('Authorization', `Bearer ${cashierToken}`)
+      .send({ lineId, delta: -1 });
+    const under = await request(app)
+      .post(`/api/orders/${orderId}/serve-line`)
+      .set('Authorization', `Bearer ${cashierToken}`)
+      .send({ lineId, delta: -1 });
+    expect(under.body.items[0].servedQty).toBe(0);
+  });
+
+  it('rejects takeout orders', async () => {
+    const item = await createMenuItem();
+    const order = await Order.create({
+      storeId: TEST_STORE_ID,
+      type: 'takeout',
+      status: 'pending',
+      customerPhone: '0861234567',
+      items: [{
+        menuItemId: item._id,
+        quantity: 1,
+        unitPrice: 25,
+        itemName: '宫保鸡丁',
+      }],
+    });
+    const res = await request(app)
+      .post(`/api/orders/${order._id}/serve-line`)
+      .set('Authorization', `Bearer ${cashierToken}`)
+      .send({ lineId: String(order.items[0]._id), delta: 1 });
+    expect(res.status).toBe(400);
+  });
+});

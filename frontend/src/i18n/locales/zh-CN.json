@@ -304,6 +304,8 @@
     "searchMenuPlaceholder": "🔍 搜索…",
     "todayMarketPrices": "今日时价",
     "weigh": "称重",
+    "servedHint": "点击标记上菜一份，长按取消一份",
+    "servedMark": "已上 {{n}}/{{q}}",
     "unweighedCannotCheckout": "时价菜品须先在订单中心称重才能结账",
     "submitAwaitWeigh": "提交订单（待称重）",
     "weighInOrderCenterHint": "请先送厨房。厨房称完后，在订单中心填写重量再结账。",

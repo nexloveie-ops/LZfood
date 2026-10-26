@@ -8,6 +8,7 @@ type MenuLineLike = {
   refunded?: boolean;
   kitchenPrintedQty?: number;
   settledQty?: number;
+  servedQty?: number;
   roundIndex?: number;
   placedBy?: 'staff' | 'customer_qr';
   isMarketPrice?: boolean;
@@ -26,8 +27,15 @@ export function dineInMenuLineAggregateKey(item: MenuLineLike): string {
   return `${mid}\u0003${opts}`;
 }
 
+export function clampLineServedQty(served: unknown, quantity: number): number {
+  const q = typeof quantity === 'number' && Number.isFinite(quantity) && quantity > 0 ? Math.floor(quantity) : 0;
+  const n = Math.floor(Number(served) || 0);
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(q, n));
+}
+
 /**
- * PUT /items 会整单重建菜品行，需在写入前把旧行的厨房已打出份数、已结账份数按「菜品+选项」合并回新行，
+ * PUT /items 会整单重建菜品行，需在写入前把旧行的厨房已打出份数、已结账份数、已上桌份数按「菜品+选项」合并回新行，
  * 否则 kitchenPrintedQty 归零会导致增量厨房小票再次打印整单。
  */
 export function mergeDineInKitchenPrintedAndSettledFromPrevious(
@@ -36,6 +44,7 @@ export function mergeDineInKitchenPrintedAndSettledFromPrevious(
 ): void {
   const prevPrinted = new Map<string, number>();
   const prevSettled = new Map<string, number>();
+  const prevServed = new Map<string, number>();
   for (const it of previousItems) {
     if (it.lineKind === 'delivery_fee' || it.refunded) continue;
     if (!it.menuItemId) continue;
@@ -43,8 +52,10 @@ export function mergeDineInKitchenPrintedAndSettledFromPrevious(
     const q = typeof it.quantity === 'number' && it.quantity > 0 ? it.quantity : 0;
     const kp = Math.max(0, Math.min(Number(it.kitchenPrintedQty) || 0, q));
     const st = Math.max(0, Math.min(Number(it.settledQty) || 0, q));
+    const sv = clampLineServedQty(it.servedQty, q);
     prevPrinted.set(k, (prevPrinted.get(k) || 0) + kp);
     prevSettled.set(k, (prevSettled.get(k) || 0) + st);
+    prevServed.set(k, (prevServed.get(k) || 0) + sv);
   }
 
   for (const raw of nextItems) {
@@ -52,16 +63,20 @@ export function mergeDineInKitchenPrintedAndSettledFromPrevious(
     if (it.lineKind === 'delivery_fee' || !it.menuItemId) {
       raw.kitchenPrintedQty = 0;
       raw.settledQty = 0;
+      raw.servedQty = 0;
       continue;
     }
     const k = dineInMenuLineAggregateKey(it);
     const q = typeof it.quantity === 'number' && it.quantity > 0 ? it.quantity : 0;
     const takeP = Math.min(q, prevPrinted.get(k) || 0);
     const takeS = Math.min(q, prevSettled.get(k) || 0);
+    const takeV = Math.min(q, prevServed.get(k) || 0);
     raw.kitchenPrintedQty = takeP;
     raw.settledQty = takeS;
+    raw.servedQty = takeV;
     prevPrinted.set(k, (prevPrinted.get(k) || 0) - takeP);
     prevSettled.set(k, (prevSettled.get(k) || 0) - takeS);
+    prevServed.set(k, (prevServed.get(k) || 0) - takeV);
   }
 }
 

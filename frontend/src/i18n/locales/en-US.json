@@ -305,6 +305,8 @@
     "searchMenuPlaceholder": "🔍 Search…",
     "todayMarketPrices": "Today’s market prices",
     "weigh": "Weigh",
+    "servedHint": "Tap: served one. Long-press: undo one.",
+    "servedMark": "Served {{n}}/{{q}}",
     "unweighedCannotCheckout": "Weigh market-price items in Order Center before checkout",
     "submitAwaitWeigh": "Submit (await weigh)",
     "weighInOrderCenterHint": "Send to the kitchen first. After they weigh it, enter the kg in Order Center, then check out.",

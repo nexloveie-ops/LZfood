@@ -31,6 +31,7 @@ import {
   assertKitchenPrintedLinesImmutable,
   mergeDineInKitchenPrintedAndSettledFromPrevious,
   mergeDineInRoundAndPlacedByFromPrevious,
+  clampLineServedQty,
   mergeMarketWeighFromPrevious,
   stampNewDineInLines,
 } from '../utils/dineInPayAfterItems';
@@ -2460,6 +2461,54 @@ export function createOrdersRouter(io: SocketIOServer): Router {
       next(err);
     }
   });
+
+  // POST /api/orders/:id/serve-line — 跑单堂食：点击上桌 +1 / 长按 −1
+  router.post(
+    '/:id/serve-line',
+    ...requireAuthSameStore,
+    requirePermission('checkout:process'),
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const { Order } = orderModels();
+        const id = req.params.id as string;
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+          throw createAppError('VALIDATION_ERROR', 'Invalid order ID');
+        }
+        const lineId = String((req.body as { lineId?: unknown }).lineId ?? '');
+        const deltaRaw = (req.body as { delta?: unknown }).delta;
+        const delta = deltaRaw === -1 || deltaRaw === 1 ? deltaRaw : NaN;
+        if (!mongoose.Types.ObjectId.isValid(lineId) || (delta !== 1 && delta !== -1)) {
+          throw createAppError('VALIDATION_ERROR', 'lineId and delta (+1 or -1) are required');
+        }
+        const order = await Order.findOne({ _id: id, storeId: req.storeId });
+        if (!order) throw createAppError('NOT_FOUND', 'Order not found');
+        if (order.type !== 'dine_in') {
+          throw createAppError('VALIDATION_ERROR', 'Only dine-in table lines can be marked served');
+        }
+        if (!['pending', 'paid_online', 'checked_out'].includes(String(order.status))) {
+          throw createAppError('ORDER_NOT_MODIFIABLE', 'Order status does not allow serve updates');
+        }
+        const line = order.items.id(lineId);
+        if (!line) throw createAppError('NOT_FOUND', 'Line not found');
+        if ((line as { lineKind?: string }).lineKind === 'delivery_fee') {
+          throw createAppError('VALIDATION_ERROR', 'Cannot mark delivery_fee lines');
+        }
+        if ((line as { refunded?: boolean }).refunded) {
+          throw createAppError('VALIDATION_ERROR', 'Cannot mark a voided line');
+        }
+        const maxQ = typeof line.quantity === 'number' ? line.quantity : 0;
+        const cur = clampLineServedQty((line as { servedQty?: number }).servedQty, maxQ);
+        const next = clampLineServedQty(cur + delta, maxQ);
+        (line as { servedQty?: number }).servedQty = next;
+        order.markModified('items');
+        await order.save();
+        io.to(storeIoRoom(req.storeId!)).emit('order:updated', order);
+        res.json(order);
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
 
   // PATCH /api/orders/:id/weigh-line — 收银称重时价行
   router.patch(
