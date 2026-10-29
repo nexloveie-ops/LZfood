@@ -56,7 +56,12 @@ async function enrichLinesWithCategories(
       categoryId: mongoose.Types.ObjectId;
     }>
     : [];
-  const categoryIds = [...new Set(menuItems.map((m) => String(m.categoryId)))];
+  const categoryIds = [...new Set([
+    ...menuItems.map((m) => String(m.categoryId)),
+    ...orders.flatMap((o) => (o.items || [])
+      .filter((it) => it.lineKind === 'cashier_custom' && it.categoryId)
+      .map((it) => String(it.categoryId))),
+  ].filter(Boolean))];
   const categories = categoryIds.length
     ? await MenuCategory.find({ storeId, _id: { $in: categoryIds } }).select('_id sortOrder translations skipKitchenCloudPrint').lean() as unknown as Array<{
       _id: mongoose.Types.ObjectId;
@@ -92,7 +97,11 @@ async function enrichLinesWithCategories(
         };
       }
       const mid = it.menuItemId ? String(it.menuItemId) : '';
-      const cat = mid ? menuCatByItemId.get(mid) : undefined;
+      const catFromMenu = mid ? menuCatByItemId.get(mid) : undefined;
+      const catFromCustom = it.lineKind === 'cashier_custom' && it.categoryId
+        ? catById.get(String(it.categoryId))
+        : undefined;
+      const cat = catFromMenu || catFromCustom;
       return cat ? { ...it, ...cat, _id: it._id ? String(it._id) : undefined, menuItemId: mid || undefined } : {
         ...it,
         _id: it._id ? String(it._id) : undefined,

@@ -8,6 +8,31 @@ import {
 } from './dineInPayAfterItems';
 
 describe('dineInMenuLineAggregateKey', () => {
+  it('keys cashier_custom by name and price without menuItemId', () => {
+    expect(dineInMenuLineAggregateKey({
+      lineKind: 'cashier_custom',
+      itemName: '例汤',
+      itemNameEn: 'Soup',
+      unitPrice: 4.5,
+    })).toBe(dineInMenuLineAggregateKey({
+      lineKind: 'cashier_custom',
+      itemName: '例汤',
+      itemNameEn: 'Soup',
+      unitPrice: 4.5,
+    }));
+    expect(dineInMenuLineAggregateKey({
+      lineKind: 'cashier_custom',
+      itemName: '例汤',
+      itemNameEn: 'Soup',
+      unitPrice: 4.5,
+    })).not.toBe(dineInMenuLineAggregateKey({
+      lineKind: 'cashier_custom',
+      itemName: '例汤',
+      itemNameEn: 'Soup',
+      unitPrice: 5,
+    }));
+  });
+
   it('matches menuItemId and sorted options', () => {
     const a = {
       menuItemId: '507f1f77bcf86cd799439011',

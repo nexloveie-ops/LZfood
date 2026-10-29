@@ -4,6 +4,9 @@ type MenuLineLike = {
   lineKind?: string;
   menuItemId?: unknown;
   quantity?: number;
+  unitPrice?: number;
+  itemName?: string;
+  itemNameEn?: string;
   selectedOptions?: Array<{ groupName?: string; choiceName?: string }>;
   refunded?: boolean;
   kitchenPrintedQty?: number;
@@ -14,11 +17,13 @@ type MenuLineLike = {
   isMarketPrice?: boolean;
   weightKg?: number;
   pricePerKg?: number;
-  unitPrice?: number;
 };
 
 /** 与 assertDineInItemsAdditiveOnly 相同的菜品+选项聚合键 */
 export function dineInMenuLineAggregateKey(item: MenuLineLike): string {
+  if (item.lineKind === 'cashier_custom') {
+    return `custom\u0003${String(item.itemName || '')}\u0003${String(item.itemNameEn || '')}\u0003${Number(item.unitPrice) || 0}`;
+  }
   const mid = String(item.menuItemId ?? '');
   const opts = (item.selectedOptions || [])
     .map((o) => `${String(o.groupName || '')}\u0001${String(o.choiceName || '')}`)
@@ -47,7 +52,7 @@ export function mergeDineInKitchenPrintedAndSettledFromPrevious(
   const prevServed = new Map<string, number>();
   for (const it of previousItems) {
     if (it.lineKind === 'delivery_fee' || it.refunded) continue;
-    if (!it.menuItemId) continue;
+    if (!it.menuItemId && it.lineKind !== 'cashier_custom') continue;
     const k = dineInMenuLineAggregateKey(it);
     const q = typeof it.quantity === 'number' && it.quantity > 0 ? it.quantity : 0;
     const kp = Math.max(0, Math.min(Number(it.kitchenPrintedQty) || 0, q));
@@ -60,7 +65,7 @@ export function mergeDineInKitchenPrintedAndSettledFromPrevious(
 
   for (const raw of nextItems) {
     const it = raw as MenuLineLike;
-    if (it.lineKind === 'delivery_fee' || !it.menuItemId) {
+    if (it.lineKind === 'delivery_fee' || (!it.menuItemId && it.lineKind !== 'cashier_custom')) {
       raw.kitchenPrintedQty = 0;
       raw.settledQty = 0;
       raw.servedQty = 0;
@@ -117,7 +122,7 @@ export function mergeDineInRoundAndPlacedByFromPrevious(
   const prevNotes = new Map<string, Array<{ noteZh: string; noteEn: string }>>();
   for (const it of previousItems) {
     if (it.lineKind === 'delivery_fee' || it.refunded) continue;
-    if (!it.menuItemId) continue;
+    if (!it.menuItemId && it.lineKind !== 'cashier_custom') continue;
     const k = dineInMenuLineAggregateKey(it);
     const noteZh = String((it as { noteZh?: string }).noteZh || '').trim();
     const noteEn = String((it as { noteEn?: string }).noteEn || '').trim();
@@ -134,7 +139,7 @@ export function mergeDineInRoundAndPlacedByFromPrevious(
   const nextRound = nextDineInRoundIndex(previousItems);
   for (const raw of nextItems) {
     const it = raw as MenuLineLike;
-    if (it.lineKind === 'delivery_fee' || !it.menuItemId) continue;
+    if (it.lineKind === 'delivery_fee' || (!it.menuItemId && it.lineKind !== 'cashier_custom')) continue;
     const k = dineInMenuLineAggregateKey(it);
     const prev = prevMeta.get(k);
     if (prev) {
@@ -163,7 +168,7 @@ export function assertKitchenPrintedLinesImmutable(
   const prevPrintedQty = new Map<string, number>();
   for (const it of previousItems) {
     if (it.lineKind === 'delivery_fee' || it.refunded) continue;
-    if (!it.menuItemId) continue;
+    if (!it.menuItemId && it.lineKind !== 'cashier_custom') continue;
     const printed = Math.max(0, Math.min(Number(it.kitchenPrintedQty) || 0, Number(it.quantity) || 0));
     if (printed <= 0) continue;
     const k = dineInMenuLineAggregateKey(it);
@@ -174,7 +179,7 @@ export function assertKitchenPrintedLinesImmutable(
   const nextQty = new Map<string, number>();
   for (const it of nextItems) {
     if (it.lineKind === 'delivery_fee' || it.refunded) continue;
-    if (!it.menuItemId) continue;
+    if (!it.menuItemId && it.lineKind !== 'cashier_custom') continue;
     const k = dineInMenuLineAggregateKey(it);
     nextQty.set(k, (nextQty.get(k) || 0) + (typeof it.quantity === 'number' && it.quantity > 0 ? it.quantity : 0));
   }

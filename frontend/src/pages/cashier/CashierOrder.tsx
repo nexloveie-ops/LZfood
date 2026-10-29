@@ -12,6 +12,7 @@ import CashierMemberCheckoutBlock, {
 import CashierCheckoutDiscountPanel from '../../components/cashier/CashierCheckoutDiscountPanel';
 import type { NumberedVoucherPreview } from '../../components/cashier/CashierNumberedVoucherBlock';
 import CashierAdHocOptionModal, { type AdHocOptionFormResult } from '../../components/cashier/CashierAdHocOptionModal';
+import CashierQuickSaleModal, { type QuickSaleFormResult } from '../../components/cashier/CashierQuickSaleModal';
 import OptionSelectModal, { type OptionGroup } from '../../components/customer/OptionSelectModal';
 import type { CartItemOption } from '../../context/CartContext';
 import ReceiptPrint from '../../components/cashier/ReceiptPrint';
@@ -94,6 +95,12 @@ function formatCashierOptionLabel(opt: OrderItemOption, lang: string): string {
   return opt.choiceName[lang] || Object.values(opt.choiceName)[0] || '';
 }
 
+function customSaleNamePair(line: OrderLine): { zh: string; en: string } {
+  const zh = (line.itemNameZh || line.name || '').trim();
+  const en = (line.itemNameEn || '').trim();
+  return { zh, en };
+}
+
 function adHocPayloadFromOption(opt: OrderItemOption) {
   return {
     groupName: opt.groupName['zh-CN'] || '加料',
@@ -113,6 +120,10 @@ interface OrderLine {
   weightKg?: number;
   pricePerKg?: number;
   todayPricePerKg?: number | null;
+  isCustomSale?: boolean;
+  customCategoryId?: string;
+  itemNameZh?: string;
+  itemNameEn?: string;
 }
 
 /** GET /api/orders/dine-in/active 返回行（本桌待结列表，点击行载入点单） */
@@ -123,6 +134,7 @@ interface ActiveDineInOrderRow {
   items: Array<{
     menuItemId?: string;
     lineKind?: string;
+    categoryId?: string;
     quantity: number;
     unitPrice: number;
     itemName: string;
@@ -147,7 +159,9 @@ function buildLinesFromActiveDineInOrders(orders: ActiveDineInOrderRow[], lang: 
   const lines: OrderLine[] = [];
   for (const ord of orders) {
     for (const it of ord.items) {
-      if (it.lineKind === 'delivery_fee' || !it.menuItemId || it.refunded) continue;
+      if (it.lineKind === 'delivery_fee' || it.refunded) continue;
+      const isCustom = it.lineKind === 'cashier_custom' || !it.menuItemId;
+      if (!isCustom && !it.menuItemId) continue;
       const q = Math.max(1, Math.floor(Number(it.quantity)) || 1);
       const rawOpts = it.selectedOptions || [];
       const opts: OrderItemOption[] = rawOpts.map((o) => ({
@@ -168,10 +182,18 @@ function buildLinesFromActiveDineInOrders(orders: ActiveDineInOrderRow[], lang: 
       for (let i = 0; i < q; i++) {
         lines.push({
           id: nextLineId(),
-          menuItemId: String(it.menuItemId),
+          menuItemId: it.menuItemId ? String(it.menuItemId) : '',
           name: displayName,
           price: it.unitPrice,
           options: opts.length ? opts : undefined,
+          ...(isCustom
+            ? {
+                isCustomSale: true,
+                customCategoryId: it.categoryId ? String(it.categoryId) : undefined,
+                itemNameZh: it.itemName,
+                itemNameEn: it.itemNameEn || it.itemName,
+              }
+            : {}),
           ...(it.isMarketPrice
             ? {
                 isMarketPrice: true,
@@ -199,6 +221,9 @@ function bumpLineIdCounterFromLines(lines: Array<{ id: string }>) {
 }
 
 function lineGroupKey(line: OrderLine): string {
+  if (line.isCustomSale) {
+    return `custom:${line.itemNameZh || line.name}|${line.itemNameEn || ''}|${line.customCategoryId || ''}|${line.price.toFixed(2)}`;
+  }
   if (line.isMarketPrice) return `mkt:${line.id}`;
   const optsKey =
     line.options && line.options.length > 0
@@ -532,7 +557,7 @@ export default function CashierOrder() {
     const applyItems = (nextItems: MenuItem[]) => {
       const ids = new Set(nextItems.map((it) => it._id));
       setOrder((prev) => {
-        const kept = prev.filter((line) => ids.has(line.menuItemId));
+        const kept = prev.filter((line) => line.isCustomSale || ids.has(line.menuItemId));
         if (kept.length !== prev.length) setError(t('cashier.menuItemsDroppedForChannel'));
         return kept;
       });
@@ -1312,7 +1337,7 @@ export default function CashierOrder() {
       if (lines.length === 0) return;
       setImportingActiveOrderId(ord._id);
       try {
-        const mids = new Set(lines.map((l) => l.menuItemId));
+        const mids = new Set(lines.map((l) => l.menuItemId).filter(Boolean));
         const needMerge = [...mids].some((id) => !menuItems.some((m) => m._id === id));
         if (needMerge) {
           await fetchMenu();
@@ -1335,13 +1360,15 @@ export default function CashierOrder() {
   };
 
   const orderBomLines = useMemo(
-    () => order.map((o) => ({
-      menuItemId: o.menuItemId,
-      quantity: 1,
-      options: (o.options || [])
-        .filter((opt) => !opt.isAdHoc && opt.groupId && opt.choiceId)
-        .map((opt) => ({ groupId: opt.groupId!, choiceId: opt.choiceId! })),
-    })),
+    () => order
+      .filter((o) => !o.isCustomSale && o.menuItemId)
+      .map((o) => ({
+        menuItemId: o.menuItemId,
+        quantity: 1,
+        options: (o.options || [])
+          .filter((opt) => !opt.isAdHoc && opt.groupId && opt.choiceId)
+          .map((opt) => ({ groupId: opt.groupId!, choiceId: opt.choiceId! })),
+      })),
     [order],
   );
 
@@ -1383,6 +1410,7 @@ export default function CashierOrder() {
     const byId = new Map(items.map((m) => [m._id, m]));
     const names = new Set<string>();
     for (const line of lines) {
+      if (line.isCustomSale) continue;
       const mi = byId.get(line.menuItemId);
       if (mi?.isHidden || mi?.isSoldOut) names.add(line.name);
     }
@@ -1491,8 +1519,28 @@ export default function CashierOrder() {
   const [editingLineId, setEditingLineId] = useState<string | null>(null);
   const [editPrice, setEditPrice] = useState('');
   const [adHocModalGroup, setAdHocModalGroup] = useState<OrderLineGroup | null>(null);
+  const [showQuickSale, setShowQuickSale] = useState(false);
+
+  const addQuickSaleLine = (result: QuickSaleFormResult) => {
+    const displayName = String(lang).toLowerCase().startsWith('zh') ? result.nameZh : (result.nameEn || result.nameZh);
+    setOrder((prev) => [
+      ...prev,
+      {
+        id: nextLineId(),
+        menuItemId: '',
+        name: displayName,
+        price: result.unitPrice,
+        isCustomSale: true,
+        customCategoryId: result.categoryId,
+        itemNameZh: result.nameZh,
+        itemNameEn: result.nameEn || result.nameZh,
+      },
+    ]);
+    setShowQuickSale(false);
+  };
 
   const openAdHocModal = (group: OrderLineGroup) => {
+    if (group.representative.isCustomSale) return;
     const adHocCount = (group.representative.options || []).filter((o) => o.isAdHoc).length;
     if (adHocCount >= AD_HOC_MAX_PER_LINE) {
       setError(t('cashier.adHocMaxReached'));
@@ -1560,6 +1608,22 @@ export default function CashierOrder() {
           name: template.name,
           price: template.price,
           options: template.options?.map((o) => ({ ...o })),
+          ...(template.isCustomSale
+            ? {
+                isCustomSale: true,
+                customCategoryId: template.customCategoryId,
+                itemNameZh: template.itemNameZh,
+                itemNameEn: template.itemNameEn,
+              }
+            : {}),
+          ...(template.isMarketPrice
+            ? {
+                isMarketPrice: true,
+                weightKg: template.weightKg,
+                pricePerKg: template.pricePerKg,
+                todayPricePerKg: template.todayPricePerKg,
+              }
+            : {}),
         })),
       ]);
       return;
@@ -1637,7 +1701,7 @@ export default function CashierOrder() {
   // Bundle matching
   const matchedBundles: MatchedBundle[] = useMemo(() => {
     if (offers.length === 0 || order.length === 0) return [];
-    const cartEntries = order.map(line => {
+    const cartEntries = order.filter((line) => !line.isCustomSale).map(line => {
       const mi = menuItems.find(m => m._id === line.menuItemId);
       const optExtra = (line.options || []).reduce((s, o) => s + o.extraPrice, 0);
       return {
@@ -1658,7 +1722,9 @@ export default function CashierOrder() {
       return {
         key: line.id,
         menuItemId: line.menuItemId,
-        categoryId: menuItems.find(m => m._id === line.menuItemId)?.categoryId || '',
+        categoryId: line.isCustomSale
+          ? (line.customCategoryId || '')
+          : (menuItems.find(m => m._id === line.menuItemId)?.categoryId || ''),
         basePrice: line.price,
         optionExtra: optExtra,
         quantity: 1,
@@ -2199,13 +2265,35 @@ export default function CashierOrder() {
   // Build grouped items for API
   const buildGroupedItems = () => {
     type Payload = {
-      menuItemId: string;
+      menuItemId?: string;
       quantity: number;
+      customSale?: boolean;
+      categoryId?: string;
+      unitPrice?: number;
+      itemName?: string;
+      itemNameEn?: string;
       selectedOptions?: { groupId: string; choiceId: string }[];
       adHocOptions?: ReturnType<typeof adHocPayloadFromOption>[];
     };
     const grouped = new Map<string, Payload>();
     for (const line of order) {
+      if (line.isCustomSale) {
+        const key = lineGroupKey(line);
+        const existing = grouped.get(key);
+        if (existing) {
+          existing.quantity++;
+        } else {
+          grouped.set(key, {
+            customSale: true,
+            categoryId: line.customCategoryId || '',
+            unitPrice: line.price,
+            itemName: line.itemNameZh || line.name,
+            itemNameEn: line.itemNameEn || line.name,
+            quantity: 1,
+          });
+        }
+        continue;
+      }
       const mi = menuItems.find((m) => m._id === line.menuItemId);
       const menuOpts = (line.options || []).filter((o) => !o.isAdHoc);
       const adHocOpts = (line.options || []).filter((o) => o.isAdHoc);
@@ -2950,6 +3038,15 @@ export default function CashierOrder() {
         <>
           <div className="waiter-order-toolbar">
             <input className="input cashier-menu-search" placeholder={t('cashier.searchMenuPlaceholder')} value={search} onChange={(e) => setSearch(e.target.value)} />
+            <button
+              type="button"
+              className="btn btn-outline cashier-quick-sale-btn"
+              disabled={categories.length === 0}
+              title={categories.length === 0 ? t('cashier.quickSaleNoCategories') : t('cashier.quickSaleBtn')}
+              onClick={() => { if (categories.length > 0) setShowQuickSale(true); }}
+            >
+              {t('cashier.quickSaleBtn')}
+            </button>
             <button type="button" className="waiter-type-btn" onClick={() => { setWaiterTypeError(''); setWaiterTypeUi('pick'); }}>
               {waiterTypeLabel(orderType)} ▾
             </button>
@@ -2988,6 +3085,15 @@ export default function CashierOrder() {
         {!waiterMode ? (
         <div style={{ padding: '10px 12px', background: 'var(--bg-white)', borderBottom: '1px solid var(--border)', flexShrink: 0, display: 'flex', gap: 8 }}>
           <input className="input cashier-menu-search" placeholder={t('cashier.searchMenuPlaceholder')} value={search} onChange={e => setSearch(e.target.value)} style={{ flex: 1 }} />
+          <button
+            type="button"
+            className="btn btn-outline cashier-quick-sale-btn"
+            disabled={categories.length === 0}
+            title={categories.length === 0 ? t('cashier.quickSaleNoCategories') : t('cashier.quickSaleBtn')}
+            onClick={() => { if (categories.length > 0) setShowQuickSale(true); }}
+          >
+            {t('cashier.quickSaleBtn')}
+          </button>
           {marketMenuItems.length > 0 ? (
             <button type="button" className="btn btn-outline" style={{ flexShrink: 0, fontSize: 12, padding: '6px 10px' }} onClick={openMarketRates}>
               {t('cashier.todayMarketPrices')}
@@ -3339,7 +3445,7 @@ export default function CashierOrder() {
                     activeTableOrders.map((ord, idx) => {
                       const busy = importingActiveOrderId === ord._id;
                       const summary = (ord.items || [])
-                        .filter((it) => it.lineKind !== 'delivery_fee' && it.menuItemId && !it.refunded)
+                        .filter((it) => it.lineKind !== 'delivery_fee' && !it.refunded && (it.menuItemId || it.lineKind === 'cashier_custom'))
                         .map((it) => {
                           const label = String(lang).toLowerCase().startsWith('zh')
                             ? it.itemName
@@ -3424,12 +3530,15 @@ export default function CashierOrder() {
             const optExtra = (line.options || []).reduce((sum, opt) => sum + opt.extraPrice, 0);
             const unitPrice = line.price + optExtra;
             const isEditing = editingLineId === line.id;
+            const customNames = line.isCustomSale ? customSaleNamePair(line) : null;
+            const showCustomEn = Boolean(customNames?.en && customNames.en !== customNames.zh);
             return (
               <div key={group.key} style={{ padding: '6px 10px', borderBottom: '1px solid #f0f0f0' }}>
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
                   <span style={{ fontSize: 10, color: 'var(--text-light)', width: 14, flexShrink: 0, paddingTop: 2 }}>{idx + 1}.</span>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: 'flex', alignItems: 'flex-start', gap: 4 }}>
+                      {line.isCustomSale ? null : (
                       <button
                         type="button"
                         style={{ ...qtyBtnStyle, flexShrink: 0, marginTop: 1 }}
@@ -3442,7 +3551,17 @@ export default function CashierOrder() {
                       >
                         +
                       </button>
+                      )}
+                      {customNames ? (
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.35, wordBreak: 'break-word' }}>{customNames.zh || customNames.en}</div>
+                          {showCustomEn ? (
+                            <div style={{ fontSize: 11, fontWeight: 500, color: 'var(--text-light)', lineHeight: 1.3, wordBreak: 'break-word', marginTop: 1 }}>{customNames.en}</div>
+                          ) : null}
+                        </div>
+                      ) : (
                       <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.35, wordBreak: 'break-word', flex: 1, minWidth: 0 }}>{line.name}</div>
+                      )}
                     </div>
                     {line.options && line.options.length > 0 && (
                       <div style={{ fontSize: 10, color: 'var(--text-light)', lineHeight: 1.35, wordBreak: 'break-word', marginTop: 2, paddingLeft: 24 }}>
@@ -3822,6 +3941,15 @@ export default function CashierOrder() {
           maxPerLine={AD_HOC_MAX_PER_LINE}
           onConfirm={applyAdHocOption}
           onClose={() => setAdHocModalGroup(null)}
+        />
+      ) : null}
+
+      {showQuickSale ? (
+        <CashierQuickSaleModal
+          categories={categories}
+          getCategoryName={getName}
+          onConfirm={addQuickSaleLine}
+          onClose={() => setShowQuickSale(false)}
         />
       ) : null}
 

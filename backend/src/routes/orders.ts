@@ -56,6 +56,7 @@ import {
   parseAdHocOptionsFromItemPayload,
   type AdHocOptionInput,
 } from '../utils/cashierAdHocOptions';
+import { isCashierCustomSalePayload, parseCashierCustomSalePayload } from '../utils/cashierCustomSale';
 import {
   aggregateServingsByMenuItem,
   deductStockForOrderCreation,
@@ -237,7 +238,12 @@ export function createOrdersRouter(io: SocketIOServer): Router {
   type SelectedOptInput = { groupId: string; choiceId: string };
 
   type OrderItemBuildInput = {
-    menuItemId: string;
+    menuItemId?: string;
+    customSale?: boolean;
+    categoryId?: string;
+    unitPrice?: number;
+    itemName?: string;
+    itemNameEn?: string;
     quantity: number;
     selectedOptions?: SelectedOptInput[];
     adHocOptions?: AdHocOptionInput[];
@@ -250,6 +256,52 @@ export function createOrdersRouter(io: SocketIOServer): Router {
   function lineNote(raw: unknown): string {
     if (typeof raw !== 'string') return '';
     return raw.trim().slice(0, 200);
+  }
+
+  function parseIncomingOrderItemRows(rawItems: unknown[], staffAllowed: boolean): OrderItemBuildInput[] {
+    const out: OrderItemBuildInput[] = [];
+    for (const raw of rawItems) {
+      if (!raw || typeof raw !== 'object') {
+        throw createAppError('VALIDATION_ERROR', 'Each item must be an object');
+      }
+      const row = raw as Record<string, unknown>;
+      const quantity = typeof row.quantity === 'number' ? row.quantity : NaN;
+      if (!Number.isFinite(quantity) || quantity < 1) {
+        throw createAppError('VALIDATION_ERROR', 'Each item must have a quantity >= 1');
+      }
+      if (isCashierCustomSalePayload(row)) {
+        if (!staffAllowed) {
+          throw createAppError('FORBIDDEN', 'customSale requires cashier or owner session');
+        }
+        const custom = parseCashierCustomSalePayload(row);
+        out.push({
+          customSale: true,
+          categoryId: custom.categoryId,
+          unitPrice: custom.unitPrice,
+          itemName: custom.itemName,
+          itemNameEn: custom.itemNameEn,
+          quantity,
+          noteZh: row.noteZh,
+          noteEn: row.noteEn,
+        });
+        continue;
+      }
+      const menuItemId = typeof row.menuItemId === 'string' ? row.menuItemId : '';
+      if (!menuItemId || !mongoose.Types.ObjectId.isValid(menuItemId)) {
+        throw createAppError('VALIDATION_ERROR', `Invalid menuItemId: ${row.menuItemId}`);
+      }
+      out.push({
+        menuItemId,
+        quantity,
+        selectedOptions: row.selectedOptions as SelectedOptInput[] | undefined,
+        adHocOptions: row.adHocOptions as AdHocOptionInput[] | undefined,
+        weightKg: row.weightKg,
+        pricePerKg: row.pricePerKg,
+        noteZh: row.noteZh,
+        noteEn: row.noteEn,
+      });
+    }
+    return out;
   }
 
   function parseOrderItemAdHoc(raw: unknown, staffAllowed: boolean): AdHocOptionInput[] {
@@ -350,6 +402,7 @@ export function createOrdersRouter(io: SocketIOServer): Router {
     const orderItems: {
       menuItemId?: string;
       lineKind?: string;
+      categoryId?: string;
       quantity: number;
       unitPrice: number;
       itemName: string;
@@ -372,11 +425,15 @@ export function createOrdersRouter(io: SocketIOServer): Router {
 
     const { MarketPriceDay, MenuCategory } = orderModels();
     const todayRates = await loadTodayPricePerKgMap(MarketPriceDay, storeId, dublinCalendarDate());
-    const catIds = [...new Set(
-      [...menuItemMap.values()]
+    const customCatIds = items
+      .filter((i) => i.customSale && i.categoryId && mongoose.Types.ObjectId.isValid(i.categoryId))
+      .map((i) => String(i.categoryId));
+    const catIds = [...new Set([
+      ...[...menuItemMap.values()]
         .map((m) => (m.categoryId != null ? String(m.categoryId) : ''))
         .filter((id) => id && mongoose.Types.ObjectId.isValid(id)),
-    )];
+      ...customCatIds,
+    ])];
     const catRows = catIds.length > 0
       ? await MenuCategory.find({ storeId, _id: { $in: catIds } }).select('discountZhe skipKitchenCloudPrint').lean() as {
         _id: unknown;
@@ -388,7 +445,35 @@ export function createOrdersRouter(io: SocketIOServer): Router {
     const skipKitchenByCat = new Map(catRows.map((c) => [String(c._id), Boolean(c.skipKitchenCloudPrint)]));
 
     for (const item of items) {
-      const menuItem = menuItemMap.get(item.menuItemId)!;
+      if (item.customSale) {
+        const catId = String(item.categoryId || '');
+        if (!skipKitchenByCat.has(catId)) {
+          throw createAppError('VALIDATION_ERROR', 'custom sale category not found');
+        }
+        const skipKitchenCloudPrint = skipKitchenByCat.get(catId) === true;
+        const itemName = String(item.itemName || '').trim();
+        const itemNameEn = String(item.itemNameEn || '').trim() || itemName;
+        const unitPrice = typeof item.unitPrice === 'number' ? item.unitPrice : 0;
+        const noteZh = lineNote(item.noteZh);
+        const noteEn = lineNote(item.noteEn);
+        orderItems.push({
+          lineKind: 'cashier_custom',
+          categoryId: catId,
+          quantity: item.quantity,
+          unitPrice,
+          itemName,
+          itemNameEn,
+          selectedOptions: [],
+          ...(skipKitchenCloudPrint ? { skipKitchenCloudPrint: true } : {}),
+          ...(noteZh ? { noteZh } : {}),
+          ...(noteEn ? { noteEn } : {}),
+        });
+        continue;
+      }
+      const menuItem = menuItemMap.get(String(item.menuItemId))!;
+      if (!menuItem) {
+        throw createAppError('VALIDATION_ERROR', `Menu items not found: ${item.menuItemId}`);
+      }
       const zhTrans = menuItem.translations?.find((t: { locale: string }) => t.locale === 'zh-CN');
       const enTrans = menuItem.translations?.find((t: { locale: string }) => t.locale === 'en-US');
       const itemName = zhTrans?.name || enTrans?.name || (menuItem.translations?.[0] as { name: string })?.name || 'Unknown';
@@ -549,32 +634,27 @@ export function createOrdersRouter(io: SocketIOServer): Router {
         throw createAppError('VALIDATION_ERROR', 'items must be a non-empty array');
       }
 
-      for (const item of items) {
-        if (!item.menuItemId || !mongoose.Types.ObjectId.isValid(item.menuItemId)) {
-          throw createAppError('VALIDATION_ERROR', `Invalid menuItemId: ${item.menuItemId}`);
-        }
-        if (!item.quantity || typeof item.quantity !== 'number' || item.quantity < 1) {
-          throw createAppError('VALIDATION_ERROR', 'Each item must have a quantity >= 1');
-        }
+      const staffAllowed = isStaffCashierOrOwner(req);
+      const parsedItems = parseIncomingOrderItemRows(items, staffAllowed);
+      const menuItemIds = parsedItems.map((i) => i.menuItemId).filter((id): id is string => Boolean(id));
+      const menuItems = menuItemIds.length > 0
+        ? await MenuItem.find({ storeId: req.storeId, _id: { $in: menuItemIds } })
+        : [];
+
+      if (menuItemIds.length > 0) {
+        assertMenuItemsVisibleForOrder(menuItems, menuItemIds);
+        await assertMenuItemsForChannel(req.storeId!, type, menuItems, menuItemIds);
       }
-
-      // Fetch all referenced menu items
-      const menuItemIds = items.map((i: { menuItemId: string }) => i.menuItemId);
-      const menuItems = await MenuItem.find({ storeId: req.storeId, _id: { $in: menuItemIds } });
-
-      assertMenuItemsVisibleForOrder(menuItems, menuItemIds);
-      await assertMenuItemsForChannel(req.storeId!, type, menuItems, menuItemIds);
 
       // Build a lookup map for menu items
       const menuItemMap = new Map(menuItems.map((m) => [m._id.toString(), m as MenuItemForOrder]));
 
       // Build order items with price/name snapshots
-      const staffAllowed = isStaffCashierOrOwner(req);
       const waiterPlacement =
         staffAllowed &&
         ((req.body as { waiterPlacement?: unknown }).waiterPlacement === true ||
           (req.body as { waiterPlacement?: unknown }).waiterPlacement === 'true');
-      const orderItems = await buildOrderItemsPayload(req.storeId!, items, menuItemMap, staffAllowed);
+      const orderItems = await buildOrderItemsPayload(req.storeId!, parsedItems, menuItemMap, staffAllowed);
       if (type === 'dine_in' && dineInWf === 'pay_after') {
         stampNewDineInLines([], orderItems as Record<string, unknown>[], staffAllowed ? 'staff' : 'customer_qr');
       }
@@ -822,7 +902,7 @@ export function createOrdersRouter(io: SocketIOServer): Router {
 
       /** B 模式（原材料 BoM）扣减：用已解析选项快照的 orderItems，与改单路径一致 */
       const bomLinesForDeduction = orderItems
-        .filter((oi) => oi.lineKind !== 'delivery_fee')
+        .filter((oi) => oi.lineKind !== 'delivery_fee' && oi.lineKind !== 'cashier_custom')
         .map((oi) => ({
           menuItemId: oi.menuItemId,
           quantity: oi.quantity,
@@ -1999,23 +2079,19 @@ export function createOrdersRouter(io: SocketIOServer): Router {
         if (!Array.isArray(items) || items.length === 0) {
           throw createAppError('VALIDATION_ERROR', 'items must be a non-empty array');
         }
-        for (const item of items) {
-          if (!item.menuItemId || !mongoose.Types.ObjectId.isValid(item.menuItemId)) {
-            throw createAppError('VALIDATION_ERROR', `Invalid menuItemId: ${item.menuItemId}`);
-          }
-          if (!item.quantity || typeof item.quantity !== 'number' || item.quantity < 1) {
-            throw createAppError('VALIDATION_ERROR', 'Each item must have a quantity >= 1');
-          }
+        const staffAllowed = isStaffCashierOrOwner(req);
+        const parsedItems = parseIncomingOrderItemRows(items, staffAllowed);
+        const menuItemIds = parsedItems.map((i) => i.menuItemId).filter((id): id is string => Boolean(id));
+        const menuItems = menuItemIds.length > 0
+          ? await MenuItem.find({ storeId: req.storeId, _id: { $in: menuItemIds } })
+          : [];
+        if (menuItemIds.length > 0) {
+          assertMenuItemsVisibleForOrder(menuItems, menuItemIds);
+          await assertMenuItemsForChannel(req.storeId!, order.type, menuItems, menuItemIds);
         }
 
-        const menuItemIds = items.map((i: { menuItemId: string }) => i.menuItemId);
-        const menuItems = await MenuItem.find({ storeId: req.storeId, _id: { $in: menuItemIds } });
-        assertMenuItemsVisibleForOrder(menuItems, menuItemIds);
-        await assertMenuItemsForChannel(req.storeId!, order.type, menuItems, menuItemIds);
-
         const menuItemMap = new Map(menuItems.map((m) => [m._id.toString(), m as MenuItemForOrder]));
-        const staffAllowed = isStaffCashierOrOwner(req);
-        const newLines = await buildOrderItemsPayload(req.storeId!, items, menuItemMap, staffAllowed);
+        const newLines = await buildOrderItemsPayload(req.storeId!, parsedItems, menuItemMap, staffAllowed);
         stampNewDineInLines(order.items as Parameters<typeof stampNewDineInLines>[0], newLines as Record<string, unknown>[], 'staff');
 
         const inventoryServings = remapServingsToStockShare(
@@ -2033,7 +2109,7 @@ export function createOrdersRouter(io: SocketIOServer): Router {
         );
 
         const bomLinesForDeduction = newLines
-          .filter((oi) => oi.lineKind !== 'delivery_fee')
+          .filter((oi) => oi.lineKind !== 'delivery_fee' && oi.lineKind !== 'cashier_custom')
           .map((oi) => ({
             menuItemId: oi.menuItemId,
             quantity: oi.quantity,
@@ -2219,30 +2295,25 @@ export function createOrdersRouter(io: SocketIOServer): Router {
         throw createAppError('VALIDATION_ERROR', 'items must be a non-empty array');
       }
 
-      for (const item of items) {
-        if (!item.menuItemId || !mongoose.Types.ObjectId.isValid(item.menuItemId)) {
-          throw createAppError('VALIDATION_ERROR', `Invalid menuItemId: ${item.menuItemId}`);
-        }
-        if (!item.quantity || typeof item.quantity !== 'number' || item.quantity < 1) {
-          throw createAppError('VALIDATION_ERROR', 'Each item must have a quantity >= 1');
-        }
+      const parsedItems = parseIncomingOrderItemRows(items, staffAllowed);
+      const menuItemIds = parsedItems.map((i) => i.menuItemId).filter((id): id is string => Boolean(id));
+      const menuItems = menuItemIds.length > 0
+        ? await MenuItem.find({ storeId: req.storeId, _id: { $in: menuItemIds } })
+        : [];
+
+      if (menuItemIds.length > 0) {
+        assertMenuItemsVisibleForOrder(menuItems, menuItemIds);
+        const existingIds = new Set(
+          ((order.items || []) as Array<{ menuItemId?: unknown }>).map((it) => String(it.menuItemId || '')).filter(Boolean),
+        );
+        await assertMenuItemsForChannel(req.storeId!, order.type, menuItems, menuItemIds, existingIds);
       }
-
-      // Fetch all referenced menu items
-      const menuItemIds = items.map((i: { menuItemId: string }) => i.menuItemId);
-      const menuItems = await MenuItem.find({ storeId: req.storeId, _id: { $in: menuItemIds } });
-
-      assertMenuItemsVisibleForOrder(menuItems, menuItemIds);
-      const existingIds = new Set(
-        ((order.items || []) as Array<{ menuItemId?: unknown }>).map((it) => String(it.menuItemId || '')).filter(Boolean),
-      );
-      await assertMenuItemsForChannel(req.storeId!, order.type, menuItems, menuItemIds, existingIds);
 
       // Build a lookup map for menu items
       const menuItemMap = new Map(menuItems.map((m) => [m._id.toString(), m as MenuItemForOrder]));
 
       // Build updated order items with price/name snapshots
-      const orderItems = await buildOrderItemsPayload(req.storeId!, items, menuItemMap, staffAllowed);
+      const orderItems = await buildOrderItemsPayload(req.storeId!, parsedItems, menuItemMap, staffAllowed);
       mergeMarketWeighFromPrevious(
         order.items as Parameters<typeof mergeMarketWeighFromPrevious>[0],
         orderItems as Record<string, unknown>[],

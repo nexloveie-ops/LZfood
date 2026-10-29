@@ -1,9 +1,11 @@
 import mongoose from 'mongoose';
 
 const OrderItemSubdocSchema = new mongoose.Schema({
-  /** menu lines reference MenuItem; delivery_fee lines omit menuItemId */
+  /** menu lines reference MenuItem; delivery_fee / cashier_custom omit menuItemId */
   menuItemId: { type: mongoose.Schema.Types.ObjectId, ref: 'MenuItem', required: false },
-  lineKind: { type: String, enum: ['menu', 'delivery_fee'], default: 'menu' },
+  lineKind: { type: String, enum: ['menu', 'delivery_fee', 'cashier_custom'], default: 'menu' },
+  /** cashier_custom：所选分类，供小票分组与再次加入购物车 */
+  categoryId: { type: mongoose.Schema.Types.ObjectId, ref: 'MenuCategory', required: false },
   quantity: { type: Number, required: true, min: 1 },
   unitPrice: { type: Number, required: true },
   itemName: { type: String, required: true },

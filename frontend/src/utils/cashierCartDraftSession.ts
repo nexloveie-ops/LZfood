@@ -20,6 +20,10 @@ export interface CashierCartDraftLine {
   name: string;
   price: number;
   options?: CashierCartDraftLineOption[];
+  isCustomSale?: boolean;
+  customCategoryId?: string;
+  itemNameZh?: string;
+  itemNameEn?: string;
 }
 
 export interface CashierCartDraft {

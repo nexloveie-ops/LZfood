@@ -43,6 +43,7 @@ type MenuItemRow = {
 type CatalogLookup = {
   byMenuItemId: Map<string, ReceiptCatalogMeta>;
   byItemName: Map<string, ReceiptCatalogMeta>;
+  byCategoryId: Map<string, ReceiptCatalogMeta>;
   fetchedAt: number;
 };
 
@@ -114,7 +115,7 @@ export async function loadMenuCatalogLookup(force = false): Promise<CatalogLooku
     if (en) byItemName.set(en.toLowerCase(), meta);
   }
 
-  catalogCache = { byMenuItemId, byItemName, fetchedAt: Date.now() };
+  catalogCache = { byMenuItemId, byItemName, byCategoryId: catMeta, fetchedAt: Date.now() };
   return catalogCache;
 }
 
@@ -123,9 +124,13 @@ export function resolveItemCatalogMeta(
   lookup: CatalogLookup,
 ): ReceiptCatalogMeta {
   if (item.lineKind === 'delivery_fee') return deliveryMeta();
-  if (item.categoryId && item.categoryId !== UNCATEGORIZED_ID) {
+  const cid = item.categoryId && item.categoryId !== UNCATEGORIZED_ID ? String(item.categoryId) : '';
+  if (cid && lookup.byCategoryId.has(cid)) {
+    return lookup.byCategoryId.get(cid)!;
+  }
+  if (cid) {
     return {
-      categoryId: item.categoryId,
+      categoryId: cid,
       categoryName: item.categoryName || 'Category',
       categoryNameEn: item.categoryNameEn || '',
       categorySortOrder: item.categorySortOrder ?? 9999,

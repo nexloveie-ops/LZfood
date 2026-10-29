@@ -46,8 +46,9 @@ export interface ItemBaseDemand {
 export function aggregateServingsByMenuItem(items: OrderItemForInventory[]): Map<string, number> {
   const map = new Map<string, number>();
   for (const it of items) {
-    if (it.lineKind === 'delivery_fee') continue;
+    if (it.lineKind === 'delivery_fee' || it.lineKind === 'cashier_custom') continue;
     if (it.refunded) continue;
+    if (!it.menuItemId) continue;
     const qty = Math.max(0, Math.floor(Number(it.quantity) || 0));
     if (qty <= 0) continue;
     const id = String(it.menuItemId);
@@ -352,7 +353,7 @@ export function aggregateRawMaterialDemand(
   const out = new Map<string, number>();
 
   for (const line of items) {
-    if (line.lineKind === 'delivery_fee') continue;
+    if (line.lineKind === 'delivery_fee' || line.lineKind === 'cashier_custom') continue;
     if (line.refunded) continue;
     const qty = Math.max(0, Math.floor(Number(line.quantity) || 0));
     if (qty <= 0) continue;
