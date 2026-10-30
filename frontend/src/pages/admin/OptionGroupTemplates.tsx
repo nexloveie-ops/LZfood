@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, 
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../../context/AuthContext';
 import { apiFetch } from '../../api/client';
+import AdminMenuPicker from '../../components/admin/AdminMenuPicker';
+import { useAdminMenus } from '../../hooks/useAdminMenus';
 
 interface Translation { locale: string; name: string; }
 interface Category { _id: string; translations: Translation[]; }
@@ -270,6 +272,7 @@ export default function OptionGroupTemplates() {
   const { t, i18n } = useTranslation();
   const { token } = useAuth();
   const lang = i18n.language;
+  const { menus, menuId, setMenuId } = useAdminMenus();
 
   const headers = useMemo(() => ({
     'Content-Type': 'application/json',
@@ -300,9 +303,10 @@ export default function OptionGroupTemplates() {
   };
 
   const fetchAll = useCallback(async () => {
+    const qs = menuId ? `menuId=${encodeURIComponent(menuId)}` : '';
     const [catRes, itemRes, tplRes, ruleRes] = await Promise.all([
-      apiFetch('/api/menu/categories', { headers: { Authorization: `Bearer ${token}` } }),
-      apiFetch('/api/menu/items?ownOptionGroups=1&includeHidden=1', { headers: { Authorization: `Bearer ${token}` } }),
+      apiFetch(`/api/menu/categories${qs ? `?${qs}` : ''}`, { headers: { Authorization: `Bearer ${token}` } }),
+      apiFetch(`/api/menu/items?ownOptionGroups=1&includeHidden=1${qs ? `&${qs}` : ''}`, { headers: { Authorization: `Bearer ${token}` } }),
       apiFetch('/api/admin/option-group-templates', { headers: { Authorization: `Bearer ${token}` } }),
       apiFetch('/api/admin/option-group-templates/rules', { headers: { Authorization: `Bearer ${token}` } }),
     ]);
@@ -310,9 +314,12 @@ export default function OptionGroupTemplates() {
     if (itemRes.ok) setMenuItems(await itemRes.json());
     if (tplRes.ok) setTemplates(await tplRes.json());
     if (ruleRes.ok) setRules(await ruleRes.json());
-  }, [token]);
+  }, [token, menuId]);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
+
+  const otherMenuCategoryCount = ruleForm.categoryIds.filter((id) => !categories.some((c) => c._id === id)).length;
+  const otherMenuItemCount = ruleForm.menuItemIds.filter((id) => !menuItems.some((i) => i._id === id)).length;
 
   const filteredItems = useMemo(() => {
     const q = filter.trim().toLowerCase();
@@ -783,19 +790,22 @@ export default function OptionGroupTemplates() {
       </div>
 
       <div className="card" style={{ padding: 16 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, gap: 12, flexWrap: 'wrap' }}>
           <div style={{ fontSize: 14, fontWeight: 700 }}>{t('admin.optionGroupTemplateRules')}</div>
-          <button
-            className="btn btn-outline"
-            style={{ fontSize: 12 }}
-            disabled={templates.length === 0}
-            onClick={() => {
-              setRuleForm({ ...emptyRuleForm, templateId: templateIdString(templates[0]?._id) });
-              setRuleEditorOpen(true);
-            }}
-          >
-            + {t('common.add')}
-          </button>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+            <AdminMenuPicker menus={menus} menuId={menuId} onChange={setMenuId} />
+            <button
+              className="btn btn-outline"
+              style={{ fontSize: 12 }}
+              disabled={templates.length === 0}
+              onClick={() => {
+                setRuleForm({ ...emptyRuleForm, templateId: templateIdString(templates[0]?._id) });
+                setRuleEditorOpen(true);
+              }}
+            >
+              + {t('common.add')}
+            </button>
+          </div>
         </div>
 
         <div style={{ overflow: 'auto' }}>
@@ -876,6 +886,11 @@ export default function OptionGroupTemplates() {
 
             <div style={{ marginTop: 12 }}>
               <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>{t('admin.ruleTargetsHelp')}</div>
+              {(otherMenuCategoryCount > 0 || otherMenuItemCount > 0) ? (
+                <div style={{ fontSize: 11, color: 'var(--text-light)', marginBottom: 8 }}>
+                  {t('admin.ruleTargetsOtherMenu', { cats: otherMenuCategoryCount, items: otherMenuItemCount })}
+                </div>
+              ) : null}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                 <div>
                   <div style={{ fontSize: 12, color: 'var(--text-light)', marginBottom: 6 }}>{t('admin.categories')}</div>
