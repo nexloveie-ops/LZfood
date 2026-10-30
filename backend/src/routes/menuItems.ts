@@ -24,6 +24,7 @@ import { isValidConsumptionQty, roundConsumptionQty } from '../utils/consumption
 import { dublinCalendarDate, loadTodayPricePerKgMap } from '../utils/marketPrice';
 import { menuItemListPriceEuro, parseMenuItemDiscountPriceInput } from '../utils/menuItemSellPrice';
 import { applyStockShareOverlay, catalogMenuScope } from '../utils/storeMenu';
+import { processMenuItemPhoto } from '../utils/menuItemPhoto';
 
 function menuModels() {
   return getModels() as {
@@ -712,6 +713,8 @@ function cleanupFile(file: Express.Multer.File | undefined): void {
  * POST /api/menu/items/:id/photo
  * Uploads a photo for a menu item. Requires auth + menu:write permission.
  * Accepts jpg, jpeg, png, gif, webp.
+ * New uploads are resized and compressed to JPEG ≤300KB. GIF is stored as-is.
+ * Existing photos are unchanged until re-uploaded.
  * Note: multer runs first to consume the multipart stream, then auth is checked.
  */
 router.post(
@@ -739,11 +742,18 @@ router.post(
         throw createAppError('VALIDATION_ERROR', 'Invalid image format');
       }
 
-      const filename = `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`;
+      let processed: Awaited<ReturnType<typeof processMenuItemPhoto>>;
+      try {
+        processed = await processMenuItemPhoto(req.file.path, ext);
+      } catch {
+        cleanupFile(req.file);
+        throw createAppError('VALIDATION_ERROR', '无法处理该图片，请改用 JPG 或 PNG');
+      }
 
-      // For local fallback: copy temp file to local uploads dir
+      const filename = `${Date.now()}-${Math.round(Math.random() * 1e9)}${processed.ext}`;
       const localDest = path.join(PHOTO_DIR, filename);
-      fs.copyFileSync(req.file.path, localDest);
+      fs.writeFileSync(localDest, processed.buffer);
+      cleanupFile(req.file);
 
       const photoUrl = await uploadFile(localDest, 'photos', filename);
 
@@ -754,12 +764,9 @@ router.post(
       );
 
       if (!updated) {
-        cleanupFile(req.file);
+        fs.unlink(localDest, () => {});
         throw createAppError('NOT_FOUND', 'Menu item not found');
       }
-
-      // Clean up temp file
-      fs.unlink(req.file.path, () => {});
 
       res.json(updated);
     } catch (err) {

@@ -5,6 +5,7 @@ import request from 'supertest';
 import jwt from 'jsonwebtoken';
 import path from 'path';
 import fs from 'fs';
+import Jimp from 'jimp';
 import menuItemsRouter from './menuItems';
 import { errorHandler } from '../middleware/errorHandler';
 import { getJwtSecret, JwtPayload } from '../middleware/auth';
@@ -627,18 +628,11 @@ describe('PUT /api/menu/items/:id/sold-out', () => {
 
 const FIXTURES_DIR = path.join(__dirname, '__fixtures__');
 
-beforeAll(() => {
-  // Create fixture files for upload tests
+beforeAll(async () => {
   fs.mkdirSync(FIXTURES_DIR, { recursive: true });
-  // Create a small valid image file (1x1 PNG)
-  const pngHeader = Buffer.from([
-    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
-  ]);
-  fs.writeFileSync(path.join(FIXTURES_DIR, 'test.png'), pngHeader);
-  fs.writeFileSync(path.join(FIXTURES_DIR, 'test.jpg'), pngHeader);
-  // Create a fake USDZ file
+  await new Jimp(8, 8, 0xffffffff).writeAsync(path.join(FIXTURES_DIR, 'test.png'));
+  await new Jimp(8, 8, 0x3a5a40ff).quality(85).writeAsync(path.join(FIXTURES_DIR, 'test.jpg'));
   fs.writeFileSync(path.join(FIXTURES_DIR, 'model.usdz'), 'fake-usdz-content');
-  // Create a non-USDZ file
   fs.writeFileSync(path.join(FIXTURES_DIR, 'model.obj'), 'fake-obj-content');
   fs.writeFileSync(path.join(FIXTURES_DIR, 'document.pdf'), 'fake-pdf-content');
 });
@@ -665,7 +659,9 @@ describe('POST /api/menu/items/:id/photo', () => {
       .attach('photo', path.join(FIXTURES_DIR, 'test.png'));
 
     expect(res.status).toBe(200);
-    expect(res.body.photoUrl).toMatch(/^\/uploads\/photos\/.+\.png$/);
+    expect(res.body.photoUrl).toMatch(/^\/uploads\/photos\/.+\.jpg$/);
+    const storedPng = path.resolve(__dirname, '../..', String(res.body.photoUrl).replace(/^\//, ''));
+    expect(fs.statSync(storedPng).size).toBeLessThanOrEqual(300 * 1024);
   });
 
   it('should accept jpg files', async () => {
@@ -682,6 +678,8 @@ describe('POST /api/menu/items/:id/photo', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.photoUrl).toMatch(/^\/uploads\/photos\/.+\.jpg$/);
+    const storedJpg = path.resolve(__dirname, '../..', String(res.body.photoUrl).replace(/^\//, ''));
+    expect(fs.statSync(storedJpg).size).toBeLessThanOrEqual(300 * 1024);
   });
 
   it('should reject non-image files', async () => {
