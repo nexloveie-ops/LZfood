@@ -15,10 +15,11 @@ import {
   checkoutPaymentChannels,
 } from '../utils/checkoutPaymentChannels';
 import {
+  aggregateCheckoutRefunds,
   aggregateDeliveryFeeExclusions,
-  allocateAmountByPaymentMethod,
   computeOrderRefundAmount,
   deliveryFeeExcludedFromOrderNet,
+  toReportCheckoutLike,
   type ReportCheckoutLike,
 } from '../utils/reportNetRevenue';
 import {
@@ -78,22 +79,7 @@ async function checkoutIdsToSkipWhenLinkedOrderHidden(
 }
 
 function toReportCheckout(co: unknown): ReportCheckoutLike | undefined {
-  if (!co || typeof co !== 'object') return undefined;
-  const c = co as {
-    totalAmount?: unknown;
-    paymentMethod?: string;
-    cashAmount?: number;
-    cardAmount?: number;
-    memberCreditUsed?: number;
-  };
-  if (c.totalAmount == null) return undefined;
-  return {
-    totalAmount: Number(c.totalAmount) || 0,
-    paymentMethod: c.paymentMethod,
-    cashAmount: c.cashAmount,
-    cardAmount: c.cardAmount,
-    memberCreditUsed: c.memberCreditUsed,
-  };
+  return toReportCheckoutLike(co);
 }
 
 // GET /api/reports/orders — 默认不含 hide（与营业报表一致）；订单历史传 includeHiddenOrders=1
@@ -359,36 +345,15 @@ router.get('/detailed', authMiddleware, requirePermission('report:view'), async 
       }
     }
 
-    // Count refunded items and calculate refund amount per payment method
-    let refundedCount = 0;
-    let refundedAmount = 0;
-    let cashRefund = 0;
-    let cardRefund = 0;
-    let mixedRefund = 0;
-    let onlineRefund = 0;
-    let memberRefund = 0;
-    let tapPayRefund = 0;
-    for (const order of allOrders) {
-      const checkout = orderCheckoutMap.get(order._id.toString());
-      const pm = checkout?.paymentMethod;
-      const refundedItems = order.items.filter((item: { refunded?: boolean }) => (item as unknown as { refunded?: boolean }).refunded);
-      if (refundedItems.length === 0) continue;
-
-      refundedCount += refundedItems.length;
-      const amt = computeOrderRefundAmount(order, toReportCheckout(checkout));
-
-      refundedAmount += amt;
-      const split = allocateAmountByPaymentMethod(amt, pm, toReportCheckout(checkout) || {
-        totalAmount: Number(checkout?.totalAmount) || 0,
-        paymentMethod: pm,
-      });
-      cashRefund += split.cash;
-      cardRefund += split.card;
-      memberRefund += split.member;
-      onlineRefund += split.online;
-      tapPayRefund += split.tap_pay;
-      if (pm === 'mixed') mixedRefund += amt;
-    }
+    const refundAgg = aggregateCheckoutRefunds(allOrders, orderCheckoutMap);
+    const refundedCount = refundAgg.refundedItemCount;
+    const refundedAmount = refundAgg.total;
+    const cashRefund = refundAgg.byPayment.cash;
+    const cardRefund = refundAgg.byPayment.card;
+    const mixedRefund = refundAgg.mixed;
+    const onlineRefund = refundAgg.byPayment.online;
+    const memberRefund = refundAgg.byPayment.member;
+    const tapPayRefund = refundAgg.byPayment.tap_pay;
 
     const deliveryFeeCheckoutMap = new Map<string, ReportCheckoutLike>();
     for (const [oid, co] of orderCheckoutMap.entries()) {

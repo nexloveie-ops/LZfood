@@ -14,7 +14,7 @@ import { getModels } from '../src/getModels';
 import { orderCreatedAtFilterUtc } from '../src/utils/reportDateRange';
 import { aggregateVatSalesByMonth, sumVatBucketTotals } from '../src/utils/vatReportAggregation';
 import { bundleAdjustedLineTotals, lineGrossEuro } from '../src/utils/bundleLineAllocation';
-import { aggregateDeliveryFeeExclusions } from '../src/utils/reportNetRevenue';
+import { aggregateCheckoutRefunds, aggregateDeliveryFeeExclusions } from '../src/utils/reportNetRevenue';
 
 function itemToLineLike(
   item: {
@@ -88,42 +88,7 @@ async function main(): Promise<void> {
     }
   }
 
-  // Refunds (same logic as reports.ts simplified check)
-  let refundedAmount = 0;
-  for (const order of allOrders) {
-    const checkout = orderCheckoutMap.get(order._id.toString());
-    const refundedItems = order.items.filter((item: { refunded?: boolean }) => item.refunded);
-    if (refundedItems.length === 0) continue;
-
-    const allRefunded =
-      order.items.length > 0 && order.items.every((item: { refunded?: boolean }) => item.refunded);
-    let amt: number;
-    if (allRefunded && checkout) {
-      amt = Number(checkout.totalAmount) || 0;
-    } else {
-      let refundedItemsTotal = 0;
-      let allItemsTotal = 0;
-      for (const item of order.items) {
-        const optExtra = ((item.selectedOptions || []) as { extraPrice?: number }[]).reduce(
-          (s, o) => s + (o.extraPrice || 0),
-          0,
-        );
-        const itemAmt = (item.unitPrice + optExtra) * item.quantity;
-        allItemsTotal += itemAmt;
-        if (item.refunded) refundedItemsTotal += itemAmt;
-      }
-      const bundleDisc = ((order.appliedBundles || []) as { discount: number }[]).reduce(
-        (s, b) => s + b.discount,
-        0,
-      );
-      if (allItemsTotal > 0 && bundleDisc > 0) {
-        amt = refundedItemsTotal * (1 - bundleDisc / allItemsTotal);
-      } else {
-        amt = refundedItemsTotal;
-      }
-    }
-    refundedAmount += amt;
-  }
+  const refundedAmount = aggregateCheckoutRefunds(allOrders, orderCheckoutMap).total;
 
   const netLedger = grossLedger - refundedAmount;
 

@@ -8,6 +8,7 @@ export type ReportOrderLike = {
     unitPrice: number;
     quantity: number;
     selectedOptions?: { extraPrice?: number }[];
+    settledQty?: number;
   }[];
   appliedBundles?: { discount: number }[];
   deliveryFeeEuro?: number;
@@ -19,6 +20,10 @@ export type ReportCheckoutLike = {
   cashAmount?: number;
   cardAmount?: number;
   memberCreditUsed?: number;
+  /** Orders settled on this checkout. >1 for dine-in table bills. */
+  linkedOrderCount?: number;
+  serviceChargeAmount?: number;
+  serviceChargeWaived?: boolean;
 };
 
 export type PaymentMethodBuckets = {
@@ -29,35 +34,183 @@ export type PaymentMethodBuckets = {
   tap_pay: number;
 };
 
-/** Refund amount for one order (same rules as GET /api/reports/detailed). */
+function roundEuro(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+function emptyPaymentBuckets(): PaymentMethodBuckets {
+  return { cash: 0, card: 0, online: 0, member: 0, tap_pay: 0 };
+}
+
+function lineGrossEuro(item: {
+  unitPrice: number;
+  quantity: number;
+  selectedOptions?: { extraPrice?: number }[];
+}): number {
+  const optExtra = (item.selectedOptions || []).reduce((s, o) => s + (o.extraPrice || 0), 0);
+  return ((Number(item.unitPrice) || 0) + optExtra) * (Number(item.quantity) || 0);
+}
+
+function settledQtyOf(item: { settledQty?: number }): number {
+  const s = Number(item.settledQty);
+  return Number.isFinite(s) && s > 0 ? s : 0;
+}
+
+function orderUsesSettledQty(order: ReportOrderLike): boolean {
+  return (order.items || []).some((item) => settledQtyOf(item) > 0);
+}
+
+/** Refunded dish line totals (unit + extras × qty). Never a share of the checkout. */
+function refundedDishEuro(order: ReportOrderLike, billedOnly: boolean): number {
+  let n = 0;
+  for (const item of order.items || []) {
+    if (!item.refunded) continue;
+    if (billedOnly && settledQtyOf(item) <= 0) continue;
+    n += lineGrossEuro(item);
+  }
+  return n;
+}
+
+function remainingDishEuro(order: ReportOrderLike): number {
+  let n = 0;
+  for (const item of order.items || []) {
+    if (item.refunded) continue;
+    n += lineGrossEuro(item);
+  }
+  return n;
+}
+
+/**
+ * Refund amount for one order: refunded 菜品金额 only.
+ * Does not use checkout.totalAmount or bundle/checkout share.
+ */
 export function computeOrderRefundAmount(
   order: ReportOrderLike,
+  _checkout?: ReportCheckoutLike,
+): number {
+  return roundEuro(refundedDishEuro(order, orderUsesSettledQty(order)));
+}
+
+/**
+ * Refunded 菜品金额 on one checkout. Skips dishes cancelled before settlement
+ * (never in totalAmount). Does not deduct a proportion of the bill.
+ */
+export function computeCheckoutRefundAmount(
+  linkedOrders: ReportOrderLike[],
   checkout: ReportCheckoutLike | undefined,
 ): number {
-  const refundedItems = (order.items || []).filter((item) => item.refunded);
-  if (refundedItems.length === 0) return 0;
+  const billedOnly = linkedOrders.some(orderUsesSettledQty);
+  let refunded = 0;
+  let remaining = 0;
+  for (const order of linkedOrders) {
+    refunded += refundedDishEuro(order, billedOnly);
+    remaining += remainingDishEuro(order);
+  }
+  if (refunded <= 0.001) return 0;
+  if (!checkout) return roundEuro(refunded);
 
-  const allRefunded =
-    (order.items || []).length > 0
-    && (order.items || []).every((item) => item.refunded);
+  const gross = Number(checkout.totalAmount) || 0;
+  if (billedOnly) return roundEuro(Math.min(refunded, Math.max(0, gross)));
 
-  if (allRefunded && checkout) {
-    return Number(checkout.totalAmount) || 0;
+  const service = checkout.serviceChargeWaived ? 0 : Number(checkout.serviceChargeAmount) || 0;
+  const chargedFood = roundEuro(gross - Math.max(0, service));
+  if (Math.abs(chargedFood - remaining) <= 0.021) return 0;
+
+  return roundEuro(Math.min(Math.max(0, refunded), Math.max(0, gross)));
+}
+
+function orderIdKey(order: ReportOrderLike & { _id?: { toString(): string } | string }): string {
+  const raw = order._id;
+  if (raw == null) return '';
+  return typeof raw === 'string' ? raw : raw.toString();
+}
+
+/**
+ * Sum refunds once per checkout (一桌多单只扣一次).
+ */
+export function aggregateCheckoutRefunds(
+  orders: Array<ReportOrderLike & { _id?: { toString(): string } | string }>,
+  orderCheckoutMap: Map<string, ReportCheckoutLike | object | undefined>,
+): { total: number; byPayment: PaymentMethodBuckets; mixed: number; refundedItemCount: number } {
+  const byPayment = emptyPaymentBuckets();
+  let total = 0;
+  let mixed = 0;
+  let refundedItemCount = 0;
+  const seen = new Set<string>();
+
+  const add = (amt: number, checkout: ReportCheckoutLike | undefined) => {
+    if (amt <= 0.001) return;
+    total += amt;
+    if (!checkout) return;
+    if (String(checkout.paymentMethod) === 'mixed') mixed += amt;
+    const split = allocateAmountByPaymentMethod(amt, checkout.paymentMethod, checkout);
+    byPayment.cash += split.cash;
+    byPayment.card += split.card;
+    byPayment.online += split.online;
+    byPayment.member += split.member;
+    byPayment.tap_pay += split.tap_pay;
+  };
+
+  for (const order of orders) {
+    refundedItemCount += (order.items || []).filter((item) => item.refunded).length;
+    const oid = orderIdKey(order);
+    const raw = oid ? orderCheckoutMap.get(oid) : undefined;
+    const checkout = toReportCheckoutLike(raw);
+    if (!checkout) {
+      add(computeOrderRefundAmount(order, undefined), undefined);
+      continue;
+    }
+    const cid = reportCheckoutId(raw) || `solo:${oid}`;
+    if (seen.has(cid)) continue;
+    seen.add(cid);
+    const linked = orders.filter((o) => {
+      const k = orderIdKey(o);
+      if (!k) return false;
+      const other = orderCheckoutMap.get(k);
+      const otherId = reportCheckoutId(other);
+      return otherId ? otherId === cid : other === raw;
+    });
+    const withCount: ReportCheckoutLike = {
+      ...checkout,
+      linkedOrderCount: linked.length || checkout.linkedOrderCount || 1,
+    };
+    add(computeCheckoutRefundAmount(linked, withCount), withCount);
   }
 
-  let refundedItemsTotal = 0;
-  let allItemsTotal = 0;
-  for (const item of order.items || []) {
-    const optExtra = (item.selectedOptions || []).reduce((s, o) => s + (o.extraPrice || 0), 0);
-    const itemAmt = (item.unitPrice + optExtra) * item.quantity;
-    allItemsTotal += itemAmt;
-    if (item.refunded) refundedItemsTotal += itemAmt;
-  }
-  const bundleDisc = (order.appliedBundles || []).reduce((s, b) => s + b.discount, 0);
-  if (allItemsTotal > 0 && bundleDisc > 0) {
-    return refundedItemsTotal * (1 - bundleDisc / allItemsTotal);
-  }
-  return refundedItemsTotal;
+  return { total, byPayment, mixed, refundedItemCount };
+}
+
+export function toReportCheckoutLike(co: unknown): ReportCheckoutLike | undefined {
+  if (!co || typeof co !== 'object') return undefined;
+  const c = co as {
+    totalAmount?: unknown;
+    paymentMethod?: string;
+    cashAmount?: number;
+    cardAmount?: number;
+    memberCreditUsed?: number;
+    orderIds?: unknown[];
+    serviceChargeAmount?: number;
+    serviceChargeWaived?: boolean;
+  };
+  if (c.totalAmount == null) return undefined;
+  const linked = Array.isArray(c.orderIds) ? c.orderIds.length : undefined;
+  return {
+    totalAmount: Number(c.totalAmount) || 0,
+    paymentMethod: c.paymentMethod,
+    cashAmount: c.cashAmount,
+    cardAmount: c.cardAmount,
+    memberCreditUsed: c.memberCreditUsed,
+    linkedOrderCount: linked,
+    serviceChargeAmount: c.serviceChargeAmount,
+    serviceChargeWaived: c.serviceChargeWaived,
+  };
+}
+
+function reportCheckoutId(co: unknown): string {
+  if (!co || typeof co !== 'object') return '';
+  const id = (co as { _id?: { toString(): string } | string })._id;
+  if (id == null) return '';
+  return String(id);
 }
 
 /**
@@ -83,7 +236,7 @@ export function allocateAmountByPaymentMethod(
   paymentMethod: string | undefined,
   checkout: ReportCheckoutLike,
 ): PaymentMethodBuckets {
-  const out: PaymentMethodBuckets = { cash: 0, card: 0, online: 0, member: 0, tap_pay: 0 };
+  const out = emptyPaymentBuckets();
   if (amount <= 0) return out;
   const ch = checkoutPaymentChannels({
     totalAmount: checkout.totalAmount,
@@ -106,7 +259,7 @@ export function aggregateDeliveryFeeExclusions(
   orders: ReportOrderLike[],
   orderCheckoutMap: Map<string, ReportCheckoutLike>,
 ): { total: number; byPayment: PaymentMethodBuckets } {
-  const byPayment: PaymentMethodBuckets = { cash: 0, card: 0, online: 0, member: 0, tap_pay: 0 };
+  const byPayment = emptyPaymentBuckets();
   let total = 0;
   for (const order of orders) {
     const key = (order as { _id?: { toString(): string } })._id?.toString?.()

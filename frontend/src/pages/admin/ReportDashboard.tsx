@@ -54,6 +54,7 @@ interface OrderItem {
   itemName: string;
   itemNameEn?: string;
   refunded?: boolean;
+  settledQty?: number;
   selectedOptions?: { groupName?: string; choiceName?: string; extraPrice?: number }[];
 }
 
@@ -294,23 +295,19 @@ export default function ReportDashboard() {
     return 0;
   };
 
-  /** Calculate refund amount for an order, considering bundle discounts */
+  /** Refund = refunded dish line amounts, not a share of the checkout or bundle. */
   const calcOrderRefund = (o: DetailOrder) => {
-    const refundedItems = o.items.filter(i => i.refunded);
-    if (refundedItems.length === 0) return 0;
-    const allRefunded = o.items.length > 0 && o.items.every(i => i.refunded);
-    if (allRefunded && o.checkout) return allocatedCheckoutShare(o);
-    // Partial refund: proportionally distribute bundle discount
+    const group = o.checkout
+      ? modalOrders.filter((x) => x.checkout?.checkoutId === o.checkout?.checkoutId)
+      : [o];
+    const billedOnly = group.some((x) => x.items.some((i) => (Number(i.settledQty) || 0) > 0));
     let refundedTotal = 0;
-    let allTotal = 0;
     for (const i of o.items) {
+      if (!i.refunded) continue;
+      if (billedOnly && (Number(i.settledQty) || 0) <= 0) continue;
       const optExtra = (i.selectedOptions || []).reduce((x, op) => x + (op.extraPrice || 0), 0);
-      const amt = (i.unitPrice + optExtra) * i.quantity;
-      allTotal += amt;
-      if (i.refunded) refundedTotal += amt;
+      refundedTotal += (i.unitPrice + optExtra) * i.quantity;
     }
-    const bundleDisc = (o.appliedBundles || []).reduce((s, b) => s + b.discount, 0);
-    if (allTotal > 0 && bundleDisc > 0) return refundedTotal * (1 - bundleDisc / allTotal);
     return refundedTotal;
   };
 

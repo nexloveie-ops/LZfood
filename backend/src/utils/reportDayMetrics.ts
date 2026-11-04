@@ -2,9 +2,8 @@ import mongoose from 'mongoose';
 import { getModels } from '../getModels';
 import { checkoutPaymentChannels } from './checkoutPaymentChannels';
 import {
+  aggregateCheckoutRefunds,
   aggregateDeliveryFeeExclusions,
-  allocateAmountByPaymentMethod,
-  computeOrderRefundAmount,
   type ReportCheckoutLike,
 } from './reportNetRevenue';
 import { queryUtcBoundsForZonedRange } from './reportSegmentBreakdown';
@@ -35,25 +34,6 @@ async function checkoutIdsToSkipWhenLinkedOrderHidden(
     if (anyOmit) skip.add(String(c._id));
   }
   return skip;
-}
-
-function toReportCheckout(co: unknown): ReportCheckoutLike | undefined {
-  if (!co || typeof co !== 'object') return undefined;
-  const c = co as {
-    totalAmount?: unknown;
-    paymentMethod?: string;
-    cashAmount?: number;
-    cardAmount?: number;
-    memberCreditUsed?: number;
-  };
-  if (c.totalAmount == null) return undefined;
-  return {
-    totalAmount: Number(c.totalAmount) || 0,
-    paymentMethod: c.paymentMethod,
-    cashAmount: c.cashAmount,
-    cardAmount: c.cardAmount,
-    memberCreditUsed: c.memberCreditUsed,
-  };
 }
 
 export type StoreDayReportMetrics = {
@@ -146,28 +126,12 @@ export async function computeStoreDayReportMetrics(
     }
   }
 
-  let refundedAmount = 0;
-  let cashRefund = 0;
-  let cardRefund = 0;
-  let onlineRefund = 0;
-  let tapPayRefund = 0;
-  for (const order of allOrders) {
-    const checkout = orderCheckoutMap.get(order._id.toString());
-    const pm = checkout?.paymentMethod;
-    const refundedItems = order.items.filter((item: { refunded?: boolean }) => item.refunded);
-    if (refundedItems.length === 0) continue;
-
-    const amt = computeOrderRefundAmount(order, toReportCheckout(checkout));
-    refundedAmount += amt;
-    const split = allocateAmountByPaymentMethod(amt, pm, toReportCheckout(checkout) || {
-      totalAmount: Number(checkout?.totalAmount) || 0,
-      paymentMethod: pm,
-    });
-    cashRefund += split.cash;
-    cardRefund += split.card;
-    onlineRefund += split.online;
-    tapPayRefund += split.tap_pay;
-  }
+  const refundAgg = aggregateCheckoutRefunds(allOrders, orderCheckoutMap);
+  const refundedAmount = refundAgg.total;
+  const cashRefund = refundAgg.byPayment.cash;
+  const cardRefund = refundAgg.byPayment.card;
+  const onlineRefund = refundAgg.byPayment.online;
+  const tapPayRefund = refundAgg.byPayment.tap_pay;
 
   const deliveryFeeCheckoutMap = new Map<string, ReportCheckoutLike>();
   for (const [oid, co] of orderCheckoutMap.entries()) {

@@ -1,8 +1,8 @@
 import mongoose from 'mongoose';
 import { getModels } from '../getModels';
 import {
-  computeOrderRefundAmount,
-  type ReportCheckoutLike,
+  computeCheckoutRefundAmount,
+  toReportCheckoutLike,
   type ReportOrderLike,
 } from './reportNetRevenue';
 
@@ -75,7 +75,7 @@ export async function netWalletConsumedAtStore(storeId: mongoose.Types.ObjectId)
 export async function netTapPayCollectedAtStore(storeId: mongoose.Types.ObjectId): Promise<number> {
   const { Checkout, Order } = models();
   const checkouts = (await Checkout.find({ storeId, paymentMethod: 'tap_pay' })
-    .select('totalAmount orderIds cashAmount cardAmount paymentMethod')
+    .select('totalAmount orderIds cashAmount cardAmount paymentMethod serviceChargeAmount serviceChargeWaived')
     .lean()) as {
     _id: mongoose.Types.ObjectId;
     totalAmount?: number;
@@ -83,6 +83,8 @@ export async function netTapPayCollectedAtStore(storeId: mongoose.Types.ObjectId
     cashAmount?: number;
     cardAmount?: number;
     paymentMethod?: string;
+    serviceChargeAmount?: number;
+    serviceChargeWaived?: boolean;
   }[];
 
   if (checkouts.length === 0) return 0;
@@ -104,32 +106,14 @@ export async function netTapPayCollectedAtStore(storeId: mongoose.Types.ObjectId
   let net = 0;
   for (const c of checkouts) {
     const gross = Number(c.totalAmount) || 0;
-    const checkoutLike: ReportCheckoutLike = {
-      totalAmount: gross,
+    const checkoutLike = toReportCheckoutLike({
+      ...c,
       paymentMethod: 'tap_pay',
-      cashAmount: c.cashAmount,
-      cardAmount: c.cardAmount,
-    };
+    });
     const linked = (c.orderIds || [])
       .map((id) => orderById.get(String(id)))
       .filter((o): o is ReportOrderLike & { _id: mongoose.Types.ObjectId } => !!o);
-
-    let refund = 0;
-    if (linked.length === 1) {
-      refund = computeOrderRefundAmount(linked[0], checkoutLike);
-    } else if (linked.length > 1) {
-      const allFullyRefunded = linked.every(
-        (o) => (o.items || []).length > 0 && (o.items || []).every((it) => it.refunded),
-      );
-      if (allFullyRefunded) {
-        refund = gross;
-      } else {
-        for (const o of linked) {
-          refund += computeOrderRefundAmount(o, undefined);
-        }
-        refund = Math.min(refund, gross);
-      }
-    }
+    const refund = computeCheckoutRefundAmount(linked, checkoutLike);
     net += Math.max(0, gross - refund);
   }
   return round2(net);
