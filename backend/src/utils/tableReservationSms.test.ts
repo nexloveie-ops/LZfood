@@ -29,9 +29,11 @@ describe('table reservation sms', () => {
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
     expect(parsed.value.name).toBe('Lei Chen');
-    expect(buildTableReservationSms(parsed.value)).toContain('电话: 087 111 2233');
-    expect(buildTableReservationSms(parsed.value)).toContain('时间: 2026-11-22 19:00');
-    expect(buildTableReservationSms(parsed.value)).toContain('备注: Window seat');
+    const alert = buildTableReservationSms(parsed.value);
+    expect(alert).toContain('Please confirm this online booking.');
+    expect(alert).toContain('Phone: 087 111 2233');
+    expect(alert).toContain('When: 2026-11-22 19:00');
+    expect(alert).toContain('Note: Window seat');
   });
 
   it('confirms the same booking back to the guest mobile', () => {
@@ -40,9 +42,9 @@ describe('table reservation sms', () => {
     if (!parsed.ok) return;
     expect(memberPhoneToSmsE164(parsed.value.phone)).toBe('+353871112233');
     const text = buildGuestConfirmationSms(parsed.value);
-    expect(text).toContain('订台申请已收到');
-    expect(text).toContain('2026-11-22 19:00');
-    expect(text).toContain('4位');
+    expect(text).toContain('We received your table request');
+    expect(text).toContain('When: 2026-11-22 19:00');
+    expect(text).toContain('Guests: 4');
     expect(text).not.toContain(parsed.value.email);
   });
 

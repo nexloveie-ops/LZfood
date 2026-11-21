@@ -96,24 +96,26 @@ export function parseTableReservation(
 
 export function buildTableReservationSms(booking: TableReservation): string {
   const lines = [
-    'Taste Of Asia 订台',
-    `姓名: ${booking.name}`,
-    `电话: ${booking.phone}`,
-    `邮箱: ${booking.email}`,
-    `人数: ${booking.guests}`,
-    `时间: ${booking.date} ${booking.time}`,
+    'Taste Of Asia table request',
+    'Please confirm this online booking.',
+    `Name: ${booking.name}`,
+    `Phone: ${booking.phone}`,
+    `Email: ${booking.email}`,
+    `Guests: ${booking.guests}`,
+    `When: ${booking.date} ${booking.time}`,
   ];
-  if (booking.message) lines.push(`备注: ${booking.message}`);
+  if (booking.message) lines.push(`Note: ${booking.message}`);
   return lines.join('\n');
 }
 
-/** Short confirmation sent to the guest's own mobile. */
+/** Confirmation sent to the guest's own mobile. */
 export function buildGuestConfirmationSms(booking: TableReservation): string {
   return [
     'Taste Of Asia',
-    '订台申请已收到，我们会尽快确认。',
-    `${booking.name} · ${booking.guests}位`,
-    `${booking.date} ${booking.time}`,
-    '改期请致电 01 688 8888',
+    'We received your table request and will confirm shortly.',
+    `Name: ${booking.name}`,
+    `Guests: ${booking.guests}`,
+    `When: ${booking.date} ${booking.time}`,
+    'To change it, call 01 688 8888.',
   ].join('\n');
 }
