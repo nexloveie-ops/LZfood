@@ -40,6 +40,7 @@ import publicPortalRouter from './routes/publicPortal';
 import publicWidgetRouter from './routes/publicWidget';
 import publicTranslateRouter from './routes/publicTranslate';
 import publicTodaysSpecialsRouter from './routes/publicTodaysSpecials';
+import publicTableReservationRouter from './routes/publicTableReservation';
 import geoRouter, { guestEircodeMiddleware } from './routes/geo';
 import membersRouter, { membersScanOrderLookup } from './routes/members';
 import customerNotificationsRouter from './routes/customerNotifications';
@@ -123,6 +124,7 @@ app.use('/api/public', publicAdsRouter);
 app.use('/api/public', publicWidgetRouter);
 app.use('/api/public', publicTranslateRouter);
 app.use('/api/public', publicTodaysSpecialsRouter);
+app.use('/api/public', publicTableReservationRouter);
 app.use('/api/public/portal', publicPortalRouter);
 
 app.use('/api/menus', menusRouter);
