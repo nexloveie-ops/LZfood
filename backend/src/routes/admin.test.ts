@@ -214,12 +214,14 @@ describe('GET /api/admin/config', () => {
     await SystemConfig.create({ key: 'receipt_print_copies', value: '2' });
     await SystemConfig.create({ key: 'stripe_secret_key', value: 'sk_test_leak' });
     await SystemConfig.create({ key: 'stripe_publishable_key', value: 'pk_test_leak' });
+    await SystemConfig.create({ key: 'stripe_webhook_secret', value: 'whsec_leak' });
 
     const res = await request(app).get('/api/admin/config');
 
     expect(res.status).toBe(200);
     expect(res.body.stripe_secret_key).toBeUndefined();
     expect(res.body.stripe_publishable_key).toBeUndefined();
+    expect(res.body.stripe_webhook_secret).toBeUndefined();
     expect(res.body.receipt_print_copies).toBe('2');
   });
 });

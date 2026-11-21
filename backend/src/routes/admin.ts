@@ -15,11 +15,15 @@ import { getBusinessStatus } from '../utils/businessHours';
 import {
   getStripePublishableFromDbOnly,
   hasStripeSecretInDb,
+  hasStripeWebhookSecretInDb,
+  isValidWebhookSecretFormat,
   runStripeHealthCheck,
   STRIPE_KEYS_FILTER_FROM_PUBLIC_CONFIG,
   STRIPE_PUBLISHABLE_CONFIG_KEY,
   STRIPE_SECRET_CONFIG_KEY,
+  STRIPE_WEBHOOK_SECRET_CONFIG_KEY,
 } from '../utils/stripeConfig';
+import { ensureStoreStripeWebhookEndpoint, storeStripeWebhookPublicUrl } from '../utils/ensureStripeWebhook';
 import { FeatureKeys, resolveStoreEffectiveFeatures } from '../utils/featureCatalog';
 import { requireFeature } from '../middleware/featureAccess';
 import { creditWalletForMemberId, applyStoreStaffWalletToTarget, creditPlatformMemberWallet } from '../utils/platformMemberWalletOps';
@@ -296,7 +300,14 @@ router.get('/stripe-config', ...requireAuthSameStore, requirePermission('config:
   try {
     const publishableKey = await getStripePublishableFromDbOnly(req.storeId!);
     const hasSecret = await hasStripeSecretInDb(req.storeId!);
-    res.json({ publishableKey, hasSecret });
+    const hasWebhookSecret = await hasStripeWebhookSecretInDb(req.storeId!);
+    const slug = String(req.store?.slug || '').trim();
+    res.json({
+      publishableKey,
+      hasSecret,
+      hasWebhookSecret,
+      webhookUrl: slug ? storeStripeWebhookPublicUrl(slug) : '',
+    });
   } catch (err) {
     next(err);
   }
@@ -306,7 +317,13 @@ router.get('/stripe-config', ...requireAuthSameStore, requirePermission('config:
 router.put('/stripe-config', ...requireAuthSameStore, requirePermission('config:update'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { SystemConfig } = adminModels();
-    const body = req.body as { publishableKey?: string; secretKey?: string; clearSecret?: boolean };
+    const body = req.body as {
+      publishableKey?: string;
+      secretKey?: string;
+      clearSecret?: boolean;
+      webhookSecret?: string;
+      clearWebhookSecret?: boolean;
+    };
     if (body.publishableKey !== undefined) {
       if (typeof body.publishableKey !== 'string') {
         throw createAppError('VALIDATION_ERROR', 'publishableKey must be a string');
@@ -333,9 +350,43 @@ router.put('/stripe-config', ...requireAuthSameStore, requirePermission('config:
       );
     }
 
+    if (body.clearWebhookSecret === true) {
+      await SystemConfig.deleteMany({ storeId: req.storeId, key: STRIPE_WEBHOOK_SECRET_CONFIG_KEY });
+    } else if (typeof body.webhookSecret === 'string' && body.webhookSecret.length > 0) {
+      const wh = body.webhookSecret.trim();
+      if (!isValidWebhookSecretFormat(wh)) {
+        throw createAppError('VALIDATION_ERROR', 'Webhook signing secret must start with whsec_');
+      }
+      await SystemConfig.findOneAndUpdate(
+        { storeId: req.storeId, key: STRIPE_WEBHOOK_SECRET_CONFIG_KEY },
+        { storeId: req.storeId, key: STRIPE_WEBHOOK_SECRET_CONFIG_KEY, value: wh },
+        { upsert: true, new: true },
+      );
+    }
+
     const publishableKey = await getStripePublishableFromDbOnly(req.storeId!);
     const hasSecret = await hasStripeSecretInDb(req.storeId!);
-    res.json({ publishableKey, hasSecret, message: 'Saved' });
+    const hasWebhookSecret = await hasStripeWebhookSecretInDb(req.storeId!);
+    const slug = String(req.store?.slug || '').trim();
+    res.json({
+      publishableKey,
+      hasSecret,
+      hasWebhookSecret,
+      webhookUrl: slug ? storeStripeWebhookPublicUrl(slug) : '',
+      message: 'Saved',
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/admin/stripe-webhook/register — 在本店 Stripe 账户创建/对齐 webhook endpoint
+router.post('/stripe-webhook/register', ...requireAuthSameStore, requirePermission('config:update'), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const slug = String(req.store?.slug || '').trim();
+    if (!slug) throw createAppError('VALIDATION_ERROR', '缺少店铺 slug');
+    const result = await ensureStoreStripeWebhookEndpoint(req.storeId!, slug);
+    res.json(result);
   } catch (err) {
     next(err);
   }

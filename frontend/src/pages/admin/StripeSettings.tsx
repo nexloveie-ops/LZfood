@@ -26,8 +26,13 @@ export default function StripeSettings() {
   const [publishableKey, setPublishableKey] = useState('');
   const [secretKeyDraft, setSecretKeyDraft] = useState('');
   const [hasSecret, setHasSecret] = useState(false);
+  const [hasWebhookSecret, setHasWebhookSecret] = useState(false);
+  const [webhookUrl, setWebhookUrl] = useState('');
+  const [webhookSecretDraft, setWebhookSecretDraft] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [registering, setRegistering] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [health, setHealth] = useState<StripeHealthBody | null>(null);
   const [checkRunning, setCheckRunning] = useState(false);
 
@@ -39,7 +44,10 @@ export default function StripeSettings() {
       const data = await res.json();
       setPublishableKey(typeof data.publishableKey === 'string' ? data.publishableKey : '');
       setHasSecret(!!data.hasSecret);
+      setHasWebhookSecret(!!data.hasWebhookSecret);
+      setWebhookUrl(typeof data.webhookUrl === 'string' ? data.webhookUrl : '');
       setSecretKeyDraft('');
+      setWebhookSecretDraft('');
     } finally {
       setLoading(false);
     }
@@ -52,13 +60,21 @@ export default function StripeSettings() {
   const save = async (clearSecret: boolean) => {
     setSaving(true);
     try {
-      const body: { publishableKey: string; secretKey?: string; clearSecret?: boolean } = {
+      const body: {
+        publishableKey: string;
+        secretKey?: string;
+        clearSecret?: boolean;
+        webhookSecret?: string;
+      } = {
         publishableKey,
       };
       if (clearSecret) {
         body.clearSecret = true;
       } else if (secretKeyDraft.trim().length > 0) {
         body.secretKey = secretKeyDraft.trim();
+      }
+      if (webhookSecretDraft.trim().length > 0) {
+        body.webhookSecret = webhookSecretDraft.trim();
       }
       const res = await apiFetch('/api/admin/stripe-config', { method: 'PUT', headers, body: JSON.stringify(body) });
       if (!res.ok) {
@@ -156,6 +172,87 @@ export default function StripeSettings() {
               {t('admin.stripeClearSecret')}
             </button>
           )}
+        </div>
+      </div>
+
+      <div className="card" style={{ padding: 20, maxWidth: 640, marginTop: 16 }}>
+        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>{t('admin.stripeWebhookTitle')}</div>
+        <p style={{ fontSize: 12, color: 'var(--text-light)', marginBottom: 12, lineHeight: 1.5 }}>
+          {t('admin.stripeWebhookHelp')}
+        </p>
+        {webhookUrl ? (
+          <div style={{ marginBottom: 12 }}>
+            <label style={{ display: 'block', fontSize: 12, color: 'var(--text-light)', marginBottom: 6 }}>
+              {t('admin.stripeWebhookUrl')}
+              {hasWebhookSecret && (
+                <span style={{ marginLeft: 8, color: 'var(--text-secondary)', fontWeight: 400 }}>
+                  ({t('admin.stripeWebhookSecretSaved')})
+                </span>
+              )}
+            </label>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <input className="input" readOnly value={webhookUrl} style={{ width: '100%', fontFamily: 'monospace', fontSize: 12 }} />
+              <button
+                type="button"
+                className="btn btn-outline"
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(webhookUrl);
+                    setCopied(true);
+                    window.setTimeout(() => setCopied(false), 1500);
+                  } catch {
+                    /* ignore */
+                  }
+                }}
+              >
+                {copied ? t('admin.stripeWebhookCopied') : t('admin.stripeWebhookCopy')}
+              </button>
+            </div>
+          </div>
+        ) : null}
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ display: 'block', fontSize: 12, color: 'var(--text-light)', marginBottom: 6 }}>
+            {t('admin.stripeWebhookSecret')}
+          </label>
+          <input
+            className="input"
+            type="password"
+            value={webhookSecretDraft}
+            onChange={(e) => setWebhookSecretDraft(e.target.value)}
+            placeholder={t('admin.stripeWebhookSecretPlaceholder')}
+            autoComplete="new-password"
+            style={{ width: '100%' }}
+          />
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          <button className="btn btn-primary" type="button" onClick={() => save(false)} disabled={saving}>
+            {saving ? t('common.loading') : t('common.save')}
+          </button>
+          <button
+            className="btn btn-outline"
+            type="button"
+            disabled={registering || !hasSecret}
+            onClick={async () => {
+              setRegistering(true);
+              try {
+                const res = await apiFetch('/api/admin/stripe-webhook/register', { method: 'POST', headers });
+                const j = await res.json().catch(() => null);
+                if (!res.ok) {
+                  alert(j?.error?.message || t('common.error'));
+                  return;
+                }
+                await load();
+                if (j?.needsPasteSecret) alert(t('admin.stripeWebhookNeedSecret'));
+                else alert(j?.message || t('admin.stripeWebhookRegisterOk'));
+              } catch {
+                alert(t('common.error'));
+              } finally {
+                setRegistering(false);
+              }
+            }}
+          >
+            {registering ? t('common.loading') : t('admin.stripeWebhookRegister')}
+          </button>
         </div>
       </div>
 

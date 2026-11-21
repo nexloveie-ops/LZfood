@@ -30,6 +30,9 @@ function skipStoreContext(req: Request): boolean {
   if (req.path.startsWith('/wallet')) {
     return true;
   }
+  if (req.path.startsWith('/payments/webhook')) {
+    return true;
+  }
   if (req.method === 'POST' && (req.path === '/auth/login' || req.path.endsWith('/auth/login'))) {
     return true;
   }

@@ -29,6 +29,7 @@ import salesForecastRouter from './routes/salesForecast';
 import purchasingRouter from './routes/purchasing';
 import offersRouter from './routes/offers';
 import { createPaymentsRouter } from './routes/payments';
+import { createStripeWebhookRequestHandler } from './utils/stripeWebhook';
 import terminalRouter from './routes/terminal';
 import couponsRouter from './routes/coupons';
 import voucherCampaignsRouter from './routes/voucherCampaigns';
@@ -60,6 +61,12 @@ const io = new SocketIOServer(server, {
 
 // Middleware
 app.use(cors());
+/** Stripe webhook 必须在 express.json 之前：签名校验需要 raw body。 */
+app.post(
+  '/api/payments/webhook/:storeSlug',
+  express.raw({ type: 'application/json' }),
+  createStripeWebhookRequestHandler(io),
+);
 app.use(express.json());
 
 /** Liveness：必须在 attachStoreContext 之前，且中间件内显式跳过，避免 Cloud Run 探活依赖店铺头或 DB */

@@ -5,11 +5,15 @@ import { createAppError } from '../middleware/errorHandler';
 
 export const STRIPE_PUBLISHABLE_CONFIG_KEY = 'stripe_publishable_key';
 export const STRIPE_SECRET_CONFIG_KEY = 'stripe_secret_key';
+export const STRIPE_WEBHOOK_SECRET_CONFIG_KEY = 'stripe_webhook_secret';
+export const STRIPE_WEBHOOK_ENDPOINT_ID_CONFIG_KEY = 'stripe_webhook_endpoint_id';
 
 /** Keys never exposed on public GET /api/admin/config */
 export const STRIPE_KEYS_FILTER_FROM_PUBLIC_CONFIG = new Set([
   STRIPE_SECRET_CONFIG_KEY,
   STRIPE_PUBLISHABLE_CONFIG_KEY,
+  STRIPE_WEBHOOK_SECRET_CONFIG_KEY,
+  STRIPE_WEBHOOK_ENDPOINT_ID_CONFIG_KEY,
 ]);
 
 export async function getStripePublishableResolved(storeId: mongoose.Types.ObjectId): Promise<string> {
@@ -40,6 +44,18 @@ export async function hasStripeSecretInDb(storeId: mongoose.Types.ObjectId): Pro
   return !!row?.value?.trim();
 }
 
+export async function getStripeWebhookSecretResolved(storeId: mongoose.Types.ObjectId): Promise<string> {
+  const { SystemConfig } = getModels();
+  const row = (await SystemConfig.findOne({ storeId, key: STRIPE_WEBHOOK_SECRET_CONFIG_KEY }).lean()) as {
+    value?: string;
+  } | null;
+  return row?.value?.trim() || '';
+}
+
+export async function hasStripeWebhookSecretInDb(storeId: mongoose.Types.ObjectId): Promise<boolean> {
+  return !!(await getStripeWebhookSecretResolved(storeId));
+}
+
 export async function createStripeClient(storeId: mongoose.Types.ObjectId) {
   const secret = await getStripeSecretResolved(storeId);
   if (!secret) {
@@ -59,6 +75,10 @@ export function isValidPublishableKeyFormat(pk: string): boolean {
 
 export function isValidSecretKeyFormat(sk: string): boolean {
   return /^sk_(test|live)_/.test(sk.trim());
+}
+
+export function isValidWebhookSecretFormat(secret: string): boolean {
+  return /^whsec_[A-Za-z0-9]+/.test(secret.trim());
 }
 
 export function stripeKeyMode(key: string): StripeKeyMode {
