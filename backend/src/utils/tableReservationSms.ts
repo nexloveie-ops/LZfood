@@ -1,5 +1,5 @@
 /** Restaurant mobile that receives online table requests. Not taken from the client. */
-export const RESERVATION_ALERT_PHONE = '0871371111';
+export const RESERVATION_ALERT_PHONE = '0876886611';
 
 export const RESERVATION_STORE_SLUG = 'tasteofasia';
 

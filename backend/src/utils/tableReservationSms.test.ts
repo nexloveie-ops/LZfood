@@ -21,7 +21,7 @@ const valid = {
 
 describe('table reservation sms', () => {
   it('sends the restaurant mobile as an Irish E.164 number', () => {
-    expect(memberPhoneToSmsE164(RESERVATION_ALERT_PHONE)).toBe('+353871371111');
+    expect(memberPhoneToSmsE164(RESERVATION_ALERT_PHONE)).toBe('+353876886611');
   });
 
   it('keeps the guest details and drops line breaks', () => {
